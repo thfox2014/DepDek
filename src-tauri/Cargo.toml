@@ -1,0 +1,45 @@
+[package]
+name = "agent-workbench"
+version = "0.1.0"
+description = "Agent Workbench - cross-platform multi-agent workbench"
+edition = "2021"
+
+[lib]
+name = "agent_workbench_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "agent-workbench"
+path = "src/main.rs"
+
+# The `tauri-app` feature gates the desktop shell (tauri + plugins) so the
+# vault/audit/rpc core can be built and tested on machines without the
+# system webkit/glib dev libraries:
+#   cargo test --no-default-features
+[features]
+default = ["tauri-app"]
+tauri-app = [
+    "dep:tauri",
+    "dep:tauri-plugin-dialog",
+    "dep:tauri-plugin-store",
+    "dep:tauri-build",
+]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+base64 = "0.22"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+thiserror = "2"
+time = "0.3"
+tauri = { version = "2", optional = true , features = [] }
+tauri-plugin-dialog = { version = "2", optional = true }
+tauri-plugin-store = { version = "2", optional = true }
+
+[build-dependencies]
+tauri-build = { version = "2", optional = true , features = [] }
+
+[dev-dependencies]
+tempfile = "3"
