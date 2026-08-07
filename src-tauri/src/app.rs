@@ -235,12 +235,20 @@ pub fn run() {
 
             // Sidecar: agent/event notifications become agent://event.
             let handle = app.handle().clone();
-            let sidecar = Sidecar::new(
-                vault.clone(),
-                Arc::new(move |event: &str, payload: Value| {
-                    let _ = handle.emit(event, payload);
-                }),
-            );
+            let emit = Arc::new(move |event: &str, payload: Value| {
+                let _ = handle.emit(event, payload);
+            });
+            let sidecar = if cfg!(debug_assertions) {
+                Sidecar::new(vault.clone(), emit)
+            } else {
+                let resources = app.path().resource_dir().map_err(|e| e.to_string())?;
+                Sidecar::with_runtime(
+                    vault.clone(),
+                    emit,
+                    resources.join("node"),
+                    resources.join("sidecar.mjs"),
+                )
+            };
 
             // Restore the previous data folder, if any.
             let settings = load_settings(app.handle());

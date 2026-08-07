@@ -1,5 +1,6 @@
 node_modules/
 dist/
 target/
+src-tauri/resources/node
 *.log
 .DS_Store

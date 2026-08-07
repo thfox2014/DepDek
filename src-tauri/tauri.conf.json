@@ -6,7 +6,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "npm run dev"
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run prepare:bundle"
   },
   "app": {
     "windows": [
@@ -23,6 +24,13 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/icon.png"]
+    "icon": ["icons/icon.png"],
+    "resources": {
+      "resources/node": "node",
+      "../sidecar/dist/sidecar.mjs": "sidecar.mjs"
+    },
+    "macOS": {
+      "signingIdentity": "-"
+    }
   }
 }

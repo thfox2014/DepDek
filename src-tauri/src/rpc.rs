@@ -38,6 +38,7 @@ pub struct Sidecar {
 struct SidecarInner {
     vault: Vault,
     emit: EmitFn,
+    node_path: PathBuf,
     sidecar_path: PathBuf,
     proc: tokio::sync::Mutex<Option<SidecarProc>>,
     pending: Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>,
@@ -54,17 +55,29 @@ struct SidecarProc {
 
 impl Sidecar {
     pub fn new(vault: Vault, emit: EmitFn) -> Self {
-        Self::with_sidecar_path(vault, emit, default_sidecar_path())
+        Self::with_runtime(vault, emit, default_node_path(), default_sidecar_path())
     }
 
     /// Constructor with an explicit sidecar script path. `new` resolves the
     /// path from `AGENT_WORKBENCH_SIDECAR` / the dev layout; this variant
     /// exists mainly for integration tests.
     pub fn with_sidecar_path(vault: Vault, emit: EmitFn, sidecar_path: PathBuf) -> Self {
+        Self::with_runtime(vault, emit, PathBuf::from("node"), sidecar_path)
+    }
+
+    /// Constructor for packaged applications that ship their own Node runtime
+    /// and bundled sidecar script.
+    pub fn with_runtime(
+        vault: Vault,
+        emit: EmitFn,
+        node_path: PathBuf,
+        sidecar_path: PathBuf,
+    ) -> Self {
         Self {
             inner: Arc::new(SidecarInner {
                 vault,
                 emit,
+                node_path,
                 sidecar_path,
                 proc: tokio::sync::Mutex::new(None),
                 pending: Mutex::new(HashMap::new()),
@@ -103,7 +116,7 @@ impl Sidecar {
                 self.inner.sidecar_path.display()
             ));
         }
-        let mut child = Command::new("node")
+        let mut child = Command::new(&self.inner.node_path)
             .arg(&self.inner.sidecar_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -111,7 +124,12 @@ impl Sidecar {
             .stderr(Stdio::inherit())
             .kill_on_drop(true)
             .spawn()
-            .map_err(|e| format!("failed to spawn sidecar (is node installed?): {e}"))?;
+            .map_err(|e| {
+                format!(
+                    "failed to spawn sidecar with {}: {e}",
+                    self.inner.node_path.display()
+                )
+            })?;
         let stdout = child
             .stdout
             .take()
@@ -312,4 +330,12 @@ fn default_sidecar_path() -> PathBuf {
         }
     }
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../sidecar/dist/main.js")
+}
+
+fn default_node_path() -> PathBuf {
+    std::env::var("AGENT_WORKBENCH_NODE")
+        .ok()
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("node"))
 }
