@@ -131,6 +131,20 @@ textarea:focus {
   margin: 0 0 12px;
 }
 
+.folder-picker__logo {
+  width: 58px;
+  height: 58px;
+  margin-bottom: 12px;
+  border-radius: 18px;
+  object-fit: cover;
+  box-shadow: 0 8px 24px rgba(89, 69, 199, 0.25);
+}
+
+.folder-picker .primary {
+  background: #735ce8;
+  border-color: #735ce8;
+}
+
 .folder-picker p {
   color: var(--text-dim);
 }

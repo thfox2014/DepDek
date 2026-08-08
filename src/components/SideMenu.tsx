@@ -4,14 +4,12 @@ import type { SessionInfo } from "../App";
 import SessionList from "./SessionList";
 import FileTree from "./FileTree";
 import ProfilePanel from "./ProfilePanel";
-import MailPanel from "./MailPanel";
 import {
   IconChevron,
   IconDatabase,
   IconFile,
   IconIdCard,
   IconImage,
-  IconMail,
   IconTeam,
   IconVideo,
 } from "./icons";
@@ -40,7 +38,6 @@ const DATA_TABS: { key: DataTab; label: string; icon: typeof IconFile }[] = [
 
 export default function SideMenu(props: Props) {
   const [teamOpen, setTeamOpen] = useState(true);
-  const [mailOpen, setMailOpen] = useState(true);
   const [dataOpen, setDataOpen] = useState(true);
   const [tab, setTab] = useState<DataTab>("files");
 
@@ -65,21 +62,6 @@ export default function SideMenu(props: Props) {
               onClose={props.onClose}
               onOpenSettings={props.onOpenSettings}
             />
-          </div>
-        )}
-      </div>
-
-      <div className="side-menu__group side-menu__group--grow">
-        <button className="side-menu__group-header" onClick={() => setMailOpen((v) => !v)}>
-          <IconMail />
-          <span>我的邮件</span>
-          <IconChevron
-            className={`side-menu__chevron ${mailOpen ? "side-menu__chevron--open" : ""}`}
-          />
-        </button>
-        {mailOpen && (
-          <div className="side-menu__group-body side-menu__group-body--data">
-            <MailPanel />
           </div>
         )}
       </div>

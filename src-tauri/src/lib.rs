@@ -1,4 +1,4 @@
-//! Agent Workbench Rust core.
+//! DepDek Rust core.
 //!
 //! `vault`, `audit`, `settings` and `rpc` are plain Rust and testable
 //! without a display server. The Tauri desktop shell (`app`) is gated

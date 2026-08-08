@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Agent Workbench",
+  "productName": "DepDek",
   "version": "0.1.0",
   "identifier": "com.agentworkbench.app",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Agent Workbench",
+        "title": "DepDek",
         "width": 1280,
         "height": 800
       }

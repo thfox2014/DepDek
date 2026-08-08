@@ -7,6 +7,7 @@ import SideMenu from "./components/SideMenu";
 import ChatPanel from "./components/ChatPanel";
 import AuditViewer from "./components/AuditViewer";
 import SettingsPanel from "./components/SettingsPanel";
+import DepDekHome from "./components/DepDekHome";
 
 export interface SessionInfo {
   id: string;
@@ -45,7 +46,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [view, setView] = useState<"office" | "workbench">("office");
+  const [view, setView] = useState<"home" | "office" | "workbench">("home");
   const [showDock, setShowDock] = useState(true);
   const [chats, setChats] = useState<Record<string, ChatBlock[]>>({});
   const [running, setRunning] = useState<Record<string, boolean>>({});
@@ -68,6 +69,21 @@ export default function App() {
     bootstrapped.current = true;
     (async () => {
       try {
+        // Browser-only UX preview: Tauri commands are unavailable in Vite,
+        // so provide a clearly local sample Home for visual/product QA.
+        if (!("__TAURI_INTERNALS__" in window)) {
+          setSettings({
+            providers: {
+              "Local Qwen": {
+                kind: "openai-compatible",
+                model: "qwen3:8b",
+                base_url: "http://127.0.0.1:11434/v1",
+              },
+            },
+          });
+          setRoot("~/DepDek-Home · 浏览器 UX 预览");
+          return;
+        }
         const s = await api.settingsGet().catch(() => ({ providers: {} }) as api.Settings);
         setSettings(s);
         // Recreate saved agent sessions (same config, fresh conversation).
@@ -94,6 +110,7 @@ export default function App() {
 
   // ---- agent streaming events ----------------------------------------------
   useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
     let disposed = false;
     let unlisten: (() => void) | undefined;
     api
@@ -263,37 +280,40 @@ export default function App() {
   }
   return (
     <div className="app">
-      <header className="topbar">
-        {view === "workbench" && (
-          <button className="topbar__back" onClick={() => setView("office")}>
-            ← 返回办公室
-          </button>
-        )}
-        <span className="topbar__brand">Agent Workbench</span>
-        <span className="topbar__path" title={root}>
-          {root}
-        </span>
-        {rootError && <span className="error-text">{rootError}</span>}
-        <div className="topbar__actions">
-          {view === "workbench" && (
-            <button
-              className={`topbar__dock-toggle${showDock ? " topbar__dock-toggle--on" : ""}`}
-              onClick={() => setShowDock((v) => !v)}
-              title={showDock ? "隐藏扩展坞" : "显示扩展坞"}
-            >
-              <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-                <rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="none" stroke="currentColor" strokeWidth="1.4" />
-                <line x1="10" y1="2.5" x2="10" y2="13.5" stroke="currentColor" strokeWidth="1.4" />
-                <rect x="11" y="4" width="2.5" height="8" rx="0.8" fill="currentColor" opacity={showDock ? 1 : 0.25} />
-              </svg>
-              扩展坞
+      {view === "home" ? (
+        <DepDekHome
+          root={root}
+          providers={settings.providers}
+          providerCount={Object.keys(settings.providers).length}
+          sessionCount={sessions.length}
+          onOpenDeepWork={() => setView("office")}
+          onOpenSettings={() => setShowSettings(true)}
+          onPickRoot={pickRoot}
+        />
+      ) : (
+        <>
+          <header className="topbar">
+            <button className="topbar__back" onClick={() => setView(view === "workbench" ? "office" : "home")}>
+              {view === "workbench" ? "← 返回 Deep Work" : "← 返回 DepDek"}
             </button>
-          )}
-          <button onClick={pickRoot}>更换文件夹</button>
-          <button onClick={() => setShowSettings(true)}>设置</button>
-        </div>
-      </header>
-      {view === "office" ? (
+            <span className="topbar__brand">DepDek · Deep Work</span>
+            <span className="topbar__path" title={root}>{root}</span>
+            {rootError && <span className="error-text">{rootError}</span>}
+            <div className="topbar__actions">
+              {view === "workbench" && (
+                <button
+                  className={`topbar__dock-toggle${showDock ? " topbar__dock-toggle--on" : ""}`}
+                  onClick={() => setShowDock((v) => !v)}
+                  title={showDock ? "隐藏扩展坞" : "显示扩展坞"}
+                >
+                  扩展坞
+                </button>
+              )}
+              <button onClick={pickRoot}>更换 Home</button>
+              <button onClick={() => setShowSettings(true)}>设置</button>
+            </div>
+          </header>
+          {view === "office" ? (
         <OfficeView
           sessions={sessions}
           running={running}
@@ -303,7 +323,7 @@ export default function App() {
           onCreate={createSession}
           onOpenSettings={() => setShowSettings(true)}
         />
-      ) : (
+          ) : (
         <div className={`main${showDock ? "" : " main--dock-hidden"}`}>
           <aside className="left">
             <SideMenu
@@ -346,6 +366,8 @@ export default function App() {
             </aside>
           )}
         </div>
+          )}
+        </>
       )}
       {showSettings && (
         <SettingsPanel

@@ -282,5 +282,5 @@ pub fn run() {
             mail_fetch,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Agent Workbench");
+        .expect("error while running DepDek");
 }
