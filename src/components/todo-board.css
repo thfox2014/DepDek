@@ -1,0 +1,51 @@
+.dd-todo-head { margin-bottom: 11px; }
+.dd-todo-summary { display: flex; align-items: center; gap: 18px; margin-bottom: 10px; padding: 12px 15px; border: 1px solid var(--dd-line); border-radius: 14px; background: rgba(255, 255, 255, .7); box-shadow: 0 4px 17px rgba(78, 66, 140, .05); }
+.dd-todo-summary > div:first-child { display: flex; min-width: 0; align-items: center; gap: 9px; flex: 1; }
+.dd-todo-summary-icon { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 10px; background: var(--dd-accent-soft); color: var(--dd-accent-deep); }
+.dd-todo-summary b, .dd-todo-summary small { display: block; }
+.dd-todo-summary b { color: var(--dd-ink); font-size: 12px; }
+.dd-todo-summary small { margin-top: 2px; color: var(--dd-ink-3); font-size: 9px; }
+.dd-todo-summary-metric { display: flex; align-items: baseline; gap: 5px; color: var(--dd-ink-3); font-size: 9px; }
+.dd-todo-summary-metric strong { color: var(--dd-ok); font-size: 20px; }
+.dd-todo-filter { display: flex; align-items: center; gap: 5px; color: var(--dd-ink-3); font-size: 9px; }
+.dd-todo-filter select, .dd-todo-add-bar select, .dd-todo-card-top select { border: 1px solid var(--dd-line-strong); border-radius: 7px; outline: 0; background: #fff; color: var(--dd-ink-2); font-size: 9px; cursor: pointer; }
+.dd-todo-filter select { padding: 5px 22px 5px 6px; }
+.dd-todo-add-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 7px 9px; border: 1px solid rgba(115, 92, 232, .2); border-radius: 11px; background: rgba(238, 234, 255, .57); color: var(--dd-accent-deep); }
+.dd-todo-add-bar input { min-width: 0; flex: 1; padding: 7px 5px; border: 0; outline: 0; background: transparent; color: var(--dd-ink); font-size: 10px; }
+.dd-todo-add-bar select { padding: 6px 20px 6px 6px; }
+.dd-todo-add-bar button { padding: 7px 11px; border: 0; border-radius: 8px; background: var(--dd-accent); color: #fff; font-size: 9px; cursor: pointer; }
+.dd-todo-board { display: grid; min-height: 510px; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
+.dd-todo-lane { display: flex; min-width: 0; flex-direction: column; border: 1px solid var(--dd-line); border-radius: 14px; background: rgba(255, 255, 255, .62); }
+.dd-todo-lane--now { border-color: rgba(115, 92, 232, .28); background: rgba(246, 243, 255, .72); }
+.dd-todo-lane--blocked { background: rgba(255, 250, 242, .75); }
+.dd-todo-lane--done { background: rgba(242, 251, 247, .7); }
+.dd-todo-lane > header { display: flex; align-items: center; justify-content: space-between; padding: 12px 12px 10px; border-bottom: 1px solid var(--dd-line); }
+.dd-todo-lane > header b, .dd-todo-lane > header small { display: block; }
+.dd-todo-lane > header b { color: var(--dd-ink); font-size: 11px; }
+.dd-todo-lane > header small { margin-top: 3px; color: var(--dd-ink-3); font-size: 8px; }
+.dd-todo-lane > header em { display: grid; width: 23px; height: 23px; place-items: center; border-radius: 50%; background: rgba(115, 92, 232, .1); color: var(--dd-accent-deep); font-size: 9px; font-style: normal; }
+.dd-todo-lane--done > header em { background: rgba(39, 154, 113, .12); color: var(--dd-ok); }
+.dd-todo-lane-body { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 8px; padding: 9px; }
+.dd-todo-card { position: relative; display: flex; flex-direction: column; gap: 7px; padding: 10px; border: 1px solid var(--dd-line); border-radius: 10px; background: rgba(255, 255, 255, .9); box-shadow: 0 3px 9px rgba(78, 66, 140, .055); cursor: grab; }
+.dd-todo-card:active { cursor: grabbing; }
+.dd-todo-card--important_urgent { border-left: 3px solid var(--dd-risk); }
+.dd-todo-card--important_not_urgent { border-left: 3px solid var(--dd-accent); }
+.dd-todo-card--urgent_not_important { border-left: 3px solid var(--dd-warn); }
+.dd-todo-card--other { border-left: 3px solid var(--dd-line-strong); }
+.dd-todo-card-top { display: flex; align-items: center; justify-content: space-between; gap: 5px; }
+.dd-todo-priority { overflow: hidden; color: var(--dd-ink-3); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.dd-todo-card-top select { max-width: 65px; padding: 3px 14px 3px 4px; }
+.dd-todo-card > b { display: flex; align-items: flex-start; gap: 4px; color: var(--dd-ink); font-size: 10px; line-height: 1.45; }
+.dd-todo-card-title--done { color: var(--dd-ink-3) !important; text-decoration: line-through; }
+.dd-todo-card p { margin: 0; color: var(--dd-ink-3); font-size: 8.5px; line-height: 1.45; }
+.dd-todo-card > footer { display: flex; align-items: center; justify-content: space-between; gap: 5px; color: var(--dd-ink-3); font-size: 8px; }
+.dd-todo-card > footer span { display: flex; min-width: 0; align-items: center; gap: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dd-todo-card > footer time { flex: 0 0 auto; }
+.dd-todo-next { display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 5px 7px; border: 1px solid var(--dd-line); border-radius: 7px; background: transparent; color: var(--dd-accent-deep); font-size: 8px; cursor: pointer; }
+.dd-todo-next:hover { background: var(--dd-accent-soft); }
+.dd-todo-lane-empty, .dd-todo-loading { display: flex; min-height: 90px; align-items: center; justify-content: center; gap: 5px; border: 1px dashed var(--dd-line-strong); border-radius: 9px; color: var(--dd-ink-3); font-size: 8.5px; }
+.dd-todo-spin { animation: dd-todo-spin 1s linear infinite; }
+@keyframes dd-todo-spin { to { transform: rotate(360deg); } }
+.dd-todo-footnote { display: flex; align-items: center; gap: 5px; margin: 10px 1px 0; color: var(--dd-ink-3); font-size: 8.5px; }
+@media (max-width: 1100px) { .dd-todo-board { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 680px) { .dd-todo-summary { align-items: flex-start; flex-wrap: wrap; } .dd-todo-filter { margin-left: auto; } .dd-todo-add-bar { align-items: stretch; flex-wrap: wrap; } .dd-todo-add-bar input { flex-basis: 100%; } .dd-todo-board { grid-template-columns: 1fr; } }

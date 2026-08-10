@@ -29,7 +29,13 @@
 | `agent/send` | `{session_id: string, text: string}` | `{}`（回复经 `agent/event` 流式下发） |
 | `agent/abort` | `{session_id: string}` | `{}` |
 | `agent/close_session` | `{session_id: string}` | `{}` |
-| `mail/fetch` | `{account?: string}`（账号显示名，缺省收全部） | `{fetched: number, accounts: [{name: string, new_messages: number, error?: string}]}` |
+| `mail/fetch` | `{account?: string, refresh_body?: boolean}`（账号显示名，缺省收全部；`refresh_body` 用于修复旧缓存的正文占位符） | `{fetched: number, accounts: [{name: string, new_messages: number, error?: string}]}` |
+| `mail/delete` | `{account: string, uids: number[]}` | `{account: string, deleted: number}`（仅在 IMAP UIDPLUS 可安全定位删除目标时执行） |
+| `calendar/sync` | `{account?: string}` | `{imported: number, accounts: [{id, name, imported, error?}]}` |
+| `calendar/push` | `{account: string, event: CalendarEvent}` | `{account: string, event_id: string, remote_id: string}` |
+| `todo/list` | `{}` | `{version: 1, updatedAt: string, items: TodoItem[]}` |
+| `todo/enqueue` | `{input: TodoEnqueueInput}` | `{item: TodoItem, duplicate?: boolean}` |
+| `todo/update` | `{input: TodoUpdateInput}` | `{item: TodoItem}` |
 
 ```ts
 // ProviderConfig（三方共用同一形状）
@@ -64,8 +70,9 @@ type ProviderConfig =
 | `vault/delete_file` | `{session_id, path}` | `{}` |
 | `vault/stat` | `{session_id, path}` | `{kind: "file"\|"dir", size: number, modified_ms: number}` |
 | `vault/read_binary` | `{session_id, path}` | `{data_base64: string, size: number, sha256: string, mime: string}` |
+| `vault/write_binary` | `{session_id, path, data_base64: string}` | `{size: number, sha256: string}` |
 
-`vault/read_binary` 说明：为前端图片/视频预览提供；MIME 按扩展名推断（未知为 `application/octet-stream`）；上限 64 MiB（超出 -32003）；审计记 `op: "read"`。**不注册为 agent 工具**（sidecar 不暴露），仅经 Tauri command 供前端使用。
+`vault/read_binary` 说明：为前端图片/视频/邮件附件预览与下载提供；MIME 按扩展名推断（未知为 `application/octet-stream`）；上限 64 MiB（超出 -32003）；审计记 `op: "read"`。`vault/write_binary` 只供受信任的导入器（当前为邮件 sidecar）把 base64 二进制落入 vault，使用相同的 64 MiB 上限并审计为 `op: "write"`。**两者均不注册为 agent 工具**。
 
 ### 2.4 错误码（Rust 返回）
 
@@ -86,11 +93,28 @@ sidecar 级致命错误（不归属于某个会话）用 `session_id: "system"` 
 ### 2.5 邮件收取（`mail/fetch`）
 
 - 邮箱账号配置存放在 vault 的 `mail/accounts.json`（schema 见第 7 节），由 agent 用 `write_file` 工具按用户提供的 邮箱地址/授权码/IMAP 服务器 写入，或用户手工编辑。
-- sidecar 收到 `mail/fetch` 后：读 `mail/accounts.json` → 逐账号走 IMAP 增量拉取 INBOX 新邮件 → 每封邮件渲染为 Markdown 经 `vault/write_file` 落盘到 `mail/<name>/` → 回写 `accounts.json` 更新 `last_uid`。
+- sidecar 收到 `mail/fetch` 后：读 `mail/accounts.json` → 逐账号走 IMAP 增量拉取 INBOX 新邮件 → 附件经 `vault/write_binary` 落盘到 `mail/<name>/attachments/<uid>/` → 每封邮件渲染为 Markdown 经 `vault/write_file` 落盘到 `mail/<name>/` → 回写 `accounts.json` 更新 `last_uid`。
 - sidecar 收取时的所有 vault 读写操作审计 session_id 记为 `"mail"`。
 - 单账号失败只在其结果项记 `error`，不中断其他账号；未配置邮箱（`mail/accounts.json` 不存在）返回 -32002。
+- 收取过程通过 `mail/event` 通知上报 `connecting`、`connected`、`reading`、`saving`、`completed`、`error` 阶段；IMAP 连接和打开文件夹均有 30 秒超时，避免任务无限停留在执行中。
 - sidecar 另注册 agent 工具 `fetch_mail`（params `{account?: string}`），与 `mail/fetch` 同一实现。该工具不属于 fs/bash 工具：网络仅访问配置中的 IMAP 服务器，落盘只经 `vault/*` RPC。
+- 用户在前端确认“同步删除远端邮箱”后，Rust 转发 `mail/delete`；sidecar 使用邮件 UID 执行远端永久删除，多封邮件必须按 UID 串行发送删除指令。若服务器不支持 UIDPLUS，必须拒绝操作，避免普通 EXPUNGE 误删其他已标记邮件。
 - 未安装/未运行的 sidecar 无法收邮件，Rust 按 sidecar 不可用错误透传。
+
+### 2.6 日历中枢（`calendar/sync` / `calendar/push`）
+
+- 日历连接配置存放在 vault 的 `calendar/accounts.json`，支持 Google Calendar、Microsoft Outlook、Apple/iCloud、ICS 订阅和 CalDAV 五类连接。
+- `calendar/sync` 通过用户配置的 ICS/CalDAV endpoint 读取 VEVENT，将事件合并到本地 `calendar/events.json`；本地事件不会被远端导入覆盖。Apple/iCloud 账户若使用 `https://caldav.icloud.com/`，sidecar 会用 Basic Auth + 应用专用密码执行 `PROPFIND` principal/calendar-home 发现，再用 CalDAV `REPORT` 读取 VEVENT；`webcal://` 公开订阅会自动转为 HTTPS。
+- `calendar/push` 只在用户新建日程时主动勾选“保存后立即同步”才调用。当前 CalDAV 连接支持通过 PUT 写回；Apple/iCloud CalDAV 读取使用应用专用密码，仍按只读处理；Google、Microsoft 连接在 OAuth 接通前按只读处理。
+- 所有日历网络请求均由 sidecar 发起，Vault 读写使用 `session_id: "calendar"` 审计；浏览器预览不访问外部服务。
+
+### 2.7 统一待办消息队列（`todo/list` / `todo/enqueue` / `todo/update`）
+
+- 邮件、日历事件、Agent 和外部连接器都以 `TodoEnqueueInput` 发布消息；sidecar 的 TodoBus 将消息归一化为 `TodoItem`，写入 `todo/queue.json`。
+- 四个泳道由 `lane` 表达：`backlog`（待办）、`now`（马上办）、`blocked`（等待中）、`done`（已办完）。重要/紧急矩阵由 `priority` 表达：`important_urgent`、`important_not_urgent`、`urgent_not_important`、`other`。
+- `dedupeKey` 用于邮件 UID、日历事件 ID 等来源的幂等加入；重复发布不会产生第二条待办。
+- `TodoBus.subscribe(name, hook)` 是 sidecar 内部的回调订阅接口。发布后由总线调用匹配的 hook，业务方不需要轮询或反向调用发布者（“you don't call me, I'll call you”）。
+- 每次入队和更新都会发送 `todo/event` 通知，Rust 转发为 `todo://event`，前端据此刷新队列。
 
 ## 3. Tauri commands（前端 → Rust）
 
@@ -111,7 +135,13 @@ sidecar 级致命错误（不归属于某个会话）用 `session_id: "system"` 
 | `agent_close` | `{session_id: string}` | — |
 | `settings_get` | — | `Settings` |
 | `settings_set` | `{settings: Settings}` | — |
-| `mail_fetch` | `{account?: string}` | `{fetched: number, accounts: [...]}`（同 `mail/fetch` result，转发 sidecar） |
+| `mail_fetch` | `{account?: string, refreshBody?: boolean}` | `{fetched: number, accounts: [...]}`（同 `mail/fetch` result，转发 sidecar） |
+| `mail_delete` | `{account: string, uids: number[]}` | `{account: string, deleted: number}`（转发 `mail/delete`） |
+| `calendar_sync` | `{account?: string}` | `{imported: number, accounts: [...]}`（转发 `calendar/sync`） |
+| `calendar_push` | `{account: string, event: CalendarEvent}` | `{account: string, event_id: string, remote_id: string}`（转发 `calendar/push`） |
+| `todo_list` | — | `{version: 1, updatedAt: string, items: TodoItem[]}` |
+| `todo_enqueue` | `{input: TodoEnqueueInput}` | `{item: TodoItem, duplicate?: boolean}` |
+| `todo_update` | `{input: TodoUpdateInput}` | `{item: TodoItem}` |
 
 ```ts
 type AuditEntry = {
@@ -147,6 +177,8 @@ type SavedAgent = {
 |---|---|
 | `agent://event` | `{session_id, type, data}`（原样转发 sidecar 的 `agent/event`） |
 | `vault://audit` | `AuditEntry`（每写一条审计记录即发一次，供审计查看器实时刷新） |
+| `mail://event` | `{account, phase, message, current?, total?}`（原样转发 sidecar 的 `mail/event`，供收取任务展示进度） |
+| `todo://event` | `{type, item, emittedAt}`（原样转发 sidecar 的 `todo/event`） |
 
 ## 5. 审计日志
 
@@ -158,8 +190,8 @@ type SavedAgent = {
 
 1. 收到相对路径 → 与 root 拼接 → 解析 `.`/`..` → 若任一级是 symlink，canonicalize 后必须仍以 canonicalized root 为前缀，否则 -32001。
 2. 拒绝绝对路径与空路径。
-3. read/write 单文件上限 10 MiB（-32003）；read_binary 上限 64 MiB。
-4. 仅处理 UTF-8 文本（-32005）。
+3. 文本 read/write 单文件上限 10 MiB（-32003）；binary read/write 上限 64 MiB。
+4. 文本接口仅处理 UTF-8（-32005）；二进制接口通过 base64 传输。
 5. 每个 vault 操作无论成功失败都写审计。
 
 ## 7. 邮件存储约定
@@ -181,6 +213,48 @@ type MailAccount = {
 };
 ```
 
-- 邮件文件：`mail/<name>/<epoch_ms>-<uid>.md`，内容为头部（From/To/Date/Subject/附件文件名列表）+ 正文 text/plain；附件不落盘（契约无二进制写接口）。
+- 邮件文件：`mail/<name>/<epoch_ms>-<uid>.md`，内容为头部（From/To/Date/Subject/UID/附件元数据 JSON）+ `depdek:mail-html` 和/或 `depdek:mail-text` 标记包裹的正文。HTML 正文用于富文本展示，plain-text 用于预览和无 HTML 时的回退。
+- 邮件附件：`mail/<name>/attachments/<uid>/<序号>-<安全文件名>`；头部 `Attachments` 字段保存 `[{name,path,size,mime}]` JSON。sidecar 必须去除附件名中的路径和控制字符；每个附件经 `vault/write_binary` 单独写入并由 Rust 沙箱校验。旧版 `Attachments (not saved)` 头部仍可读，用户下次主动“收取邮件”时会回补可下载附件。
 - `mail/fetch` 只增量拉取 `uid > last_uid` 的邮件，首次收取以当次拉到的邮件为准。
 
+## 8. 日历存储约定
+
+```ts
+type CalendarAccountsFile = { accounts: CalendarAccount[] };
+type CalendarAccount = {
+  id: string; name: string;
+  provider: "google"|"microsoft"|"apple"|"caldav"|"ics";
+  endpoint?: string; write_endpoint?: string; calendar_id?: string;
+  user?: string; password?: string; access_token?: string;
+  enabled?: boolean; readonly?: boolean;
+};
+type CalendarEventsFile = { version: 1; updated_at: string; events: CalendarEvent[] };
+type CalendarEvent = {
+  id: string; remote_id?: string; source_account_id?: string; source_name?: string;
+  title: string; start: string; end: string; all_day?: boolean;
+  location?: string; description?: string; updated_at?: string;
+};
+type TodoLane = "backlog" | "now" | "blocked" | "done";
+type TodoPriority = "important_urgent" | "important_not_urgent" | "urgent_not_important" | "other";
+type TodoSourceType = "manual" | "mail" | "calendar" | "agent" | "external";
+type TodoSource = { type: TodoSourceType; id?: string; label?: string; path?: string; remoteId?: string };
+type TodoHookRef = { name: string; status: "pending" | "running" | "success" | "error"; message?: string; updatedAt?: string };
+type TodoItem = {
+  id: string; title: string; description?: string; lane: TodoLane; priority: TodoPriority;
+  source: TodoSource; dueAt?: string; createdAt: string; updatedAt: string;
+  tags?: string[]; dedupeKey?: string; hooks?: TodoHookRef[];
+};
+type TodoEnqueueInput = {
+  title: string; description?: string; lane?: TodoLane; priority?: TodoPriority;
+  source: TodoSource; dueAt?: string; tags?: string[]; dedupeKey?: string; hooks?: string[];
+};
+type TodoUpdateInput = {
+  id: string; title?: string; description?: string; lane?: TodoLane;
+  priority?: TodoPriority; dueAt?: string; tags?: string[];
+};
+type TodoQueueFile = { version: 1; updatedAt: string; items: TodoItem[] };
+```
+
+`calendar/events.json` 是本地中枢的当前聚合视图；事件先落本地，外部写回永远是显式动作。连接凭据仍属于 V0.2 明文兼容债务，后续迁移到 Credential Broker/OS Keychain。
+
+`todo/queue.json` 是待办中枢的当前队列；来源记录不覆盖原始邮件或日历事件，移动泳道只更新待办本身。

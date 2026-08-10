@@ -1,0 +1,121 @@
+.dd-calendar-head { margin-bottom: 11px; }
+.dd-calendar-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; padding: 10px 12px; border: 1px solid var(--dd-line); border-radius: 14px; background: rgba(255, 255, 255, 0.68); box-shadow: 0 4px 16px rgba(78, 66, 140, 0.05); }
+.dd-calendar-filter { display: flex; min-width: 0; align-items: center; gap: 8px; color: var(--dd-accent-deep); }
+.dd-calendar-filter select { min-width: 210px; padding: 5px 25px 5px 5px; border: 0; outline: 0; background: transparent; color: var(--dd-ink); font-size: 11px; font-weight: 650; }
+.dd-calendar-toolbar-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.dd-calendar-toolbar-actions button, .dd-calendar-month-head button, .dd-calendar-side-title button, .dd-calendar-agenda header button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 7px 10px; border: 1px solid var(--dd-line-strong); border-radius: 9px; background: #fff; color: var(--dd-ink-2); font-size: 10px; cursor: pointer; }
+.dd-calendar-toolbar-actions button:hover, .dd-calendar-month-head button:hover, .dd-calendar-side-title button:hover, .dd-calendar-agenda header button:hover { border-color: rgba(115, 92, 232, 0.4); color: var(--dd-accent-deep); }
+.dd-calendar-toolbar-actions .dd-calendar-primary, .dd-calendar-primary { border-color: var(--dd-accent); background: var(--dd-accent); color: #fff; }
+.dd-calendar-toolbar-actions .dd-calendar-primary:hover, .dd-calendar-primary:hover { background: var(--dd-accent-deep); color: #fff; }
+.dd-calendar-notice { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; padding: 8px 11px; border: 1px solid rgba(39, 154, 113, 0.2); border-radius: 10px; background: #f1fbf6; color: var(--dd-ok); font-size: 10px; }
+.dd-calendar-notice--error { border-color: rgba(207, 86, 100, 0.2); background: var(--dd-risk-bg); color: var(--dd-risk); }
+.dd-calendar-layout { display: grid; height: calc(100% - 91px); min-height: 550px; grid-template-columns: 185px minmax(0, 1fr) 250px; overflow: hidden; border: 1px solid var(--dd-line); border-radius: 18px; background: rgba(255, 255, 255, 0.68); box-shadow: 0 8px 30px rgba(78, 66, 140, 0.07); }
+.dd-calendar-sidebar { min-width: 0; overflow: auto; padding: 14px 9px; border-right: 1px solid var(--dd-line); background: rgba(248, 248, 255, 0.42); }
+.dd-calendar-side-title { display: flex; align-items: center; justify-content: space-between; padding: 0 8px 8px; color: var(--dd-ink-2); font-size: 10px; }
+.dd-calendar-side-title button { width: 24px; height: 24px; padding: 0; border: 0; background: transparent; }
+.dd-calendar-account { display: grid; width: 100%; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 6px; padding: 7px; border-radius: 9px; }
+.dd-calendar-account:hover, .dd-calendar-account--active { background: var(--dd-accent-soft); }
+.dd-calendar-account-main { display: flex; min-width: 0; align-items: flex-start; gap: 7px; padding: 1px 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.dd-calendar-account-main:focus-visible, .dd-calendar-account-connect:focus-visible { outline: 2px solid rgba(115, 92, 232, 0.42); outline-offset: 2px; }
+.dd-calendar-account-dot { width: 8px; height: 8px; flex: 0 0 8px; margin-top: 4px; border-radius: 50%; background: var(--dd-accent); }
+.dd-calendar-account-dot--google { background: #4285f4; }
+.dd-calendar-account-dot--microsoft { background: #0f78d4; }
+.dd-calendar-account-dot--apple { background: #555; }
+.dd-calendar-account-dot--caldav { background: #29a17a; }
+.dd-calendar-account-dot--ics { background: #c6852b; }
+.dd-calendar-account-copy { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; }
+.dd-calendar-account b { overflow: hidden; color: var(--dd-ink-2); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.dd-calendar-account small { margin-top: 3px; color: var(--dd-ink-3); font-size: 8px; }
+.dd-calendar-account-status { display: inline-flex; align-items: center; gap: 3px; margin-top: 4px; color: var(--dd-ink-3); font-size: 8px; font-style: normal; }
+.dd-calendar-account-status--connecting { color: var(--dd-accent-deep); }
+.dd-calendar-account-status--connected { color: var(--dd-ok); }
+.dd-calendar-account-status--error { color: var(--dd-risk); }
+.dd-calendar-spin { animation: dd-calendar-spin 1s linear infinite; }
+@keyframes dd-calendar-spin { to { transform: rotate(360deg); } }
+.dd-calendar-account-connect { align-self: start; padding: 4px 6px; border: 1px solid var(--dd-line-strong); border-radius: 7px; background: #fff; color: var(--dd-accent-deep); font-size: 8px; cursor: pointer; }
+.dd-calendar-account-connect:hover { border-color: rgba(115, 92, 232, 0.42); }
+.dd-calendar-account-connect:disabled { opacity: 0.6; cursor: wait; }
+.dd-calendar-account-actions { display: inline-flex; align-items: flex-start; gap: 3px; }
+.dd-calendar-account-settings { display: grid; width: 23px; height: 23px; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--dd-ink-3); cursor: pointer; }
+.dd-calendar-account-settings:hover { border-color: var(--dd-line-strong); background: #fff; color: var(--dd-accent-deep); }
+.dd-calendar-account-error { display: flex; grid-column: 1 / -1; flex-direction: column; gap: 5px; padding: 7px 8px; border: 1px solid rgba(207, 86, 100, 0.18); border-radius: 8px; background: rgba(255, 246, 247, 0.9); color: var(--dd-risk); font-size: 8px; line-height: 1.45; }
+.dd-calendar-account-error > div { display: flex; align-items: flex-start; gap: 4px; }
+.dd-calendar-account-error > div span { min-width: 0; overflow-wrap: anywhere; }
+.dd-calendar-account-error details { color: var(--dd-ink-3); }
+.dd-calendar-account-error summary { cursor: pointer; }
+.dd-calendar-account-error pre { max-height: 96px; margin: 5px 0 0; overflow: auto; color: var(--dd-ink-3); font: inherit; white-space: pre-wrap; }
+.dd-calendar-empty-side { padding: 12px 8px; color: var(--dd-ink-3); font-size: 9px; line-height: 1.6; }
+.dd-calendar-hub-note { display: flex; align-items: flex-start; gap: 6px; margin-top: 18px; padding: 9px 7px; border-top: 1px solid var(--dd-line); color: var(--dd-accent-deep); }
+.dd-calendar-hub-note > span { display: flex; flex-direction: column; gap: 3px; }
+.dd-calendar-hub-note b { font-size: 9px; }
+.dd-calendar-hub-note small { color: var(--dd-ink-3); font-size: 8px; line-height: 1.45; }
+.dd-calendar-main { display: flex; min-width: 0; min-height: 0; flex-direction: column; padding: 13px; }
+.dd-calendar-month-head { display: flex; align-items: center; gap: 5px; padding: 0 2px 11px; }
+.dd-calendar-month-head button { width: 26px; height: 26px; padding: 0; border: 0; background: transparent; }
+.dd-calendar-month-head h2 { margin: 0 5px; font-size: 14px; }
+.dd-calendar-month-head > span { margin-left: auto; color: var(--dd-ink-3); font-size: 9px; }
+.dd-calendar-weekdays, .dd-calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.dd-calendar-weekdays { border-top: 1px solid var(--dd-line); border-right: 1px solid var(--dd-line); }
+.dd-calendar-weekdays span { padding: 7px 6px; border-left: 1px solid var(--dd-line); color: var(--dd-ink-3); font-size: 9px; text-align: right; }
+.dd-calendar-grid { min-height: 0; flex: 1; overflow: auto; border-top: 1px solid var(--dd-line); border-right: 1px solid var(--dd-line); }
+.dd-calendar-day { display: flex; min-height: 72px; min-width: 0; flex-direction: column; align-items: stretch; gap: 4px; padding: 7px 6px; border: 0; border-left: 1px solid var(--dd-line); border-bottom: 1px solid var(--dd-line); background: rgba(255, 255, 255, 0.35); text-align: left; cursor: pointer; }
+.dd-calendar-day:hover { background: rgba(115, 92, 232, 0.055); }
+.dd-calendar-day > time { align-self: flex-end; color: var(--dd-ink-2); font-size: 9px; font-variant-numeric: tabular-nums; }
+.dd-calendar-day--muted > time { color: var(--dd-ink-3); opacity: 0.55; }
+.dd-calendar-day--today > time { display: grid; width: 21px; height: 21px; place-items: center; border-radius: 50%; background: var(--dd-accent); color: #fff; }
+.dd-calendar-day--selected { box-shadow: inset 0 0 0 2px rgba(115, 92, 232, 0.35); }
+.dd-calendar-day > div { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.dd-calendar-event-chip { overflow: hidden; padding: 3px 4px; border-radius: 4px; background: var(--dd-accent-soft); color: var(--dd-accent-deep); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.dd-calendar-day > div > small { color: var(--dd-ink-3); font-size: 8px; }
+.dd-calendar-agenda { display: flex; min-width: 0; min-height: 0; flex-direction: column; border-left: 1px solid var(--dd-line); background: rgba(248, 248, 255, 0.35); }
+.dd-calendar-agenda > header { display: flex; align-items: center; gap: 8px; padding: 16px 13px 12px; border-bottom: 1px solid var(--dd-line); }
+.dd-calendar-agenda > header > div { min-width: 0; flex: 1; }
+.dd-calendar-agenda header span { color: var(--dd-ink-3); font-size: 8.5px; }
+.dd-calendar-agenda header h2 { overflow: hidden; margin: 3px 0 0; color: var(--dd-ink); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.dd-calendar-agenda header button { width: 27px; height: 27px; padding: 0; border: 0; background: transparent; }
+.dd-calendar-agenda-list { min-height: 0; overflow: auto; padding: 11px; }
+.dd-calendar-agenda-item { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; padding: 10px; border-left: 3px solid var(--dd-accent); border-radius: 9px; background: rgba(255, 255, 255, 0.85); box-shadow: 0 3px 10px rgba(78, 66, 140, 0.05); }
+.dd-calendar-agenda-item time { color: var(--dd-accent-deep); font-size: 8.5px; font-variant-numeric: tabular-nums; }
+.dd-calendar-agenda-item b { color: var(--dd-ink); font-size: 10.5px; }
+.dd-calendar-agenda-item span, .dd-calendar-agenda-item small { display: flex; align-items: center; gap: 4px; color: var(--dd-ink-3); font-size: 8.5px; }
+.dd-calendar-add-todo { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; margin-top: 4px; padding: 5px 7px; border: 1px solid rgba(115, 92, 232, .2); border-radius: 7px; background: rgba(238, 234, 255, .58); color: var(--dd-accent-deep); font-size: 8px; cursor: pointer; }
+.dd-calendar-add-todo:hover { background: var(--dd-accent-soft); }
+.dd-calendar-empty-agenda { display: flex; min-height: 200px; flex-direction: column; align-items: center; justify-content: center; gap: 7px; padding: 20px; color: var(--dd-ink-3); text-align: center; }
+.dd-calendar-empty-agenda svg { color: var(--dd-accent); }
+.dd-calendar-empty-agenda b { color: var(--dd-ink-2); font-size: 11px; }
+.dd-calendar-empty-agenda span { font-size: 9px; line-height: 1.5; }
+.dd-calendar-modal-backdrop { position: fixed; z-index: 80; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(34, 30, 58, 0.3); backdrop-filter: blur(8px); }
+.dd-calendar-modal { width: min(580px, calc(100vw - 34px)); overflow: hidden; border: 1px solid var(--dd-line); border-radius: 18px; background: #fafaff; box-shadow: 0 24px 80px rgba(38, 30, 86, 0.28); }
+.dd-calendar-modal > header { display: flex; align-items: center; gap: 10px; padding: 16px 18px; border-bottom: 1px solid var(--dd-line); }
+.dd-calendar-modal-icon { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 11px; background: var(--dd-accent-soft); color: var(--dd-accent-deep); }
+.dd-calendar-modal header > div { min-width: 0; flex: 1; }
+.dd-calendar-modal header h2 { margin: 0; font-size: 14px; }
+.dd-calendar-modal header p { margin: 3px 0 0; color: var(--dd-ink-3); font-size: 9px; }
+.dd-calendar-modal header > button { display: grid; width: 28px; height: 28px; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--dd-ink-2); cursor: pointer; }
+.dd-calendar-form { display: flex; flex-direction: column; gap: 11px; padding: 17px 19px; }
+.dd-calendar-form label { display: flex; flex-direction: column; gap: 5px; color: var(--dd-ink-2); font-size: 9.5px; font-weight: 650; }
+.dd-calendar-form input, .dd-calendar-form select { width: 100%; padding: 8px 9px; border: 1px solid var(--dd-line-strong); border-radius: 9px; outline: 0; background: #fff; color: var(--dd-ink); font-size: 11px; }
+.dd-calendar-form input:focus, .dd-calendar-form select:focus { border-color: var(--dd-accent); box-shadow: 0 0 0 3px rgba(115, 92, 232, 0.1); }
+.dd-calendar-form-hint { margin-top: 3px; color: var(--dd-ink-3); font-size: 8px; font-weight: 400; }
+.dd-calendar-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.dd-calendar-provider-note { display: flex; align-items: flex-start; gap: 7px; padding: 9px 10px; border-radius: 10px; background: var(--dd-accent-soft); color: var(--dd-accent-deep); font-size: 9px; line-height: 1.5; }
+.dd-calendar-check { flex-direction: row !important; align-items: center; font-weight: 500 !important; }
+.dd-calendar-check input { width: 14px; height: 14px; }
+.dd-calendar-error { margin: 0; color: var(--dd-risk); font-size: 10px; }
+.dd-calendar-modal > footer { display: flex; align-items: center; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--dd-line); }
+.dd-calendar-modal > footer span { min-width: 0; flex: 1; color: var(--dd-ink-3); font-size: 9px; }
+.dd-calendar-modal > footer button { padding: 7px 11px; border: 1px solid var(--dd-line-strong); border-radius: 9px; background: #fff; color: var(--dd-ink-2); font-size: 10px; cursor: pointer; }
+.dd-calendar-modal > footer .dd-calendar-primary { border-color: var(--dd-accent); background: var(--dd-accent); color: #fff; }
+
+@media (max-width: 1120px) {
+  .dd-calendar-layout { grid-template-columns: 165px minmax(0, 1fr); }
+  .dd-calendar-agenda { display: none; }
+}
+
+@media (max-width: 760px) {
+  .dd-calendar-toolbar { align-items: flex-start; flex-direction: column; }
+  .dd-calendar-layout { height: auto; min-height: 640px; grid-template-columns: 1fr; }
+  .dd-calendar-sidebar { max-height: 180px; border-right: 0; border-bottom: 1px solid var(--dd-line); }
+  .dd-calendar-main { min-height: 520px; }
+  .dd-calendar-day { min-height: 58px; }
+}

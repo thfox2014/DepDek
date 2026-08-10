@@ -203,7 +203,7 @@ export default function OfficeView({
 
   return (
     <div className="office">
-      <h1 className="office__title">Agent 办公室</h1>
+      <h1 className="office__title">Agent Team</h1>
       <p className="office__subtitle">每个工位是一个 agent 会话，点进去即可开始协作。</p>
       <div className="office__grid">
         {sessions.map((s, i) => {

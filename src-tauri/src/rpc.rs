@@ -244,9 +244,12 @@ impl SidecarInner {
             }
             // Notification from the sidecar.
             (Some(method), None) => {
-                if method == "agent/event" {
-                    let params = msg.get("params").cloned().unwrap_or(Value::Null);
-                    (self.emit)("agent://event", params);
+                let params = msg.get("params").cloned().unwrap_or(Value::Null);
+                match method.as_str() {
+                    "agent/event" => (self.emit)("agent://event", params),
+                    "mail/event" => (self.emit)("mail://event", params),
+                    "todo/event" => (self.emit)("todo://event", params),
+                    _ => {}
                 }
             }
             (None, None) => {}
@@ -278,6 +281,15 @@ impl SidecarInner {
         let result = match method {
             "vault/read_file" => serde_json::to_value(vault.read_file(session_id, path)?),
             "vault/read_binary" => serde_json::to_value(vault.read_binary(session_id, path)?),
+            "vault/write_binary" => {
+                let data_base64 = params
+                    .get("data_base64")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        VaultError::InvalidParams("data_base64 is required".to_string())
+                    })?;
+                serde_json::to_value(vault.write_binary(session_id, path, data_base64)?)
+            }
             "vault/write_file" => {
                 let content = params
                     .get("content")
@@ -338,4 +350,42 @@ fn default_node_path() -> PathBuf {
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("node"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::engine::general_purpose::STANDARD as BASE64;
+    use base64::Engine as _;
+
+    #[tokio::test]
+    async fn vault_write_binary_rpc_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::new();
+        vault.set_root(dir.path()).unwrap();
+        let sidecar = Sidecar::with_runtime(
+            vault.clone(),
+            Arc::new(|_, _| {}),
+            PathBuf::from("node"),
+            PathBuf::from("unused.js"),
+        );
+        let bytes = [0x00, 0xFF, 0x42];
+        let result = sidecar
+            .inner
+            .handle_request(
+                "vault/write_binary",
+                json!({
+                    "session_id": "mail",
+                    "path": "mail/qq/attachments/9/01-test.bin",
+                    "data_base64": BASE64.encode(bytes),
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result["size"], bytes.len());
+        let read = vault
+            .read_binary("test", "mail/qq/attachments/9/01-test.bin")
+            .unwrap();
+        assert_eq!(BASE64.decode(read.data_base64).unwrap(), bytes);
+    }
 }

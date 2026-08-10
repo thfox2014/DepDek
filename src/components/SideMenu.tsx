@@ -2,16 +2,11 @@ import { useState } from "react";
 import type { ProviderConfig } from "../api";
 import type { SessionInfo } from "../App";
 import SessionList from "./SessionList";
-import FileTree from "./FileTree";
-import ProfilePanel from "./ProfilePanel";
+import DataFilesPanel from "./DataFilesPanel";
 import {
   IconChevron,
   IconDatabase,
-  IconFile,
-  IconIdCard,
-  IconImage,
   IconTeam,
-  IconVideo,
 } from "./icons";
 
 interface Props {
@@ -24,22 +19,9 @@ interface Props {
   onOpenSettings: () => void;
 }
 
-const IMAGE_EXT = ["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "ico"];
-const VIDEO_EXT = ["mp4", "mov", "mkv", "webm", "avi", "m4v"];
-
-type DataTab = "files" | "images" | "videos" | "profile";
-
-const DATA_TABS: { key: DataTab; label: string; icon: typeof IconFile }[] = [
-  { key: "files", label: "文件", icon: IconFile },
-  { key: "images", label: "图片", icon: IconImage },
-  { key: "videos", label: "视频", icon: IconVideo },
-  { key: "profile", label: "个人资料", icon: IconIdCard },
-];
-
 export default function SideMenu(props: Props) {
   const [teamOpen, setTeamOpen] = useState(true);
   const [dataOpen, setDataOpen] = useState(true);
-  const [tab, setTab] = useState<DataTab>("files");
 
   return (
     <div className="side-menu">
@@ -76,32 +58,7 @@ export default function SideMenu(props: Props) {
         </button>
         {dataOpen && (
           <div className="side-menu__group-body side-menu__group-body--data">
-            <div className="side-menu__tabs">
-              {DATA_TABS.map((t) => {
-                const Icon = t.icon;
-                return (
-                  <button
-                    key={t.key}
-                    className={`side-menu__tab ${tab === t.key ? "side-menu__tab--active" : ""}`}
-                    onClick={() => setTab(t.key)}
-                  >
-                    <Icon />
-                    <span>{t.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="side-menu__content">
-              {tab === "profile" ? (
-                <ProfilePanel />
-              ) : (
-                // key forces a remount so the tree reloads with the new filter.
-                <FileTree
-                  key={tab}
-                  extFilter={tab === "images" ? IMAGE_EXT : tab === "videos" ? VIDEO_EXT : undefined}
-                />
-              )}
-            </div>
+            <DataFilesPanel variant="sidebar" />
           </div>
         )}
       </div>

@@ -283,10 +283,16 @@ export default function App() {
       {view === "home" ? (
         <DepDekHome
           root={root}
-          providers={settings.providers}
           providerCount={Object.keys(settings.providers).length}
           sessionCount={sessions.length}
-          onOpenDeepWork={() => setView("office")}
+          sessions={sessions}
+          activeAgentId={activeId}
+          chats={chats}
+          running={running}
+          onSelectAgent={setActiveId}
+          onSendAgent={send}
+          onAbortAgent={abort}
+          onOpenAgentTeam={() => setView("office")}
           onOpenSettings={() => setShowSettings(true)}
           onPickRoot={pickRoot}
         />
@@ -294,9 +300,9 @@ export default function App() {
         <>
           <header className="topbar">
             <button className="topbar__back" onClick={() => setView(view === "workbench" ? "office" : "home")}>
-              {view === "workbench" ? "← 返回 Deep Work" : "← 返回 DepDek"}
+              {view === "workbench" ? "← 返回 Agent Team" : "← 返回 DepDek"}
             </button>
-            <span className="topbar__brand">DepDek · Deep Work</span>
+            <span className="topbar__brand">DepDek · Agent Team</span>
             <span className="topbar__path" title={root}>{root}</span>
             {rootError && <span className="error-text">{rootError}</span>}
             <div className="topbar__actions">

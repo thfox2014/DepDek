@@ -194,8 +194,77 @@ async fn agent_close(state: State<'_, AppState>, session_id: String) -> Result<(
 // ---------------------------------------------------------------------
 
 #[tauri::command]
-async fn mail_fetch(state: State<'_, AppState>, account: Option<String>) -> Result<Value, String> {
-    state.sidecar.request("mail/fetch", json!({ "account": account })).await
+async fn mail_fetch(
+    state: State<'_, AppState>,
+    account: Option<String>,
+    refresh_body: Option<bool>,
+) -> Result<Value, String> {
+    state
+        .sidecar
+        .request(
+            "mail/fetch",
+            json!({ "account": account, "refresh_body": refresh_body.unwrap_or(false) }),
+        )
+        .await
+}
+
+#[tauri::command]
+async fn mail_delete(
+    state: State<'_, AppState>,
+    account: String,
+    uids: Vec<u32>,
+) -> Result<Value, String> {
+    state
+        .sidecar
+        .request("mail/delete", json!({ "account": account, "uids": uids }))
+        .await
+}
+
+#[tauri::command]
+async fn calendar_sync(
+    state: State<'_, AppState>,
+    account: Option<String>,
+) -> Result<Value, String> {
+    state
+        .sidecar
+        .request("calendar/sync", json!({ "account": account }))
+        .await
+}
+
+#[tauri::command]
+async fn calendar_push(
+    state: State<'_, AppState>,
+    account: String,
+    event: Value,
+) -> Result<Value, String> {
+    state
+        .sidecar
+        .request("calendar/push", json!({ "account": account, "event": event }))
+        .await
+}
+
+// Todo queue: normalized messages are owned by the sidecar bus and persisted
+// through the same Vault trust boundary (contract sections 2.7 and 9).
+
+#[tauri::command]
+async fn todo_list(state: State<'_, AppState>) -> Result<Value, String> {
+    state.sidecar.request("todo/list", json!({})).await
+}
+
+#[tauri::command]
+async fn todo_enqueue(state: State<'_, AppState>, input: Value) -> Result<Value, String> {
+    state
+        .sidecar
+        .request("todo/enqueue", json!({ "input": input }))
+        .await
+}
+
+#[tauri::command]
+async fn todo_update(state: State<'_, AppState>, input: Value) -> Result<Value, String> {
+    state
+        .sidecar
+        .request("todo/update", json!({ "input": input }))
+        .await
 }
 
 // ---------------------------------------------------------------------
@@ -280,6 +349,12 @@ pub fn run() {
             settings_get,
             settings_set,
             mail_fetch,
+            mail_delete,
+            calendar_sync,
+            calendar_push,
+            todo_list,
+            todo_enqueue,
+            todo_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running DepDek");

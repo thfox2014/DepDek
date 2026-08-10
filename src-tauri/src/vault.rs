@@ -21,7 +21,7 @@ use crate::audit::{AuditEntry, AuditLog, Op, AUDIT_FILE_NAME};
 
 /// Single-file read/write limit for text operations (contract section 6.3).
 pub const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
-/// Single-file limit for `read_binary` (contract section 6.3).
+/// Single-file limit for binary read/write operations (contract section 6.3).
 pub const MAX_BINARY_FILE_SIZE: u64 = 64 * 1024 * 1024;
 /// Maximum matches returned by `search_files` (contract section 2.3).
 pub const MAX_SEARCH_MATCHES: usize = 50;
@@ -439,6 +439,28 @@ impl Vault {
         result
     }
 
+    /// Binary write used by trusted importers such as the mail sidecar. It is
+    /// deliberately not registered as an agent tool. The payload uses base64
+    /// because the sidecar transport is line-delimited JSON.
+    pub fn write_binary(
+        &self,
+        session_id: &str,
+        rel: &str,
+        data_base64: &str,
+    ) -> Result<WriteFileResult, VaultError> {
+        let audit_path = normalize(rel).unwrap_or_else(|_| rel.to_string());
+        let result = self.write_binary_inner(rel, data_base64);
+        self.record_audit(
+            session_id,
+            Op::Write,
+            &audit_path,
+            result
+                .as_ref()
+                .map(|r| (Some(r.sha256.clone()), Some(r.size))),
+        );
+        result
+    }
+
     pub fn list_dir(&self, session_id: &str, rel: &str) -> Result<ListDirResult, VaultError> {
         let audit_path = normalize(rel).unwrap_or_else(|_| rel.to_string());
         let result = self.list_dir_inner(rel);
@@ -538,6 +560,34 @@ impl Vault {
         Ok(WriteFileResult {
             size: content.len() as u64,
             sha256: sha256_hex(content.as_bytes()),
+        })
+    }
+
+    fn write_binary_inner(
+        &self,
+        rel: &str,
+        data_base64: &str,
+    ) -> Result<WriteFileResult, VaultError> {
+        // Reject obviously oversized encoded payloads before allocating the
+        // decoded buffer. The exact decoded length is checked again below.
+        let max_encoded_len = (MAX_BINARY_FILE_SIZE as usize).div_ceil(3) * 4;
+        if data_base64.len() > max_encoded_len + 4 {
+            return Err(VaultError::TooLarge);
+        }
+        let bytes = BASE64.decode(data_base64).map_err(|_| {
+            VaultError::InvalidParams("data_base64 is not valid base64".to_string())
+        })?;
+        if bytes.len() as u64 > MAX_BINARY_FILE_SIZE {
+            return Err(VaultError::TooLarge);
+        }
+        let (path, _) = self.resolve_for_write(rel)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&path, &bytes)?;
+        Ok(WriteFileResult {
+            size: bytes.len() as u64,
+            sha256: sha256_hex(&bytes),
         })
     }
 
@@ -985,6 +1035,41 @@ mod tests {
         assert_eq!(entry.path, "img.png");
         assert_eq!(entry.sha256.as_deref(), Some(r.sha256.as_str()));
         assert_eq!(entry.size, Some(3));
+    }
+
+    #[test]
+    fn write_binary_roundtrip_security_and_audit() {
+        let (_dir, v) = setup();
+        let bytes = [0x00, 0xFF, 0x89, 0x50, 0x4E, 0x47];
+        let encoded = BASE64.encode(bytes);
+        let written = v
+            .write_binary("mail", "mail/qq/attachments/42/01-image.png", &encoded)
+            .unwrap();
+        assert_eq!(written.size, bytes.len() as u64);
+        assert_eq!(written.sha256, sha256_hex(&bytes));
+        let read = v
+            .read_binary("user", "mail/qq/attachments/42/01-image.png")
+            .unwrap();
+        assert_eq!(BASE64.decode(read.data_base64).unwrap(), bytes);
+
+        let (entries, _) = v.audit().read(0, 10);
+        let write_entry = entries.iter().find(|entry| entry.op == Op::Write).unwrap();
+        assert_eq!(write_entry.session_id, "mail");
+        assert_eq!(write_entry.path, "mail/qq/attachments/42/01-image.png");
+        assert!(write_entry.ok);
+
+        assert_eq!(
+            v.write_binary("mail", "../escape.bin", &encoded)
+                .unwrap_err()
+                .code(),
+            -32001
+        );
+        assert_eq!(
+            v.write_binary("mail", "mail/bad.bin", "not base64!")
+                .unwrap_err()
+                .code(),
+            -32602
+        );
     }
 
     #[test]

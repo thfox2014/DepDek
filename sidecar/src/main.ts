@@ -7,7 +7,9 @@
 
 import { createStdioPeer } from "./rpc.js";
 import { SessionManager } from "./sessions.js";
-import { fetchMail } from "./mail.js";
+import { deleteMail, fetchMail } from "./mail.js";
+import { pushCalendarEvent, syncCalendar } from "./calendar.js";
+import { enqueueTodo, listTodos, updateTodo } from "./todo.js";
 import type { ProviderConfig } from "./providers.js";
 
 // Anything accidentally logged via console.log must not corrupt the protocol
@@ -25,7 +27,18 @@ peer.register("agent/create_session", (params) =>
 peer.register("agent/send", (params) => sessions.send(params.session_id, params.text));
 peer.register("agent/abort", (params) => sessions.abort(params.session_id));
 peer.register("agent/close_session", (params) => sessions.closeSession(params.session_id));
-peer.register("mail/fetch", (params) => fetchMail(peer, { account: params?.account }));
+peer.register("mail/fetch", (params) => fetchMail(peer, {
+  account: params?.account,
+  refresh_body: params?.refresh_body,
+}, undefined, (event) => peer.notify("mail/event", event)));
+peer.register("mail/delete", (params) =>
+  deleteMail(peer, { account: params.account, uids: params.uids }),
+);
+peer.register("calendar/sync", (params) => syncCalendar(peer, { account: params?.account }));
+peer.register("calendar/push", (params) => pushCalendarEvent(peer, { account: params.account, event: params.event }));
+peer.register("todo/list", () => listTodos(peer));
+peer.register("todo/enqueue", (params) => enqueueTodo(peer, params.input, (event) => peer.notify("todo/event", event)));
+peer.register("todo/update", (params) => updateTodo(peer, params.input, (event) => peer.notify("todo/event", event)));
 
 // Never crash on stray failures: report them as an agent/event error
 // notification (session_id "system" marks sidecar-level failures).

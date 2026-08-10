@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { TodoEnqueueInput, TodoItem, TodoUpdateInput } from "./todoTypes";
 
 // ---------------------------------------------------------------------------
 // Types shared with the Rust core / sidecar (see docs/contract.md).
@@ -100,6 +101,85 @@ export interface MailFetchResult {
   accounts: MailFetchAccountResult[];
 }
 
+export type MailProgressPhase = "connecting" | "connected" | "reading" | "saving" | "completed" | "error";
+
+export interface MailProgressEvent {
+  account: string;
+  phase: MailProgressPhase;
+  message: string;
+  current?: number;
+  total?: number;
+}
+
+export interface MailDeleteResult {
+  account: string;
+  deleted: number;
+}
+
+export type CalendarProvider = "google" | "microsoft" | "apple" | "caldav" | "ics";
+
+export interface CalendarAccount {
+  id: string;
+  name: string;
+  provider: CalendarProvider;
+  endpoint?: string;
+  write_endpoint?: string;
+  calendar_id?: string;
+  user?: string;
+  password?: string;
+  access_token?: string;
+  enabled?: boolean;
+  readonly?: boolean;
+}
+
+export interface CalendarEvent {
+  id: string;
+  remote_id?: string;
+  source_account_id?: string;
+  source_name?: string;
+  title: string;
+  start: string;
+  end: string;
+  all_day?: boolean;
+  location?: string;
+  description?: string;
+  updated_at?: string;
+}
+
+export interface CalendarSyncAccountResult {
+  id: string;
+  name: string;
+  imported: number;
+  error?: string;
+}
+
+export interface CalendarSyncResult {
+  imported: number;
+  accounts: CalendarSyncAccountResult[];
+}
+
+export interface CalendarPushResult {
+  account: string;
+  event_id: string;
+  remote_id: string;
+}
+
+// Canonical todo queue (contract sections 2.7 and 9).
+export interface TodoListResult {
+  version: 1;
+  updatedAt: string;
+  items: TodoItem[];
+}
+
+export interface TodoEnqueueResult {
+  item: TodoItem;
+  duplicate?: boolean;
+}
+
+export interface TodoUpdateResult {
+  item: TodoItem;
+}
+
 export interface AuditReadResult {
   entries: AuditEntry[];
   total: number;
@@ -142,8 +222,23 @@ export const agentClose = (sessionId: string) => invoke<void>("agent_close", { s
 export const settingsGet = () => invoke<Settings>("settings_get");
 export const settingsSet = (settings: Settings) => invoke<void>("settings_set", { settings });
 
-export const mailFetch = (account?: string) =>
-  invoke<MailFetchResult>("mail_fetch", { account });
+export const mailFetch = (account?: string, refreshBody = false) =>
+  invoke<MailFetchResult>("mail_fetch", { account, refreshBody });
+
+export const mailDelete = (account: string, uids: number[]) =>
+  invoke<MailDeleteResult>("mail_delete", { account, uids });
+
+export const calendarSync = (account?: string) =>
+  invoke<CalendarSyncResult>("calendar_sync", { account });
+
+export const calendarPush = (account: string, event: CalendarEvent) =>
+  invoke<CalendarPushResult>("calendar_push", { account, event });
+
+export const todoList = () => invoke<TodoListResult>("todo_list");
+export const todoEnqueue = (input: TodoEnqueueInput) =>
+  invoke<TodoEnqueueResult>("todo_enqueue", { input });
+export const todoUpdate = (input: TodoUpdateInput) =>
+  invoke<TodoUpdateResult>("todo_update", { input });
 
 // ---------------------------------------------------------------------------
 // Tauri events (contract section 4).
@@ -154,3 +249,9 @@ export const onAgentEvent = (cb: (ev: AgentEvent) => void): Promise<UnlistenFn> 
 
 export const onAuditEntry = (cb: (entry: AuditEntry) => void): Promise<UnlistenFn> =>
   listen<AuditEntry>("vault://audit", (e) => cb(e.payload));
+
+export const onMailEvent = (cb: (payload: MailProgressEvent) => void): Promise<UnlistenFn> =>
+  listen<MailProgressEvent>("mail://event", (e) => cb(e.payload));
+
+export const onTodoEvent = (cb: (payload: Record<string, unknown>) => void): Promise<UnlistenFn> =>
+  listen<Record<string, unknown>>("todo://event", (e) => cb(e.payload));

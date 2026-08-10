@@ -1,13 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ArrowClockwise,
-  ArrowUpRight,
   Books,
   Brain,
   CalendarBlank,
   Check,
   CheckCircle,
   CheckSquare,
+  ClipboardText,
   CirclesThreePlus,
   EnvelopeSimple,
   FileText,
@@ -24,14 +23,22 @@ import {
   ShieldCheck,
   Sparkle,
   SquaresFour,
+  SidebarSimple,
   Tray,
   Warning,
   X,
 } from "@phosphor-icons/react";
 import type { Icon } from "@phosphor-icons/react";
-import type { ProviderConfig } from "../api";
+import * as api from "../api";
+import type { ChatBlock, SessionInfo } from "../App";
+import type { TaskRecord, TaskReporter, TaskStartInput, TaskUpdate } from "../taskTypes";
+import { enqueueTodo, listTodos, subscribeTodoChanges, updateTodo } from "../todoStore";
+import type { TodoItem } from "../todoTypes";
 import logo from "../assets/depdek-logo.png";
+import CalendarView from "./CalendarView";
+import DataFilesPanel from "./DataFilesPanel";
 import InboxView from "./InboxView";
+import TodoBoard from "./TodoBoard";
 import "./depdek-home.css";
 
 type ViewName =
@@ -48,12 +55,18 @@ type ViewName =
 
 interface Props {
   root: string;
-  providers: Record<string, ProviderConfig>;
   providerCount: number;
   sessionCount: number;
-  onOpenDeepWork: () => void;
+  onOpenAgentTeam: () => void;
   onOpenSettings: () => void;
   onPickRoot: () => void;
+  sessions: SessionInfo[];
+  activeAgentId: string | null;
+  chats: Record<string, ChatBlock[]>;
+  running: Record<string, boolean>;
+  onSelectAgent: (id: string) => void;
+  onSendAgent: (id: string, text: string) => Promise<void>;
+  onAbortAgent: (id: string) => Promise<void>;
 }
 
 interface NavItem {
@@ -67,8 +80,8 @@ interface NavItem {
 const WORK_NAV: NavItem[] = [
   { key: "today", label: "今天", icon: SquaresFour },
   { key: "calendar", label: "日历", icon: CalendarBlank },
-  { key: "todo", label: "待办", icon: CheckSquare, badge: "4" },
-  { key: "inbox", label: "收件箱", icon: Tray, badge: "3" },
+  { key: "todo", label: "待办", icon: CheckSquare },
+  { key: "inbox", label: "收件箱", icon: Tray },
 ];
 
 const DATA_NAV: NavItem[] = [
@@ -97,12 +110,13 @@ const VIEW_TITLES: Record<ViewName, string> = {
 };
 
 const pad = (n: number) => String(n).padStart(2, "0");
+const TASK_HISTORY_PATH = "tasks/history.json";
 
 function ToolButtons() {
   return (
     <div className="dd-card-tools" aria-label="卡片工具">
       <button title="收起"><Minus size={13} /></button>
-      <button title="展开"><ArrowUpRight size={13} /></button>
+      <button title="调整布局"><SidebarSimple size={13} /></button>
     </div>
   );
 }
@@ -153,29 +167,45 @@ function Timeline() {
   );
 }
 
-interface TaskItem { id: number; title: string; source: string; done: boolean; pending?: boolean }
-
 function TodayView({ notify, openAction }: { notify: (message: string) => void; openAction: () => void }) {
-  const [tasks, setTasks] = useState<TaskItem[]>([
-    { id: 1, title: "回复法务关于授权范围的邮件", source: "来源：邮件 · 已写回标记", done: true },
-    { id: 2, title: "整理评审会议纪要", source: "手动创建", done: true },
-    { id: 3, title: "确认「续费域名」抽取任务", source: "DepDek 从邮件抽取 · 待你确认", done: false, pending: true },
-    { id: 4, title: "给阳台的薄荷换大花盆", source: "便签 · 生活", done: false },
-  ]);
+  const [tasks, setTasks] = useState<TodoItem[]>([]);
   const [draft, setDraft] = useState("");
-  const doneCount = tasks.filter((task) => task.done).length;
+  const loadTasks = useCallback(async () => {
+    try {
+      setTasks((await listTodos()).slice(0, 6));
+    } catch (error) {
+      notify(`读取今日待办失败：${String(error)}`);
+    }
+  }, [notify]);
+  useEffect(() => {
+    void loadTasks();
+    return subscribeTodoChanges(() => void loadTasks());
+  }, [loadTasks]);
+  const doneCount = tasks.filter((task) => task.lane === "done").length;
 
-  const toggleTask = (id: number) => {
-    setTasks((current) => current.map((task) => task.id === id ? { ...task, done: !task.done } : task));
-    notify("承诺状态已更新 · 仅写入本地记录");
+  const toggleTask = async (id: string) => {
+    const current = tasks.find((task) => task.id === id);
+    if (!current) return;
+    try {
+      const item = await updateTodo({ id, lane: current.lane === "done" ? "backlog" : "done" });
+      setTasks((previous) => previous.map((task) => task.id === id ? item : task));
+      notify("承诺状态已更新 · 已写入统一待办队列");
+    } catch (error) {
+      notify(`更新待办失败：${String(error)}`);
+    }
   };
 
-  const addTask = () => {
+  const addTask = async () => {
     const title = draft.trim();
     if (!title) return;
-    setTasks((current) => [...current, { id: Date.now(), title, source: "指令栏 · 仅本地", done: false }]);
-    setDraft("");
-    notify(`已在本地创建：「${title.length > 18 ? `${title.slice(0, 18)}…` : title}」`);
+    try {
+      const item = await enqueueTodo({ title, source: { type: "manual", label: "今日概览" }, priority: "other", lane: "backlog" });
+      setTasks((current) => [item, ...current].slice(0, 6));
+      setDraft("");
+      notify(`已在统一队列创建：「${title.length > 18 ? `${title.slice(0, 18)}…` : title}」`);
+    } catch (error) {
+      notify(`创建待办失败：${String(error)}`);
+    }
   };
 
   return (
@@ -186,31 +216,31 @@ function TodayView({ notify, openAction }: { notify: (message: string) => void; 
       </div>
       <div className="dd-grid">
         <article className="dd-card dd-col-7 dd-card--timeline">
-          <CardHeader tag="日程与时间轴 · 日历（只读）" title="今日时间轴" />
+          <CardHeader tag="日程与时间轴 · 日历中枢" title="今日时间轴" />
           <Timeline />
-          <SourceNote>来源：日历连接（只读） · 10 分钟前同步</SourceNote>
+          <SourceNote>来源：本地日历中枢 · 外部连接 10 分钟前同步</SourceNote>
         </article>
 
         <article className="dd-card dd-col-5 dd-card--tasks">
           <CardHeader tag="待办与任务" title="今天要完成的事" />
-          <div className="dd-progress-head"><strong>{doneCount}</strong> / {tasks.length} 项 <span>{Math.round(doneCount / tasks.length * 100)}%</span></div>
-          <div className="dd-progress"><i style={{ width: `${doneCount / tasks.length * 100}%` }} /></div>
+          <div className="dd-progress-head"><strong>{doneCount}</strong> / {tasks.length} 项 <span>{tasks.length ? `${Math.round(doneCount / tasks.length * 100)}%` : "暂无"}</span></div>
+          <div className="dd-progress"><i style={{ width: `${tasks.length ? doneCount / tasks.length * 100 : 0}%` }} /></div>
           <div className="dd-task-list">
             {tasks.map((task) => (
-              <button className={`dd-task ${task.done ? "dd-task--done" : ""}`} key={task.id} onClick={() => toggleTask(task.id)}>
-                <span className="dd-check">{task.done && <Check size={11} weight="bold" />}</span>
-                <span><b>{task.title}</b><small>{task.source}</small></span>
-                {task.pending && <StatusPill tone="warn">待确认</StatusPill>}
-                {task.done && <StatusPill tone="ok">已完成</StatusPill>}
+              <button className={`dd-task ${task.lane === "done" ? "dd-task--done" : ""}`} key={task.id} onClick={() => void toggleTask(task.id)}>
+                <span className="dd-check">{task.lane === "done" && <Check size={11} weight="bold" />}</span>
+                <span><b>{task.title}</b><small>{task.source.type === "mail" ? "来源：邮件" : task.source.type === "calendar" ? "来源：日历" : task.source.label ?? "来源：待办队列"}</small></span>
+                {task.lane === "blocked" && <StatusPill tone="warn">等待中</StatusPill>}
+                {task.lane === "done" && <StatusPill tone="ok">已完成</StatusPill>}
               </button>
             ))}
           </div>
           <div className="dd-quick-add">
             <Plus size={15} />
-            <input value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => event.key === "Enter" && addTask()} placeholder="试试输入「明天下午 3 点提醒我续费」" />
-            <button onClick={addTask}>添加</button>
+            <input value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => event.key === "Enter" && void addTask()} placeholder="试试输入「明天下午 3 点提醒我续费」" />
+            <button onClick={() => void addTask()}>添加</button>
           </div>
-          <SourceNote>仅本地保存 · 写回外部服务需逐次确认</SourceNote>
+          <SourceNote>统一队列 · 写回外部服务需逐次确认</SourceNote>
         </article>
 
         <article className="dd-card dd-col-4">
@@ -260,7 +290,7 @@ function TodayView({ notify, openAction }: { notify: (message: string) => void; 
           </div>
           <div className="dd-health-item"><Robot size={17} /><span><b>本地模型 Qwen3-8B</b><small>运行中 · 38 tok/s</small></span><StatusPill tone="ok">本地</StatusPill></div>
           <div className="dd-health-item"><EnvelopeSimple size={17} /><span><b>邮件连接</b><small>10 分钟前同步</small></span><StatusPill tone="ok">健康</StatusPill></div>
-          <div className="dd-health-item"><CalendarBlank size={17} /><span><b>日历连接</b><small>权限 7 天后到期</small></span><StatusPill tone="warn">续期</StatusPill></div>
+          <div className="dd-health-item"><CalendarBlank size={17} /><span><b>日历中枢</b><small>外部连接 10 分钟前同步</small></span><StatusPill tone="ok">健康</StatusPill></div>
           <SourceNote>断网仍可浏览、搜索与编辑</SourceNote>
         </article>
 
@@ -277,19 +307,40 @@ function TodayView({ notify, openAction }: { notify: (message: string) => void; 
 }
 
 const VIEW_COPY: Record<Exclude<ViewName, "today">, { eyebrow: string; title: string; lead: string; cards: Array<[string, string, string]> }> = {
-  calendar: { eyebrow: "CALENDAR / 时间主权", title: "日历", lead: "先看见时间，再让模型提出建议；任何写回都需要 Action 审批。", cards: [["本周时间分配", "深度工作 11h · 会议 8h", "本地聚合"], ["冲突与建议", "周四 15:00 有一处重叠", "等待确认"], ["连接状态", "日历只读 · 7 天后续期", "来源可追溯"]] },
+  calendar: { eyebrow: "CALENDAR / 时间主权", title: "日历", lead: "先看见时间，再让模型提出建议；外部写回由你逐次确认。", cards: [["本周时间分配", "深度工作 11h · 会议 8h", "本地聚合"], ["冲突与建议", "周四 15:00 有一处重叠", "等待确认"], ["连接状态", "外部连接 10 分钟前同步", "来源可追溯"]] },
   todo: { eyebrow: "TASKS / 个人承诺", title: "待办", lead: "从邮件、日历和文档发现承诺，先确认，再进入执行系统。", cards: [["今天", "4 项 · 已完成 2 项", "本地记录"], ["待确认抽取", "2 项来自邮件", "模型推断"], ["等待中", "3 项等待他人", "建议跟进"]] },
   inbox: { eyebrow: "INBOX / 从信息到行动", title: "收件箱", lead: "统一处理邮件、行动项、草稿和需要你做决定的内容。", cards: [["需要回复", "3 封邮件", "IMAP 本地副本"], ["行动项", "2 项待你确认", "来源可回溯"], ["待发送草稿", "1 封高风险行动", "逐次审批"]] },
   knowledge: { eyebrow: "KNOWLEDGE / 可追溯的理解", title: "知识", lead: "跨来源检索你的文档、笔记和记录；事实、推断与建议严格分开。", cards: [["本地索引", "12,482 条记录", "SQLite FTS"], ["最近知识", "Q3 预算口径备忘", "来自本地文件"], ["语义检索", "可关闭且不影响全文搜索", "本地模型"]] },
   files: { eyebrow: "FILES / 开放的数据家园", title: "文件", lead: "现有 Vault 继续作为本地文件信任边界，并逐步迁移到 Personal Data Home。", cards: [["当前 Home", "已连接本地目录", "Rust Vault"], ["对象与记录", "Home v2 待实现", "不伪装为已接通"], ["可验证导出", "JSONL / Markdown / ICS", "开放格式"]] },
   automation: { eyebrow: "AUTOMATION / 有边界的代理", title: "自动化", lead: "低风险任务可以自动执行；越接近外部世界，审批越明确。", cards: [["运行中", "3 条本地整理规则", "无需联网"], ["等待审批", "发送邮件给 Alice", "高风险"], ["失败队列", "日历权限即将到期", "需处理"]] },
-  connections: { eyebrow: "CONNECTIONS / 数据回到本地", title: "连接", lead: "服务是数据源和行动通道，DepDek 才是你的长期主数据层。", cards: [["邮件", "10 分钟前同步", "凭据将迁移到钥匙串"], ["日历", "只读 · 7 天后续期", "固定权限范围"], ["本地文件", "索引健康", "Rust 沙箱"]] },
+  connections: { eyebrow: "CONNECTIONS / 数据回到本地", title: "连接", lead: "服务是数据源和行动通道，DepDek 才是你的长期主数据层。", cards: [["邮件", "10 分钟前同步", "凭据将迁移到钥匙串"], ["日历", "本地中枢 · 可选写回", "固定权限范围"], ["本地文件", "索引健康", "Rust 沙箱"]] },
   memory: { eyebrow: "MEMORY / 你定义你自己", title: "记忆", lead: "模型推断先进入待确认；每条记忆都有来源、置信度、有效期和使用记录。", cards: [["待确认", "2 条候选记忆", "模型推断"], ["已确认", "9 条长期记忆", "用户治理"], ["本月删除", "5 条", "删除立即生效"]] },
   privacy: { eyebrow: "PRIVACY / 数据去哪了", title: "数据与隐私", lead: "每次数据访问、模型外发和外部写操作都应该留下可理解的凭证。", cards: [["本地数据", "83.6 GB · 100% 本机", "Personal Data Home"], ["云端外发", "本月 3 次", "均有回执"], ["凭据", "0 条进入数据目录", "OS Keychain 目标"]] },
 };
 
-function DomainView({ name, root, providerCount, sessionCount, openDeepWork, notify }: { name: Exclude<ViewName, "today">; root: string; providerCount: number; sessionCount: number; openDeepWork: () => void; notify: (message: string) => void }) {
-  if (name === "inbox") return <InboxView />;
+function FilesView({ root }: { root: string }) {
+  return (
+    <>
+      <div className="dd-view-head">
+        <div><div className="dd-eyebrow">FILES / PERSONAL DATA HOME</div><h1>文件</h1></div>
+        <span>Agent Team 的文件管理已迁移到这里 · 浏览、筛选和预览都在本地完成</span>
+      </div>
+      <section className="dd-files-shell">
+        <header className="dd-files-header">
+          <div className="dd-files-title"><HardDrives size={25} /><div><b>我的数据</b><small title={root}>{root}</small></div></div>
+          <span className="dd-files-local"><ShieldCheck size={14} />本地 Home · 操作写入审计</span>
+        </header>
+        <DataFilesPanel variant="page" />
+      </section>
+    </>
+  );
+}
+
+function DomainView({ name, root, providerCount, sessionCount, openAgentTeam, notify, onStartTask, onUpdateTask, onInboxCountChange }: { name: Exclude<ViewName, "today">; root: string; providerCount: number; sessionCount: number; openAgentTeam: () => void; notify: (message: string) => void; onInboxCountChange: (previewCount?: number) => void } & TaskReporter) {
+  if (name === "inbox") return <InboxView onStartTask={onStartTask} onUpdateTask={onUpdateTask} onInboxCountChange={onInboxCountChange} />;
+  if (name === "calendar") return <CalendarView onStartTask={onStartTask} onUpdateTask={onUpdateTask} />;
+  if (name === "todo") return <TodoBoard notify={notify} />;
+  if (name === "files") return <FilesView root={root} />;
   const view = VIEW_COPY[name];
   return (
     <>
@@ -299,7 +350,6 @@ function DomainView({ name, root, providerCount, sessionCount, openDeepWork, not
           <article className="dd-domain-card" key={title}>
             <span className="dd-domain-index">0{index + 1}</span>
             <h2>{title}</h2><strong>{value}</strong><p>{note}</p>
-            {name === "files" && index === 0 && <button onClick={openDeepWork}>打开真实文件工作区</button>}
             {name === "connections" && index === 0 && <button onClick={() => notify("邮件连接详情来自当前 Vault 配置")}>查看连接</button>}
           </article>
         ))}
@@ -307,11 +357,44 @@ function DomainView({ name, root, providerCount, sessionCount, openDeepWork, not
       <article className="dd-card dd-domain-note">
         <CardHeader tag="实施边界" title="这部分正在按 PRD 逐步接通" />
         <p>当前版本保留真实 Vault、邮件、Agent、Provider 与审计能力；Home v2、Credential Broker、Connector SDK、Model Gateway 和 Action Engine 会按重构路线分阶段替换这些原型状态。</p>
-        <div className="dd-domain-actions"><button onClick={openDeepWork}>进入现有 Deep Work</button><button onClick={() => notify(`当前 Provider ${providerCount} 个 · Agent ${sessionCount} 个`)}>查看运行摘要</button></div>
+        <div className="dd-domain-actions"><button onClick={openAgentTeam}>进入 Agent Team</button><button onClick={() => notify(`当前 Provider ${providerCount} 个 · Agent ${sessionCount} 个`)}>查看运行摘要</button></div>
         <SourceNote>当前数据目录：{root}</SourceNote>
       </article>
     </>
   );
+}
+
+function TaskCenter({ open, tasks, close }: { open: boolean; tasks: TaskRecord[]; close: () => void }) {
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  if (!open) return null;
+  const running = tasks.filter((task) => task.status === "running");
+  const recent = tasks.filter((task) => task.status !== "running").slice(0, 6);
+  const statusLabel = (status: TaskRecord["status"]) => status === "running" ? "执行中" : status === "success" ? "已完成" : "失败";
+  const taskProgress = (task: TaskRecord) => {
+    if (!task.progress) return null;
+    const total = task.progress.total ?? 0;
+    const percent = total > 0 ? Math.min(100, Math.round(task.progress.current / total * 100)) : 0;
+    return <div className="dd-task-progress"><div><i style={{ width: `${percent}%` }} /></div><small>{task.progress.label ?? "处理中"} · {total > 0 ? `${task.progress.current}/${total}` : task.progress.current}</small></div>;
+  };
+  const taskLogs = (task: TaskRecord) => task.logs.length > 0 && <div className="dd-task-logs" aria-label={`${task.title} 日志`}>
+    {task.logs.slice(-4).map((log, index) => <div className={`dd-task-log dd-task-log--${log.level}`} key={`${log.ts}-${index}`}><time>{new Date(log.ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time><span>{log.message}</span></div>)}
+  </div>;
+  const taskRow = (task: TaskRecord) => <div className={`dd-task-row dd-task-row--${task.status}`} key={task.id} role="button" tabIndex={0} onClick={() => setSelectedTaskId(task.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedTaskId(task.id); } }}><span className="dd-task-status-dot" /><div><b>{task.title}</b><small>{task.detail}{task.message ? ` · ${task.message}` : ""}</small>{taskProgress(task)}{taskLogs(task)}<span className="dd-task-open-log">查看完整日志{task.logs.length > 4 ? ` · ${task.logs.length} 条` : ""}</span></div><em>{statusLabel(task.status)}</em></div>;
+  const selectedTask = selectedTaskId ? tasks.find((task) => task.id === selectedTaskId) : undefined;
+  return <>
+    <section className="dd-task-center" role="dialog" aria-modal="false" aria-label="任务中心">
+      <header><div><b>任务</b><small>{running.length ? `${running.length} 项正在执行` : "所有任务均已处理"}</small></div><button onClick={close} aria-label="关闭任务中心"><X size={17} /></button></header>
+      <div className="dd-task-center-body">
+        {running.length > 0 && <div className="dd-task-center-label">正在执行</div>}
+        {running.map(taskRow)}
+        {recent.length > 0 && <div className="dd-task-center-label">最近任务</div>}
+        {recent.map(taskRow)}
+        {tasks.length === 0 && <div className="dd-task-center-empty"><ClipboardText size={26} /><b>还没有执行中的任务</b><span>当你收取邮件或运行本地整理时，任务会显示在这里。</span></div>}
+      </div>
+      <footer><ShieldCheck size={13} />完整日志已备份到本地 `tasks/history.json`</footer>
+    </section>
+    {selectedTask && <div className="dd-task-log-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setSelectedTaskId(null)}><section className="dd-task-log-dialog" role="dialog" aria-modal="true" aria-label={`${selectedTask.title} 完整日志`}><header><div><b>{selectedTask.title}</b><small>{selectedTask.status === "running" ? "后台执行中" : selectedTask.status === "success" ? "执行完成" : "执行失败"} · {selectedTask.logs.length} 条日志</small></div><button onClick={() => setSelectedTaskId(null)} aria-label="关闭完整日志"><X size={17} /></button></header><div className="dd-task-log-summary"><span>{selectedTask.detail}</span>{selectedTask.message && <span>{selectedTask.message}</span>}</div><div className="dd-task-log-full">{selectedTask.logs.length ? selectedTask.logs.map((log, index) => <div className={`dd-task-log dd-task-log--${log.level}`} key={`${log.ts}-${index}`}><time>{new Date(log.ts).toLocaleString("zh-CN", { hour12: false })}</time><span>{log.message}</span></div>) : <span>暂无日志</span>}</div><footer><span>来源：任务中心 · 本地备份</span><button onClick={() => setSelectedTaskId(null)}>返回任务</button><button className="dd-task-log-primary" onClick={close}>关闭任务中心</button></footer></section></div>}
+  </>;
 }
 
 function CommandPalette({ open, close, go, openAction }: { open: boolean; close: () => void; go: (view: ViewName) => void; openAction: () => void }) {
@@ -350,94 +433,189 @@ function ActionSheet({ open, close, notify }: { open: boolean; close: () => void
   );
 }
 
-interface ModelOption {
-  id: string;
-  provider: string;
-  model: string;
-  kind: ProviderConfig["kind"];
-}
-
 function Copilot({
   open,
   close,
   activeView,
-  providers,
-  onOpenSettings,
+  sessions,
+  activeAgentId,
+  chats,
+  running,
+  onSelectAgent,
+  onSendAgent,
+  onAbortAgent,
+  onOpenAgentTeam,
 }: {
   open: boolean;
   close: () => void;
   activeView: ViewName;
-  providers: Record<string, ProviderConfig>;
-  onOpenSettings: () => void;
+  sessions: SessionInfo[];
+  activeAgentId: string | null;
+  chats: Record<string, ChatBlock[]>;
+  running: Record<string, boolean>;
+  onSelectAgent: (id: string) => void;
+  onSendAgent: (id: string, text: string) => Promise<void>;
+  onAbortAgent: (id: string) => Promise<void>;
+  onOpenAgentTeam: () => void;
 }) {
-  const modelOptions = useMemo<ModelOption[]>(
-    () => Object.entries(providers)
-      .filter(([, config]) => config.model.trim())
-      .map(([provider, config]) => ({
-        id: `${provider}::${config.model}`,
-        provider,
-        model: config.model,
-        kind: config.kind,
-      })),
-    [providers],
-  );
-  const [selectedModelId, setSelectedModelId] = useState("");
-  const [messages, setMessages] = useState<Array<{ from: "me" | "ai"; text: string }>>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState(activeAgentId ?? sessions[0]?.id ?? "");
   const [draft, setDraft] = useState("");
-  const selectedModel = modelOptions.find((option) => option.id === selectedModelId) ?? modelOptions[0];
+  const selectedAgent = sessions.find((session) => session.id === selectedAgentId) ?? sessions[0];
+  const selectedBlocks = selectedAgent ? chats[selectedAgent.id] ?? [] : [];
+  const isRunning = selectedAgent ? Boolean(running[selectedAgent.id]) : false;
 
   useEffect(() => {
-    if (selectedModel && selectedModel.id !== selectedModelId) setSelectedModelId(selectedModel.id);
-    if (!selectedModel && selectedModelId) setSelectedModelId("");
-  }, [selectedModel, selectedModelId]);
+    const next = activeAgentId && sessions.some((session) => session.id === activeAgentId) ? activeAgentId : sessions[0]?.id ?? "";
+    if (next !== selectedAgentId) setSelectedAgentId(next);
+  }, [activeAgentId, selectedAgentId, sessions]);
+
+  const selectAgent = (id: string) => {
+    setSelectedAgentId(id);
+    onSelectAgent(id);
+  };
 
   const send = () => {
     const text = draft.trim();
-    if (!text) return;
-    const modelLabel = selectedModel ? `${selectedModel.provider} · ${selectedModel.model}` : "尚未连接模型";
-    setMessages((current) => [...current, { from: "me", text }, { from: "ai", text: `已用 ${modelLabel} 处理。这是本地 UX 原型回复。真实版本会先声明数据范围，并在需要云端时展示外发预览。` }]);
+    if (!text || !selectedAgent || isRunning) return;
     setDraft("");
+    void onSendAgent(selectedAgent.id, text);
   };
+
+  const openTeam = () => {
+    close();
+    onOpenAgentTeam();
+  };
+
+  const renderBlock = (block: ChatBlock) => {
+    switch (block.kind) {
+      case "user":
+        return <div key={block.id} className="dd-message dd-message--me">{block.text}</div>;
+      case "assistant":
+        return <div key={block.id} className="dd-message dd-message--ai">{block.text || "…"}</div>;
+      case "error":
+        return <div key={block.id} className="dd-message dd-message--ai dd-message--error"><StatusPill tone="risk">执行失败</StatusPill><p>{block.message}</p></div>;
+      case "tool":
+        return <div key={block.id} className="dd-message dd-message--ai dd-message--tool"><StatusPill tone={block.ok === false ? "risk" : block.ok ? "ok" : "muted"}>工具 · {block.ok === undefined ? "执行中" : block.ok ? "完成" : "失败"}</StatusPill><p>{block.name}</p></div>;
+      case "status":
+        return <div key={block.id} className="dd-message dd-message--status">{block.text}</div>;
+    }
+  };
+
   return (
     <aside className={`dd-copilot ${open ? "dd-copilot--open" : ""}`}>
-      <header><img src={logo} alt="DepDek" /><div><b>DepDek Copilot</b><small>围绕「{VIEW_TITLES[activeView]}」协作 · 默认本地模型</small></div><button onClick={close} aria-label="关闭 Copilot"><X size={18} /></button></header>
+      <header><img src={logo} alt="DepDek" /><div><b>DepDek Copilot</b><small>{selectedAgent ? `Agent Team · ${selectedAgent.label}` : `围绕「${VIEW_TITLES[activeView]}」协作 · 请选择 Agent`}</small></div><button onClick={close} aria-label="关闭 Copilot"><X size={18} /></button></header>
       <div className="dd-copilot-body">
-        <div className="dd-message dd-message--me">我这周还有哪些承诺没完成？</div>
-        <div className="dd-message dd-message--ai"><StatusPill tone="ok">事实 · 来自本地记录</StatusPill><p>本周你共创建 <b>12 项承诺</b>，已闭环 8 项。未完成 4 项：预算反馈、域名续费、连接中心总结和阅读计划。</p><div className="dd-source-chips"><span>任务库 · 12 条</span><span>邮件 · 2 封</span><span>日历 · 3 项</span></div></div>
-        <div className="dd-message dd-message--ai"><StatusPill tone="warn">推断 · 供参考</StatusPill><p>域名续费风险最高：有硬截止且涉及付款。建议今晚留 5 分钟处理。</p></div>
-        {messages.map((message, index) => <div key={`${message.from}-${index}`} className={`dd-message dd-message--${message.from}`}>{message.text}</div>)}
+        {!selectedAgent && <div className="dd-copilot-empty"><Robot size={28} /><b>先选择一个 Agent</b><span>从 Agent Team 选择工作伙伴，建立独立 chat。</span><button onClick={openTeam}>打开 Agent Team</button></div>}
+        {selectedAgent && selectedBlocks.length === 0 && <div className="dd-copilot-empty dd-copilot-empty--agent"><StatusPill tone="ok">已连接</StatusPill><b>{selectedAgent.label}</b><span>向这个 Agent 发送第一条消息即可建立 chat。</span></div>}
+        {selectedBlocks.map(renderBlock)}
+        {selectedAgent && isRunning && <div className="dd-message dd-message--status">{selectedAgent.label} 正在思考…</div>}
       </div>
       <footer>
-        <div className="dd-copilot-composer"><input value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => event.key === "Enter" && send()} placeholder="继续提问，或让我起草、整理、计划…" /><button onClick={send} aria-label="发送"><PaperPlaneTilt size={17} weight="fill" /></button></div>
-        <div className="dd-model-switcher">
+        <div className="dd-copilot-composer"><input disabled={!selectedAgent || isRunning} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => event.key === "Enter" && send()} placeholder={selectedAgent ? "和当前 Agent 聊点什么…" : "先从 Agent Team 选择一个 Agent"} /><button disabled={!selectedAgent || isRunning} onClick={send} aria-label="发送"><PaperPlaneTilt size={17} weight="fill" /></button></div>
+        <div className="dd-agent-switcher">
           <Robot size={15} />
-          {modelOptions.length > 0 ? (
+          {sessions.length > 0 ? (
             <label>
-              <small>当前模型</small>
-              <select aria-label="切换 Copilot 模型" value={selectedModel?.id ?? ""} onChange={(event) => setSelectedModelId(event.target.value)}>
-                {modelOptions.map((option) => <option key={option.id} value={option.id}>{option.provider} · {option.model}</option>)}
+              <small>当前 Agent · {isRunning ? "执行中" : "可对话"}</small>
+              <select aria-label="选择 Agent Team 中的 Agent" value={selectedAgent?.id ?? ""} onChange={(event) => selectAgent(event.target.value)}>
+                {sessions.map((session) => <option key={session.id} value={session.id}>{session.label} · {session.providerName}</option>)}
               </select>
             </label>
           ) : (
-            <button className="dd-model-empty" onClick={onOpenSettings}>连接一个 Provider 模型</button>
+            <button className="dd-agent-empty" onClick={openTeam}>去 Agent Team 创建 Agent</button>
           )}
-          {selectedModel && <span className="dd-model-kind">{selectedModel.kind === "openai-compatible" ? "兼容接口" : selectedModel.kind}</span>}
-          <button className="dd-model-manage" onClick={onOpenSettings}>管理</button>
+          {selectedAgent && <button className="dd-agent-manage" onClick={openTeam}>管理</button>}
+          {selectedAgent && isRunning && <button className="dd-agent-abort" onClick={() => void onAbortAgent(selectedAgent.id)}>停止</button>}
         </div>
-        <small className="dd-copilot-note"><ShieldCheck size={12} />本次对话在本地完成 · 升级云端会先展示外发预览</small>
+        <small className="dd-copilot-note"><ShieldCheck size={12} />chat 由 Agent Team 会话承载 · 数据范围和外发策略仍由你控制</small>
       </footer>
     </aside>
   );
 }
 
-export default function DepDekHome({ root, providers, providerCount, sessionCount, onOpenDeepWork, onOpenSettings, onPickRoot }: Props) {
+export default function DepDekHome({ root, providerCount, sessionCount, onOpenAgentTeam, onOpenSettings, onPickRoot, sessions, activeAgentId, chats, running, onSelectAgent, onSendAgent, onAbortAgent }: Props) {
   const [activeView, setActiveView] = useState<ViewName>("today");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [actionOpen, setActionOpen] = useState(false);
+  const [taskCenterOpen, setTaskCenterOpen] = useState(false);
+  const [tasks, setTasks] = useState<TaskRecord[]>([]);
+  const [taskHistoryLoaded, setTaskHistoryLoaded] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [todoCount, setTodoCount] = useState(0);
+  const [inboxCount, setInboxCount] = useState(0);
   const now = useMemo(() => new Date(), []);
   const [time, setTime] = useState(`${pad(now.getHours())}:${pad(now.getMinutes())}`);
+
+  const refreshTodoCount = useCallback(async () => {
+    try {
+      const items = await listTodos();
+      setTodoCount(items.filter((item) => item.lane !== "done").length);
+    } catch {
+      setTodoCount(0);
+    }
+  }, []);
+
+  const refreshInboxCount = useCallback(async (previewCount?: number) => {
+    if (typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window)) {
+      setInboxCount(previewCount ?? 2);
+      return;
+    }
+    try {
+      const config = JSON.parse((await api.vaultReadFile("mail/accounts.json")).content) as { accounts?: api.MailAccount[] };
+      let messageStates: Record<string, { read?: boolean; archived?: boolean; folder?: string }> = {};
+      try {
+        const index = JSON.parse((await api.vaultReadFile("mail/index.json")).content) as { messages?: Record<string, { read?: boolean; archived?: boolean; folder?: string }> };
+        messageStates = index.messages ?? {};
+      } catch {
+        // A missing derived index means all local messages are unread.
+      }
+      const counts = await Promise.all((config.accounts ?? []).map(async (account) => {
+        try {
+          const { entries } = await api.vaultListDir(`mail/${account.name}`);
+          return entries.filter((entry) => {
+            if (entry.kind !== "file" || !entry.name.endsWith(".md")) return false;
+            const state = messageStates[`mail/${account.name}/${entry.name}`];
+            return !state?.read && !state?.archived && !["trash", "sent", "drafts", "archive"].includes(state?.folder ?? "");
+          }).length;
+        } catch {
+          return 0;
+        }
+      }));
+      setInboxCount(counts.reduce((sum, count) => sum + count, 0));
+    } catch {
+      setInboxCount(0);
+    }
+  }, [root]);
+
+  useEffect(() => {
+    void refreshTodoCount();
+    const unsubscribe = subscribeTodoChanges(() => { void refreshTodoCount(); });
+    return unsubscribe;
+  }, [refreshTodoCount, root]);
+
+  useEffect(() => { void refreshInboxCount(); }, [refreshInboxCount]);
+
+  useEffect(() => {
+    let active = true;
+    void api.vaultReadFile(TASK_HISTORY_PATH).then((result) => {
+      if (!active) return;
+      const parsed = JSON.parse(result.content) as { tasks?: TaskRecord[] };
+      setTasks((parsed.tasks ?? []).map((task) => {
+        const normalized = { ...task, logs: task.logs ?? [] };
+        return normalized.status === "running"
+          ? { ...normalized, status: "error" as const, detail: `${normalized.detail}（应用重启前未完成）`, message: "任务在上次会话结束时仍在执行" }
+          : normalized;
+      }));
+    }).catch(() => undefined).finally(() => { if (active) setTaskHistoryLoaded(true); });
+    return () => { active = false; };
+  }, [root]);
+
+  useEffect(() => {
+    if (!taskHistoryLoaded) return;
+    void api.vaultWriteFile(TASK_HISTORY_PATH, JSON.stringify({ version: 1, updated_at: new Date().toISOString(), tasks }, null, 2) + "\n").catch(() => undefined);
+  }, [taskHistoryLoaded, tasks]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -461,20 +639,36 @@ export default function DepDekHome({ root, providers, providerCount, sessionCoun
     window.setTimeout(() => setToast(null), 2800);
   };
 
+  const startTask = (input: TaskStartInput) => {
+    const id = `task-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const { logs, ...taskInput } = input;
+    setTasks((current) => [{ ...taskInput, id, status: "running" as const, startedAt: Date.now(), logs: logs ?? [] }, ...current].slice(0, 50));
+    setTaskCenterOpen(true);
+    return id;
+  };
+
+  const updateTask = (id: string, update: TaskUpdate) => {
+    const { log, ...taskUpdate } = update;
+    setTasks((current) => current.map((task) => task.id === id ? { ...task, ...taskUpdate, logs: log ? [...task.logs, { ...log, ts: Date.now() }] : task.logs } : task));
+  };
+
+  const runningTaskCount = tasks.filter((task) => task.status === "running").length;
+
   const navGroup = (label: string, items: NavItem[]) => (
     <><span className="dd-nav-label">{label}</span>{items.map((item) => {
       const Icon = item.icon;
-      return <button key={item.key} className={`dd-nav-item ${activeView === item.key ? "dd-nav-item--active" : ""}`} onClick={() => setActiveView(item.key)}><Icon size={18} weight={activeView === item.key ? "fill" : "regular"} /><span>{item.label}</span>{item.badge && <em className={item.badgeTone === "warn" ? "dd-nav-badge--warn" : ""}>{item.badge}</em>}</button>;
+      const badge = item.key === "todo" ? String(todoCount) : item.key === "inbox" ? String(inboxCount) : item.badge;
+      return <button key={item.key} className={`dd-nav-item ${activeView === item.key ? "dd-nav-item--active" : ""}`} onClick={() => setActiveView(item.key)}><Icon size={18} weight={activeView === item.key ? "fill" : "regular"} /><span>{item.label}</span>{badge !== undefined && <em className={item.badgeTone === "warn" ? "dd-nav-badge--warn" : ""}>{badge}</em>}</button>;
     })}</>
   );
 
   return (
-    <div className={`depdek ${copilotOpen ? "depdek--copilot-open" : ""}`}>
+    <div className={`depdek ${copilotOpen ? "depdek--copilot-open" : ""} ${sidebarCollapsed ? "depdek--sidebar-collapsed" : ""}`}>
       <aside className="dd-sidebar">
-        <div className="dd-brand"><img src={logo} alt="DepDek 图标" /><div><b>DepDek</b><small>MY DATA · MY AGENCY</small></div></div>
+        <div className="dd-brand"><img src={logo} alt="DepDek 图标" /><div><b>DepDek</b></div><button className="dd-sidebar-toggle" onClick={() => setSidebarCollapsed((current) => !current)} aria-label={sidebarCollapsed ? "展开侧栏" : "收拢侧栏"} title={sidebarCollapsed ? "展开侧栏" : "收拢侧栏"}><SidebarSimple size={18} weight="regular" /></button></div>
         <nav>{navGroup("工作台", WORK_NAV)}{navGroup("数据领域", DATA_NAV)}{navGroup("信任与系统", TRUST_NAV)}</nav>
         <div className="dd-sidebar-foot">
-          <button onClick={onOpenDeepWork}><Robot size={16} />Deep Work <span>{sessionCount}</span></button>
+          <button onClick={onOpenAgentTeam}><Robot size={16} />Agent Team <span>{sessionCount}</span></button>
           <button onClick={onOpenSettings}><GearSix size={16} />模型与 Provider <span>{providerCount}</span></button>
           <button onClick={onPickRoot}><HardDrives size={16} />更换 Home</button>
           <p><span />Home 已连接 · Rust Vault</p><small title={root}>{root}</small>
@@ -482,24 +676,25 @@ export default function DepDekHome({ root, providers, providerCount, sessionCoun
       </aside>
 
       <div className="dd-main">
-        <header className="dd-topbar">
+        {activeView === "today" && <header className="dd-topbar">
           <div className="dd-clock"><strong>{time}</strong><span>{now.getMonth() + 1}月{now.getDate()}日 · 本地优先<em>本地优先 · 今日安好</em></span></div>
           <div className="dd-greeting"><b>晚上好，阿哲。</b><span>今天也从容一点。尚有 <strong>1 项承诺</strong> 待闭环</span></div>
           <button className="dd-command" onClick={() => setPaletteOpen(true)}><MagnifyingGlass size={17} /><span>搜索、导航、创建、提问…<small>试试「我这周还有哪些承诺没完成？」</small></span><kbd>⌘ K</kbd></button>
           <div className="dd-top-actions">
             <button onClick={() => setPaletteOpen(true)}><Plus size={18} /><span>新建</span></button>
             <button onClick={() => setActionOpen(true)}><ListChecks size={18} /><span>审批</span><i /></button>
-            <button onClick={() => notify("正在检查连接健康 · 当前为 UX 原型") }><ArrowClockwise size={18} /><span>同步</span></button>
+            <button onClick={() => setTaskCenterOpen((current) => !current)} aria-label="打开任务中心"><ClipboardText size={18} /><span>任务</span>{runningTaskCount > 0 && <i />}</button>
             <button onClick={() => setCopilotOpen((current) => !current)}><Sparkle size={18} /><span>Copilot</span></button>
           </div>
-        </header>
+        </header>}
 
-        <main className="dd-workbench">
-          {activeView === "today" ? <TodayView notify={notify} openAction={() => setActionOpen(true)} /> : <DomainView name={activeView} root={root} providerCount={providerCount} sessionCount={sessionCount} openDeepWork={onOpenDeepWork} notify={notify} />}
+        <main className={`dd-workbench ${activeView === "inbox" ? "dd-workbench--inbox" : ""}`}>
+          {activeView === "today" ? <TodayView notify={notify} openAction={() => setActionOpen(true)} /> : <DomainView name={activeView} root={root} providerCount={providerCount} sessionCount={sessionCount} openAgentTeam={onOpenAgentTeam} notify={notify} onStartTask={startTask} onUpdateTask={updateTask} onInboxCountChange={refreshInboxCount} />}
         </main>
       </div>
 
-      <Copilot open={copilotOpen} close={() => setCopilotOpen(false)} activeView={activeView} providers={providers} onOpenSettings={onOpenSettings} />
+      <TaskCenter open={taskCenterOpen} tasks={tasks} close={() => setTaskCenterOpen(false)} />
+      <Copilot open={copilotOpen} close={() => setCopilotOpen(false)} activeView={activeView} sessions={sessions} activeAgentId={activeAgentId} chats={chats} running={running} onSelectAgent={onSelectAgent} onSendAgent={onSendAgent} onAbortAgent={onAbortAgent} onOpenAgentTeam={onOpenAgentTeam} />
       <CommandPalette open={paletteOpen} close={() => setPaletteOpen(false)} go={setActiveView} openAction={() => setActionOpen(true)} />
       <ActionSheet open={actionOpen} close={() => setActionOpen(false)} notify={notify} />
       {toast && <div className="dd-toast"><CheckCircle size={18} weight="fill" />{toast}</div>}
