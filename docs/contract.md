@@ -27,10 +27,14 @@
 |---|---|---|
 | `agent/create_session` | `{session_id: string, provider: ProviderConfig, system_prompt?: string}` | `{session_id}` |
 | `agent/send` | `{session_id: string, text: string}` | `{}`（回复经 `agent/event` 流式下发） |
+| `agent/analyze` | `{provider: ProviderConfig, text: string, system_prompt: string}` | `{text: string}`（一次性只读分析；不创建持久会话，不暴露写入/删除/外部调用工具） |
 | `agent/abort` | `{session_id: string}` | `{}` |
 | `agent/close_session` | `{session_id: string}` | `{}` |
 | `mail/fetch` | `{account?: string, refresh_body?: boolean}`（账号显示名，缺省收全部；`refresh_body` 用于修复旧缓存的正文占位符） | `{fetched: number, accounts: [{name: string, new_messages: number, error?: string}]}` |
 | `mail/delete` | `{account: string, uids: number[]}` | `{account: string, deleted: number}`（仅在 IMAP UIDPLUS 可安全定位删除目标时执行） |
+| `mail/list_mailboxes` | `{account: string}` | `{account: string, mailboxes: [{path, special_use?, subscribed?, messages?, unseen?}]}` |
+| `mail/action` | `{account: string, action: mark_read\|mark_unread\|star\|unstar\|move\|archive\|trash, uids: number[], destination?: string, mailbox?: string}` | `{account: string, action: string, processed: number, destination?: string}`（同一请求内按 UID 串行执行） |
+| `mail/send` | `{account: string, to: string, cc?: string, bcc?: string, subject?: string, text: string, html?: string, attachments?: [{name, content_base64, mime?, size?}]}` | `{account: string, message_id: string}`（经账号 SMTP 发送；附件总大小不超过 64 MiB） |
 | `calendar/sync` | `{account?: string}` | `{imported: number, accounts: [{id, name, imported, error?}]}` |
 | `calendar/push` | `{account: string, event: CalendarEvent}` | `{account: string, event_id: string, remote_id: string}` |
 | `todo/list` | `{}` | `{version: 1, updatedAt: string, items: TodoItem[]}` |
@@ -72,7 +76,7 @@ type ProviderConfig =
 | `vault/read_binary` | `{session_id, path}` | `{data_base64: string, size: number, sha256: string, mime: string}` |
 | `vault/write_binary` | `{session_id, path, data_base64: string}` | `{size: number, sha256: string}` |
 
-`vault/read_binary` 说明：为前端图片/视频/邮件附件预览与下载提供；MIME 按扩展名推断（未知为 `application/octet-stream`）；上限 64 MiB（超出 -32003）；审计记 `op: "read"`。`vault/write_binary` 只供受信任的导入器（当前为邮件 sidecar）把 base64 二进制落入 vault，使用相同的 64 MiB 上限并审计为 `op: "write"`。**两者均不注册为 agent 工具**。
+`vault/read_binary` 说明：为前端图片/视频/邮件附件预览与下载提供；MIME 按扩展名推断（未知为 `application/octet-stream`）；上限 64 MiB（超出 -32003）；审计记 `op: "read"`。`vault/write_binary` 供邮件 sidecar 导入和用户显式保存发件附件副本，使用相同的 64 MiB 上限并审计为 `op: "write"`。**两者均不注册为 agent 工具**。
 
 ### 2.4 错误码（Rust 返回）
 
@@ -94,11 +98,14 @@ sidecar 级致命错误（不归属于某个会话）用 `session_id: "system"` 
 
 - 邮箱账号配置存放在 vault 的 `mail/accounts.json`（schema 见第 7 节），由 agent 用 `write_file` 工具按用户提供的 邮箱地址/授权码/IMAP 服务器 写入，或用户手工编辑。
 - sidecar 收到 `mail/fetch` 后：读 `mail/accounts.json` → 逐账号走 IMAP 增量拉取 INBOX 新邮件 → 附件经 `vault/write_binary` 落盘到 `mail/<name>/attachments/<uid>/` → 每封邮件渲染为 Markdown 经 `vault/write_file` 落盘到 `mail/<name>/` → 回写 `accounts.json` 更新 `last_uid`。
-- sidecar 收取时的所有 vault 读写操作审计 session_id 记为 `"mail"`。
+- sidecar 收取时的所有 vault 读写操作审计 session_id 记为 `"mail"`。每封本地 Markdown 副本写入 `Folder` 元数据：默认收件箱为 `inbox`，非默认收件箱配置写为 `remote:<mailbox>`；前端以该字段和 `mail/index.json` 的 UI 状态索引合并判定唯一所属文件夹，避免同一副本被误显示到多个主文件夹。
 - 单账号失败只在其结果项记 `error`，不中断其他账号；未配置邮箱（`mail/accounts.json` 不存在）返回 -32002。
 - 收取过程通过 `mail/event` 通知上报 `connecting`、`connected`、`reading`、`saving`、`completed`、`error` 阶段；IMAP 连接和打开文件夹均有 30 秒超时，避免任务无限停留在执行中。
 - sidecar 另注册 agent 工具 `fetch_mail`（params `{account?: string}`），与 `mail/fetch` 同一实现。该工具不属于 fs/bash 工具：网络仅访问配置中的 IMAP 服务器，落盘只经 `vault/*` RPC。
 - 用户在前端确认“同步删除远端邮箱”后，Rust 转发 `mail/delete`；sidecar 使用邮件 UID 执行远端永久删除，多封邮件必须按 UID 串行发送删除指令。若服务器不支持 UIDPLUS，必须拒绝操作，避免普通 EXPUNGE 误删其他已标记邮件。
+- `mail/list_mailboxes` 只读取远端文件夹元数据，不读正文；`mail/action` 支持远端已读/未读、星标、移动、归档和移入垃圾箱。每个 UID 单独发出 IMAP 指令，完成边界通过 `mail/action_event` 通知上报；归档/垃圾箱未指定目标时优先使用服务器 `SPECIAL-USE` 标记，找不到时回退到 `Archive`/`Trash`。
+- 用户在写信窗口点击发送后，Rust 转发 `mail/send`；sidecar 使用当前账号配置的 SMTP（`smtp_host` 留空时由 `imap.*` 自动推断为 `smtp.*`）发送纯文本和可选 HTML 邮件。发送成功后前端在本地 `mail/<name>/sent-<epoch_ms>.md` 保存副本，并在 `mail/index.json` 标记为 `sent`；发送失败不删除草稿。
+- 新邮件、回复、转发共用同一写信窗口，可选择多个附件；附件在发送前仅保留于当前界面，点击发送后才随 SMTP 请求发出。草稿或已发送副本会把附件写入 `mail/<name>/attachments/outgoing/<epoch_ms>/` 并在 Markdown 头部记录元数据。单个附件由前端限制为 32 MiB，单次总大小由 sidecar 限制为 64 MiB。
 - 未安装/未运行的 sidecar 无法收邮件，Rust 按 sidecar 不可用错误透传。
 
 ### 2.6 日历中枢（`calendar/sync` / `calendar/push`）
@@ -128,15 +135,25 @@ sidecar 级致命错误（不归属于某个会话）用 `session_id: "system"` 
 | `vault_search_files` | `{query: string}` | `{matches: [...]}` |
 | `vault_delete_file` | `{path: string}` | — |
 | `vault_read_binary` | `{path: string}` | `{data_base64, size, sha256, mime}` |
+| `vault_write_binary` | `{path: string, dataBase64: string}` | `{size, sha256}`（前端显式保存邮件附件副本） |
+| `obsidian_set_root` | `{path: string}` | `string`（规范化后的只读 Obsidian Vault 路径） |
+| `obsidian_get_root` | — | `string \| null` |
+| `obsidian_clear_root` | — | — |
+| `obsidian_list_notes` | `{query?: string}` | `{notes: [{path, title, folder, size, modified_ms}]}`（最多 5000 篇 Markdown） |
+| `obsidian_read_note` | `{path: string}` | `{path, content, size, sha256}`（只读 Markdown，单文件上限 10 MiB） |
 | `audit_read` | `{offset?: number, limit?: number}` | `{entries: AuditEntry[], total: number}` |
 | `agent_create_session` | `{session_id: string, provider: ProviderConfig, system_prompt?: string}` | `{session_id}` |
 | `agent_send` | `{session_id: string, text: string}` | — |
+| `agent_analyze` | `{provider: ProviderConfig, text: string, systemPrompt: string}` | `{text: string}`（转发 `agent/analyze`） |
 | `agent_abort` | `{session_id: string}` | — |
 | `agent_close` | `{session_id: string}` | — |
 | `settings_get` | — | `Settings` |
 | `settings_set` | `{settings: Settings}` | — |
 | `mail_fetch` | `{account?: string, refreshBody?: boolean}` | `{fetched: number, accounts: [...]}`（同 `mail/fetch` result，转发 sidecar） |
 | `mail_delete` | `{account: string, uids: number[]}` | `{account: string, deleted: number}`（转发 `mail/delete`） |
+| `mail_list_mailboxes` | `{account: string}` | `{account: string, mailboxes: [...]}`（转发 `mail/list_mailboxes`） |
+| `mail_action` | `{account: string, action: string, uids: number[], destination?: string, mailbox?: string}` | `{account: string, action: string, processed: number, destination?: string}`（转发 `mail/action`） |
+| `mail_send` | `{account: string, to: string, cc?: string, bcc?: string, subject?: string, text: string, html?: string, attachments?: [...]}` | `{account: string, message_id: string}`（转发 `mail/send`） |
 | `calendar_sync` | `{account?: string}` | `{imported: number, accounts: [...]}`（转发 `calendar/sync`） |
 | `calendar_push` | `{account: string, event: CalendarEvent}` | `{account: string, event_id: string, remote_id: string}`（转发 `calendar/push`） |
 | `todo_list` | — | `{version: 1, updatedAt: string, items: TodoItem[]}` |
@@ -157,6 +174,7 @@ type AuditEntry = {
 
 type Settings = {
   last_root?: string | null;
+  obsidian_root?: string | null; // 只读 Obsidian Vault 的规范化路径
   providers: Record<string, ProviderConfig>;  // key 为显示名
   agents?: SavedAgent[];                      // 已保存的 agent 会话配置，下次启动自动重建
 };
@@ -166,6 +184,7 @@ type SavedAgent = {
   label: string;
   provider_name: string;       // 指向 providers 的 key
   system_prompt?: string;
+  config_dir?: string;         // 本地 vault 中 agent.md/skill.md/mcp.md 所在目录
 };
 ```
 
@@ -178,6 +197,7 @@ type SavedAgent = {
 | `agent://event` | `{session_id, type, data}`（原样转发 sidecar 的 `agent/event`） |
 | `vault://audit` | `AuditEntry`（每写一条审计记录即发一次，供审计查看器实时刷新） |
 | `mail://event` | `{account, phase, message, current?, total?}`（原样转发 sidecar 的 `mail/event`，供收取任务展示进度） |
+| `mail://action-event` | `{account, action, uid, current, total, message}`（原样转发 sidecar 的 `mail/action_event`，供远端批处理任务展示串行进度） |
 | `todo://event` | `{type, item, emittedAt}`（原样转发 sidecar 的 `todo/event`） |
 
 ## 5. 审计日志
@@ -210,10 +230,15 @@ type MailAccount = {
   password: string;    // 密码或客户端授权码（明文存于本地 vault，与 settings 中 API key 一致）
   mailbox?: string;    // 默认 "INBOX"
   last_uid?: number;   // 增量同步状态，由 sidecar 维护，用户/agent 勿改
+  smtp_host?: string;  // SMTP 服务器；留空时由 IMAP host 自动推断
+  smtp_port?: number;  // 默认 465
+  smtp_secure?: boolean; // 默认 true；465 用 SSL，587 通常设为 false
 };
+
+type MailActionName = "mark_read" | "mark_unread" | "star" | "unstar" | "move" | "archive" | "trash";
 ```
 
-- 邮件文件：`mail/<name>/<epoch_ms>-<uid>.md`，内容为头部（From/To/Date/Subject/UID/附件元数据 JSON）+ `depdek:mail-html` 和/或 `depdek:mail-text` 标记包裹的正文。HTML 正文用于富文本展示，plain-text 用于预览和无 HTML 时的回退。
+- 邮件文件：`mail/<name>/<epoch_ms>-<uid>.md`，内容为头部（From/To/Date/Subject/UID/Read/Message-ID/In-Reply-To/References/附件元数据 JSON）+ `depdek:mail-html` 和/或 `depdek:mail-text` 标记包裹的正文。HTML 正文用于富文本展示，plain-text 用于预览和无 HTML 时的回退。IMAP `\\Seen` 标记会保存为 `Read`，让本地列表区分已读与未读；Message-ID/References 用于后续线程归并，不把线程关系交给模型推断。
 - 邮件附件：`mail/<name>/attachments/<uid>/<序号>-<安全文件名>`；头部 `Attachments` 字段保存 `[{name,path,size,mime}]` JSON。sidecar 必须去除附件名中的路径和控制字符；每个附件经 `vault/write_binary` 单独写入并由 Rust 沙箱校验。旧版 `Attachments (not saved)` 头部仍可读，用户下次主动“收取邮件”时会回补可下载附件。
 - `mail/fetch` 只增量拉取 `uid > last_uid` 的邮件，首次收取以当次拉到的邮件为准。
 

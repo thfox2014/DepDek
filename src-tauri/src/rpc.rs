@@ -248,6 +248,7 @@ impl SidecarInner {
                 match method.as_str() {
                     "agent/event" => (self.emit)("agent://event", params),
                     "mail/event" => (self.emit)("mail://event", params),
+                    "mail/action_event" => (self.emit)("mail://action-event", params),
                     "todo/event" => (self.emit)("todo://event", params),
                     _ => {}
                 }
@@ -387,5 +388,36 @@ mod tests {
             .read_binary("test", "mail/qq/attachments/9/01-test.bin")
             .unwrap();
         assert_eq!(BASE64.decode(read.data_base64).unwrap(), bytes);
+    }
+
+    #[tokio::test]
+    async fn mail_action_notification_is_forwarded_to_frontend_event() {
+        let vault = Vault::new();
+        let emitted = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
+        let emitted_sink = emitted.clone();
+        let sidecar = Sidecar::with_runtime(
+            vault,
+            Arc::new(move |name, params| {
+                emitted_sink
+                    .lock()
+                    .unwrap()
+                    .push((name.to_string(), params));
+            }),
+            PathBuf::from("node"),
+            PathBuf::from("unused.js"),
+        );
+
+        sidecar
+            .inner
+            .handle_line(
+                r#"{"jsonrpc":"2.0","method":"mail/action_event","params":{"action":"mark_read","uid":42,"current":1,"total":1}}"#,
+            )
+            .await;
+
+        let events = emitted.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0, "mail://action-event");
+        assert_eq!(events[0].1["uid"], 42);
+        assert_eq!(events[0].1["total"], 1);
     }
 }

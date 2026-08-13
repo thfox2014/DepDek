@@ -6,21 +6,23 @@
 .dd-inbox-account-settings, .dd-inbox-toolbar-actions button, .dd-inbox-reader-actions button, .dd-inbox-list-head button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 10px; border: 1px solid var(--dd-line-strong); border-radius: 9px; background: #fff; color: var(--dd-ink-2); font-size: 10px; cursor: pointer; }
 .dd-inbox-account-settings { padding: 5px; border: 0; background: transparent; color: var(--dd-ink-3); }
 .dd-inbox-toolbar-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.dd-inbox-toolbar-actions .dd-inbox-compose-button { border-color: var(--dd-accent); color: var(--dd-accent-deep); }
+.dd-inbox-toolbar-actions .dd-inbox-compose-button:hover { background: var(--dd-accent-soft); }
 .dd-inbox-toolbar-actions .dd-inbox-ai-button { border-color: var(--dd-accent); background: var(--dd-accent); color: #fff; }
 .dd-inbox-toolbar-actions .dd-inbox-ai-button--active { background: var(--dd-accent-deep); }
 .dd-inbox-ai-button em { padding: 1px 5px; border-radius: 10px; background: rgba(255, 255, 255, 0.22); font-size: 9px; font-style: normal; }
 .dd-inbox-notice { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; padding: 8px 11px; border: 1px solid rgba(39, 154, 113, 0.2); border-radius: 10px; background: #f1fbf6; color: var(--dd-ok); font-size: 10px; }
 .dd-inbox-ai-panel { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 10px; padding: 11px 13px; border: 1px solid rgba(115, 92, 232, 0.22); border-radius: 14px; background: rgba(238, 234, 255, 0.64); }
-.dd-inbox-ai-title { display: flex; align-items: center; gap: 6px; color: var(--dd-accent-deep); font-size: 11px; font-weight: 700; }
-.dd-inbox-ai-panel p { margin: 3px 0 0; color: var(--dd-ink-3); font-size: 9px; }
+.dd-inbox-ai-panel > .dd-ai-analysis { min-width: 0; flex: 1; }
 .dd-inbox-ai-items { display: flex; min-width: 0; flex: 1; justify-content: flex-end; gap: 7px; }
 .dd-inbox-ai-items button { display: flex; min-width: 150px; max-width: 230px; flex-direction: column; gap: 3px; padding: 7px 9px; border: 1px solid rgba(115, 92, 232, 0.18); border-radius: 10px; background: rgba(255, 255, 255, 0.74); text-align: left; cursor: pointer; }
 .dd-inbox-ai-items button b { overflow: hidden; color: var(--dd-ink); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
-.dd-inbox-ai-items button span, .dd-inbox-empty-ai { color: var(--dd-ink-2); font-size: 9px; }
+.dd-inbox-ai-items button span { color: var(--dd-ink-2); font-size: 9px; }
 .dd-inbox-shell { display: grid; width: 100%; min-width: 0; min-height: 0; flex: 1 1 auto; grid-template-columns: 150px 310px minmax(0, 1fr); overflow: hidden; border: 1px solid var(--dd-line); border-radius: 18px; background: rgba(255, 255, 255, 0.68); box-shadow: 0 8px 30px rgba(78, 66, 140, 0.07); }
 .dd-inbox-folders { min-height: 0; overflow-y: auto; padding: 14px 8px; border-right: 1px solid var(--dd-line); background: rgba(248, 248, 255, 0.42); }
 .dd-inbox-section-label { padding: 0 9px 7px; color: var(--dd-ink-3); font-size: 9px; letter-spacing: 1px; }
 .dd-inbox-section-label--accounts { margin-top: 24px; }
+.dd-inbox-section-label--remote { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--dd-line); }
 .dd-inbox-folder { display: flex; width: 100%; align-items: center; gap: 8px; padding: 8px 9px; border: 0; border-radius: 9px; background: transparent; color: var(--dd-ink-2); font-size: 10.5px; text-align: left; cursor: pointer; }
 .dd-inbox-folder:hover, .dd-inbox-folder--selected { background: rgba(115, 92, 232, 0.08); color: var(--dd-accent-deep); }
 .dd-inbox-folder--active { background: var(--dd-accent); color: #fff; box-shadow: 0 5px 12px rgba(104, 82, 220, 0.24); }
@@ -80,10 +82,15 @@
 .dd-inbox-reader-meta b { color: var(--dd-ink-2); }
 .dd-inbox-reader-meta time { margin-left: auto; }
 .dd-inbox-reader-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 5px; }
+.dd-reader-move-menu { position: relative; }
+.dd-reader-move-popover { position: absolute; z-index: 18; top: 34px; right: 0; display: flex; width: 126px; flex-direction: column; gap: 2px; padding: 6px; border: 1px solid var(--dd-line); border-radius: 10px; background: #fff; box-shadow: 0 12px 32px rgba(44, 36, 86, 0.18); }
+.dd-reader-move-popover > span { padding: 3px 6px 5px; color: var(--dd-ink-3); font-size: 8.5px; }
+.dd-reader-move-popover button { width: 100%; justify-content: flex-start; padding: 6px 7px; border-color: transparent; border-radius: 7px; font-size: 9.5px; }
+.dd-reader-move-popover button:hover { border-color: transparent; background: var(--dd-accent-soft); color: var(--dd-accent-deep); }
 .dd-inbox-reader-actions button { display: inline-flex; width: auto; height: 28px; align-items: center; justify-content: center; gap: 4px; padding: 5px 8px; border: 1px solid var(--dd-line-strong); border-radius: 8px; background: #fff; color: var(--dd-ink-2); font-size: 9px; cursor: pointer; }
 .dd-inbox-reader-actions button:hover { border-color: var(--dd-accent); background: var(--dd-accent-soft); color: var(--dd-accent-deep); }
 .dd-inbox-reader-actions .dd-reader-action--todo { border-color: var(--dd-accent); color: var(--dd-accent-deep); }
-.dd-inbox-reader-actions .dd-reader-action--ai { border-color: rgba(115, 92, 232, 0.34); background: var(--dd-accent-soft); color: var(--dd-accent-deep); }
+.dd-inbox-reader-actions .dd-reader-action--ai { border-color: rgba(115, 92, 232, .42); background: rgba(115, 92, 232, .08); color: var(--dd-accent-deep); }
 .dd-reader-action-divider { width: 1px; height: 20px; margin: 0 2px; background: var(--dd-line-strong); }
 .dd-inbox-reader-actions .dd-reader-utility { width: 27px; padding: 0; border-color: transparent; background: transparent; }
 .dd-inbox-reader-actions .dd-reader-utility--danger { color: var(--dd-risk); }
@@ -110,6 +117,10 @@
 .dd-inbox-reader-empty { display: flex; height: 100%; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--dd-ink-3); font-size: 10px; }
 .dd-inbox-reader-empty svg { color: var(--dd-accent); }
 .dd-inbox-reader-empty b { color: var(--dd-ink-2); font-size: 12px; }
+.dd-mail-context-menu { position: fixed; z-index: 50; display: flex; width: 176px; flex-direction: column; gap: 4px; padding: 6px; border: 1px solid var(--dd-line); border-radius: 11px; background: rgba(255,255,255,.98); box-shadow: 0 14px 36px rgba(44,36,86,.2); }
+.dd-mail-context-menu button { display: inline-flex; align-items: center; gap: 7px; padding: 8px 9px; border: 0; border-radius: 8px; background: transparent; color: var(--dd-ink-2); font-size: 10px; text-align: left; cursor: pointer; }
+.dd-mail-context-menu button:hover { background: var(--dd-accent-soft); color: var(--dd-accent-deep); }
+.dd-mail-context-menu span { padding: 1px 9px 4px; color: var(--dd-ink-3); font-size: 8px; }
 .dd-inbox-modal-backdrop { position: fixed; z-index: 80; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(34, 30, 58, 0.3); backdrop-filter: blur(8px); }
 .dd-inbox-modal { width: min(600px, calc(100vw - 34px)); overflow: hidden; border: 1px solid var(--dd-line); border-radius: 18px; background: #fafaff; box-shadow: 0 24px 80px rgba(38, 30, 86, 0.28); }
 .dd-inbox-modal > header { display: flex; align-items: center; gap: 10px; padding: 16px 18px; border-bottom: 1px solid var(--dd-line); }
@@ -123,6 +134,30 @@
 .dd-inbox-form label { display: flex; flex-direction: column; gap: 5px; color: var(--dd-ink-2); font-size: 9.5px; font-weight: 650; }
 .dd-inbox-form input { width: 100%; padding: 8px 9px; border: 1px solid var(--dd-line-strong); border-radius: 9px; outline: 0; background: #fff; color: var(--dd-ink); font-size: 11px; }
 .dd-inbox-form input:focus { border-color: var(--dd-accent); box-shadow: 0 0 0 3px rgba(115, 92, 232, 0.1); }
+.dd-inbox-form textarea { width: 100%; resize: vertical; padding: 8px 9px; border: 1px solid var(--dd-line-strong); border-radius: 9px; outline: 0; background: #fff; color: var(--dd-ink); font: inherit; font-size: 11px; line-height: 1.6; }
+.dd-inbox-form textarea:focus { border-color: var(--dd-accent); box-shadow: 0 0 0 3px rgba(115, 92, 232, 0.1); }
+.dd-mail-editor { overflow: hidden; border: 1px solid var(--dd-line-strong); border-radius: 9px; background: #fff; }
+.dd-mail-editor:focus-within { border-color: var(--dd-accent); box-shadow: 0 0 0 3px rgba(115, 92, 232, 0.1); }
+.dd-mail-editor-toolbar { display: flex; gap: 3px; padding: 5px; border-bottom: 1px solid var(--dd-line); background: rgba(115, 92, 232, 0.045); }
+.dd-mail-editor-toolbar button { padding: 4px 7px; border: 0; border-radius: 6px; background: transparent; color: var(--dd-ink-2); font: inherit; font-size: 9px; cursor: pointer; }
+.dd-mail-editor-toolbar button:hover, .dd-mail-editor-toolbar button.is-active { background: var(--dd-accent-soft); color: var(--dd-accent-deep); }
+.dd-mail-editor-content { min-height: 150px; max-height: 280px; overflow: auto; padding: 9px; outline: 0; color: var(--dd-ink); font-size: 11px; font-weight: 400; line-height: 1.65; }
+.dd-mail-editor-content p { margin: 0 0 7px; }
+.dd-mail-editor-content ul { margin: 0 0 7px; padding-left: 18px; }
+.dd-mail-editor-loading { padding: 14px 9px; border: 1px solid var(--dd-line-strong); border-radius: 9px; color: var(--dd-ink-3); font-size: 10px; }
+.dd-inbox-compose-modal { width: min(650px, calc(100vw - 34px)); }
+.dd-compose-attachments { display: flex; flex-direction: column; gap: 7px; }
+.dd-compose-attachments-head { display: flex; align-items: center; justify-content: space-between; color: var(--dd-ink-2); font-size: 9.5px; }
+.dd-compose-attachments-head b { display: inline-flex; align-items: center; gap: 5px; }
+.dd-compose-attach-button { display: inline-flex !important; width: auto !important; flex-direction: row !important; align-items: center; gap: 4px !important; padding: 5px 8px; border: 1px solid var(--dd-line-strong); border-radius: 7px; background: #fff; color: var(--dd-accent-deep) !important; cursor: pointer; font-size: 9px !important; }
+.dd-compose-attach-button input { display: none; }
+.dd-compose-attachment-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.dd-compose-attachment { display: inline-flex; max-width: 230px; align-items: center; gap: 6px; padding: 5px 7px; border: 1px solid var(--dd-line); border-radius: 8px; background: var(--dd-accent-soft); }
+.dd-compose-attachment > span { display: flex; min-width: 0; flex-direction: column; }
+.dd-compose-attachment strong { overflow: hidden; color: var(--dd-ink-2); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.dd-compose-attachment small, .dd-compose-attachments-hint { color: var(--dd-ink-3); font-size: 8px; }
+.dd-compose-attachment button { display: grid; width: 20px; height: 20px; place-items: center; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--dd-ink-3); cursor: pointer; }
+.dd-compose-attachment button:hover { background: rgba(115, 92, 232, 0.12); color: var(--dd-risk); }
 .dd-inbox-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
 .dd-inbox-delete-question { color: var(--dd-ink); font-size: 12px; font-weight: 750; }
 .dd-inbox-checkbox { flex-direction: row !important; align-items: center; gap: 7px !important; font-weight: 500 !important; }

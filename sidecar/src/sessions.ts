@@ -10,7 +10,7 @@
 import { Agent } from "@mariozechner/pi-agent-core";
 import type { Model } from "@mariozechner/pi-ai";
 import { RpcError } from "./rpc.js";
-import { createVaultTools, type VaultClient } from "./tools.js";
+import { createReadOnlyVaultTools, createVaultTools, type VaultClient } from "./tools.js";
 import { convertAgentEvent } from "./events.js";
 import { resolveProvider, type ProviderConfig } from "./providers.js";
 
@@ -100,6 +100,44 @@ export class SessionManager {
       });
     });
     return {};
+  }
+
+  /** Run one bounded, read-only analysis without creating a persistent chat session. */
+  async runOnce(
+    provider: ProviderConfig,
+    text: string,
+    systemPrompt: string,
+  ): Promise<{ text: string }> {
+    const resolved = resolveProvider(provider);
+    return this.runOnceWithModel(resolved.model, resolved.apiKey, text, systemPrompt);
+  }
+
+  /** Injectable variant used by tests and offline analysis callers. */
+  async runOnceWithModel(
+    model: Model<any>,
+    apiKey: string | undefined,
+    text: string,
+    systemPrompt: string,
+  ): Promise<{ text: string }> {
+    const sessionId = `analysis-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const agent = new Agent({ initialState: { systemPrompt, model }, getApiKey: () => apiKey });
+    agent.state.tools = createReadOnlyVaultTools(this.vault, sessionId);
+    let answer = "";
+    let providerError: Error | undefined;
+    const unsubscribe = agent.subscribe((event) => {
+      for (const notification of convertAgentEvent(event)) {
+        if (notification.type === "text_delta") answer += String(notification.data.delta ?? "");
+        if (notification.type === "error") providerError = new Error(String(notification.data.message ?? "模型分析失败"));
+      }
+    });
+    try {
+      await agent.prompt(text);
+      if (providerError) throw providerError;
+      return { text: answer.trim() };
+    } finally {
+      unsubscribe();
+      agent.abort();
+    }
   }
 
   /** Abort the session's current run, if any. */

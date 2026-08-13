@@ -197,18 +197,26 @@ export default function App() {
     }
   };
 
-  const createSession = async (label: string, providerName: string) => {
+  const createSession = async (label: string, providerName: string, requestedId?: string, openWorkbench = true) => {
     const provider = settings.providers[providerName];
     if (!provider) throw new Error(`provider "${providerName}" 不存在`);
-    const id = `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-    await api.agentCreateSession(id, provider);
-    setSessions((prev) => [...prev, { id, label: label || id, providerName }]);
+    const id = requestedId?.trim() || `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const existing = settings.agents?.find((agent) => agent.id === id);
+    if (existing && sessions.some((session) => session.id === id)) {
+      setActiveId(id);
+      if (openWorkbench) setView("workbench");
+      return;
+    }
+    await api.agentCreateSession(id, provider, existing?.system_prompt);
+    setSessions((prev) => prev.some((session) => session.id === id) ? prev : [...prev, { id, label: label || id, providerName }]);
     setActiveId(id);
-    setView("workbench");
+    if (openWorkbench) setView("workbench");
     // Persist the agent config so it is restored on next launch.
     const next: api.Settings = {
       ...settings,
-      agents: [...(settings.agents ?? []), { id, label: label || id, provider_name: providerName }],
+      agents: existing
+        ? (settings.agents ?? []).map((agent) => agent.id === id ? { ...agent, label: label || agent.label, provider_name: providerName } : agent)
+        : [...(settings.agents ?? []), { id, label: label || id, provider_name: providerName, ...(id === "tanvis" ? { config_dir: "agents/tanvis" } : {}) }],
     };
     await api.settingsSet(next).catch(() => {});
     setSettings(next);
@@ -265,6 +273,23 @@ export default function App() {
   const saveSettings = async (next: api.Settings) => {
     await api.settingsSet(next);
     setSettings(next);
+    // Apply updated Agent Team prompt/provider settings to already-open
+    // sessions immediately. The one-shot Tanvis analysis reads vault files on
+    // demand; persistent chats need a fresh session to receive new prompts.
+    for (const session of sessions) {
+      const agent = next.agents?.find((item) => item.id === session.id);
+      const provider = agent ? next.providers[agent.provider_name] : undefined;
+      if (!agent || !provider) continue;
+      const previous = settings.agents?.find((item) => item.id === session.id);
+      if (previous?.provider_name === agent.provider_name && previous?.system_prompt === agent.system_prompt) continue;
+      try {
+        await api.agentClose(session.id);
+        await api.agentCreateSession(session.id, provider, agent.system_prompt);
+      } catch {
+        // The session can be recreated on the next launch if the sidecar is
+        // temporarily unavailable; settings remain saved in the meantime.
+      }
+    }
   };
 
   // ---- render ---------------------------------------------------------------
@@ -325,8 +350,10 @@ export default function App() {
           running={running}
           chats={chats}
           providers={settings.providers}
+          settings={settings}
           onEnter={enterWorkbench}
           onCreate={createSession}
+          onSaveSettings={saveSettings}
           onOpenSettings={() => setShowSettings(true)}
         />
           ) : (

@@ -7,7 +7,7 @@
 
 import { createStdioPeer } from "./rpc.js";
 import { SessionManager } from "./sessions.js";
-import { deleteMail, fetchMail } from "./mail.js";
+import { applyMailAction, deleteMail, fetchMail, listMailboxes, sendMail } from "./mail.js";
 import { pushCalendarEvent, syncCalendar } from "./calendar.js";
 import { enqueueTodo, listTodos, updateTodo } from "./todo.js";
 import type { ProviderConfig } from "./providers.js";
@@ -25,6 +25,11 @@ peer.register("agent/create_session", (params) =>
   sessions.createSession(params.session_id, params.provider as ProviderConfig, params.system_prompt),
 );
 peer.register("agent/send", (params) => sessions.send(params.session_id, params.text));
+peer.register("agent/analyze", (params) => sessions.runOnce(
+  params.provider as ProviderConfig,
+  String(params.text ?? ""),
+  String(params.system_prompt ?? ""),
+));
 peer.register("agent/abort", (params) => sessions.abort(params.session_id));
 peer.register("agent/close_session", (params) => sessions.closeSession(params.session_id));
 peer.register("mail/fetch", (params) => fetchMail(peer, {
@@ -33,6 +38,35 @@ peer.register("mail/fetch", (params) => fetchMail(peer, {
 }, undefined, (event) => peer.notify("mail/event", event)));
 peer.register("mail/delete", (params) =>
   deleteMail(peer, { account: params.account, uids: params.uids }),
+);
+peer.register("mail/list_mailboxes", (params) =>
+  listMailboxes(peer, { account: params.account }),
+);
+peer.register("mail/action", (params) =>
+  applyMailAction(
+    peer,
+    {
+      account: params.account,
+      action: params.action,
+      uids: params.uids,
+      destination: params.destination,
+      mailbox: params.mailbox,
+    },
+    undefined,
+    (event) => peer.notify("mail/action_event", event),
+  ),
+);
+peer.register("mail/send", (params) =>
+  sendMail(peer, {
+    account: params.account,
+    to: params.to,
+    cc: params.cc,
+    bcc: params.bcc,
+    subject: params.subject,
+    text: params.text ?? "",
+    html: params.html,
+    attachments: params.attachments,
+  }),
 );
 peer.register("calendar/sync", (params) => syncCalendar(peer, { account: params?.account }));
 peer.register("calendar/push", (params) => pushCalendarEvent(peer, { account: params.account, event: params.event }));

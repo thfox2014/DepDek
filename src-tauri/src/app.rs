@@ -10,6 +10,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_store::StoreExt;
 
 use crate::audit::AuditEntry;
+use crate::obsidian::{ObsidianListResult, ObsidianReadResult, ObsidianStore};
 use crate::rpc::Sidecar;
 use crate::settings::{ProviderConfig, Settings};
 use crate::vault::{
@@ -18,6 +19,7 @@ use crate::vault::{
 
 pub struct AppState {
     vault: Vault,
+    obsidian: ObsidianStore,
     sidecar: Sidecar,
     settings: Mutex<Settings>,
 }
@@ -89,6 +91,18 @@ fn vault_write_file(
     state
         .vault
         .write_file("user", &path, &content)
+        .map_err(|e| e.to_command_string())
+}
+
+#[tauri::command]
+fn vault_write_binary(
+    state: State<AppState>,
+    path: String,
+    data_base64: String,
+) -> Result<WriteFileResult, String> {
+    state
+        .vault
+        .write_binary("user", &path, &data_base64)
         .map_err(|e| e.to_command_string())
 }
 
@@ -171,6 +185,26 @@ async fn agent_send(
 }
 
 #[tauri::command]
+async fn agent_analyze(
+    state: State<'_, AppState>,
+    provider: Value,
+    text: String,
+    system_prompt: Option<String>,
+) -> Result<Value, String> {
+    state
+        .sidecar
+        .request(
+            "agent/analyze",
+            json!({
+                "provider": provider,
+                "text": text,
+                "system_prompt": system_prompt,
+            }),
+        )
+        .await
+}
+
+#[tauri::command]
 async fn agent_abort(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
     state
         .sidecar
@@ -217,6 +251,71 @@ async fn mail_delete(
     state
         .sidecar
         .request("mail/delete", json!({ "account": account, "uids": uids }))
+        .await
+}
+
+#[tauri::command]
+async fn mail_list_mailboxes(
+    state: State<'_, AppState>,
+    account: String,
+) -> Result<Value, String> {
+    state
+        .sidecar
+        .request("mail/list_mailboxes", json!({ "account": account }))
+        .await
+}
+
+#[tauri::command]
+async fn mail_action(
+    state: State<'_, AppState>,
+    account: String,
+    action: String,
+    uids: Vec<u32>,
+    destination: Option<String>,
+    mailbox: Option<String>,
+) -> Result<Value, String> {
+    state
+        .sidecar
+        .request(
+            "mail/action",
+            json!({
+                "account": account,
+                "action": action,
+                "uids": uids,
+                "destination": destination,
+                "mailbox": mailbox,
+            }),
+        )
+        .await
+}
+
+#[tauri::command]
+async fn mail_send(
+    state: State<'_, AppState>,
+    account: String,
+    to: String,
+    cc: Option<String>,
+    bcc: Option<String>,
+    subject: Option<String>,
+    text: String,
+    html: Option<String>,
+    attachments: Option<Vec<Value>>,
+) -> Result<Value, String> {
+    state
+        .sidecar
+        .request(
+            "mail/send",
+            json!({
+                "account": account,
+                "to": to,
+                "cc": cc,
+                "bcc": bcc,
+                "subject": subject,
+                "text": text,
+                "html": html,
+                "attachments": attachments,
+            }),
+        )
         .await
 }
 
@@ -284,6 +383,43 @@ fn settings_set(state: State<AppState>, app: AppHandle, settings: Settings) -> R
 }
 
 // ---------------------------------------------------------------------
+// Obsidian connector: read-only external vault, separate from DepDek Home.
+// ---------------------------------------------------------------------
+
+#[tauri::command]
+fn obsidian_set_root(state: State<AppState>, app: AppHandle, path: String) -> Result<String, String> {
+    let canonical = state.obsidian.set_root(Path::new(&path))?;
+    let root = canonical.to_string_lossy().into_owned();
+    let mut settings = state.settings.lock().unwrap();
+    settings.obsidian_root = Some(root.clone());
+    persist_settings(&app, &settings)?;
+    Ok(root)
+}
+
+#[tauri::command]
+fn obsidian_get_root(state: State<AppState>) -> Option<String> {
+    state.obsidian.root().map(|path| path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn obsidian_clear_root(state: State<AppState>, app: AppHandle) -> Result<(), String> {
+    state.obsidian.clear_root();
+    let mut settings = state.settings.lock().unwrap();
+    settings.obsidian_root = None;
+    persist_settings(&app, &settings)
+}
+
+#[tauri::command]
+fn obsidian_list_notes(state: State<AppState>, query: Option<String>) -> Result<ObsidianListResult, String> {
+    state.obsidian.list_notes(query.as_deref())
+}
+
+#[tauri::command]
+fn obsidian_read_note(state: State<AppState>, path: String) -> Result<ObsidianReadResult, String> {
+    state.obsidian.read_note(&path)
+}
+
+// ---------------------------------------------------------------------
 // App entry point
 // ---------------------------------------------------------------------
 
@@ -293,6 +429,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let vault = Vault::new();
+            let obsidian = ObsidianStore::new(vault.audit());
 
             // Forward audit entries to the frontend (vault://audit).
             let handle = app.handle().clone();
@@ -324,9 +461,13 @@ pub fn run() {
             if let Some(root) = settings.last_root.clone() {
                 let _ = vault.set_root(Path::new(&root));
             }
+            if let Some(root) = settings.obsidian_root.clone() {
+                let _ = obsidian.set_root(Path::new(&root));
+            }
 
             app.manage(AppState {
                 vault,
+                obsidian,
                 sidecar,
                 settings: Mutex::new(settings),
             });
@@ -338,18 +479,28 @@ pub fn run() {
             vault_read_file,
             vault_read_binary,
             vault_write_file,
+            vault_write_binary,
             vault_list_dir,
             vault_search_files,
             vault_delete_file,
             audit_read,
             agent_create_session,
             agent_send,
+            agent_analyze,
             agent_abort,
             agent_close,
             settings_get,
             settings_set,
+            obsidian_set_root,
+            obsidian_get_root,
+            obsidian_clear_root,
+            obsidian_list_notes,
+            obsidian_read_note,
             mail_fetch,
             mail_delete,
+            mail_list_mailboxes,
+            mail_action,
+            mail_send,
             calendar_sync,
             calendar_push,
             todo_list,

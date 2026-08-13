@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { deleteMail, fetchMail, renderMessageMarkdown, type ImapFactory, type MailAccount } from "../src/mail.js";
+import { applyMailAction, deleteMail, fetchMail, listMailboxes, renderMessageMarkdown, sendMail, type ImapFactory, type MailAccount, type SmtpFactory } from "../src/mail.js";
 import { RpcError } from "../src/rpc.js";
 import type { VaultClient } from "../src/tools.js";
 
@@ -52,7 +52,7 @@ const MIME_WITH_ATTACHMENT =
 
 /** Fake IMAP factory yielding the given messages (uid/source pairs). */
 function fakeImap(
-  messages: { uid: number; source: string }[],
+  messages: { uid: number; source: string; flags?: string[] }[],
   hooks: { failConnect?: boolean } = {},
 ): ImapFactory {
   return (_account: MailAccount) => ({
@@ -62,7 +62,7 @@ function fakeImap(
     },
     getMailboxLock: async () => ({ release: () => {} }),
     fetch: async function* () {
-      for (const m of messages) yield { uid: m.uid, source: Buffer.from(m.source) };
+      for (const m of messages) yield { uid: m.uid, source: Buffer.from(m.source), ...(m.flags ? { flags: m.flags } : {}) };
     },
     messageDelete: async () => true,
     logout: async () => {},
@@ -94,13 +94,29 @@ describe("fetchMail", () => {
     ]));
 
     expect(result).toEqual({ fetched: 2, accounts: [{ name: "qq", new_messages: 2 }] });
-    const written = [...files.keys()].filter((p) => p.startsWith("mail/qq/"));
+    const written = [...files.keys()].filter((p) => p.startsWith("mail/qq/") && p.endsWith(".md"));
     expect(written).toHaveLength(2);
     expect(files.get(written[0]!)).toContain("# hello");
+    expect(files.get(written[0]!)).toContain("- **Folder:** inbox");
+    expect(files.get("mail/qq/index.json")).toContain("thread_key");
     // last_uid advanced to 7 and was written back
     const saved = JSON.parse(files.get("mail/accounts.json")!);
     expect(saved.accounts[0].last_uid).toBe(7);
     expect(saved.accounts[1].last_uid).toBeUndefined();
+  });
+
+  it("persists the remote Seen flag so the UI can distinguish read mail", async () => {
+    const { vault, files } = fakeVault({ "mail/accounts.json": JSON.stringify(CONFIG) });
+    await fetchMail(vault, { account: "qq" }, fakeImap([
+      { uid: 6, source: MIME("seen", "already read"), flags: ["\\Seen"] },
+      { uid: 7, source: MIME("unseen", "needs attention"), flags: [] },
+    ]));
+
+    const stored = [...files.entries()].find(([path]) => path.endsWith("-6.md"))?.[1];
+    const metadata = JSON.parse(files.get("mail/qq/index.json")!);
+    expect(stored).toContain("- **Read:** true");
+    expect(metadata.messages.find((item: { uid: number }) => item.uid === 6).read).toBe(true);
+    expect(metadata.messages.find((item: { uid: number }) => item.uid === 7).read).toBe(false);
   });
 
   it("reports connection, read, save and completion progress", async () => {
@@ -231,6 +247,143 @@ describe("fetchMail", () => {
 
     await expect(deleteMail(vault, { account: "qq", uids: [7] }, factory)).rejects.toThrow("UIDPLUS");
     expect(messageDelete).not.toHaveBeenCalled();
+  });
+
+  it("sends a message through the configured SMTP transport", async () => {
+    const { vault } = fakeVault({ "mail/accounts.json": JSON.stringify(CONFIG) });
+    const send = vi.fn(async () => ({ messageId: "<depdek-1@example.com>" }));
+    const close = vi.fn();
+    const factory: SmtpFactory = () => ({ sendMail: send, close });
+
+    await expect(sendMail(vault, {
+      account: "qq",
+      to: "recipient@example.com",
+      subject: "Hello",
+      text: "Local-first message",
+    }, factory)).resolves.toEqual({ account: "qq", message_id: "<depdek-1@example.com>" });
+    expect(send).toHaveBeenCalledWith({
+      from: "a@qq.com",
+      to: "recipient@example.com",
+      subject: "Hello",
+      text: "Local-first message",
+    });
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("sends an optional HTML body alongside the plain-text fallback", async () => {
+    const { vault } = fakeVault({ "mail/accounts.json": JSON.stringify(CONFIG) });
+    const send = vi.fn(async () => ({ messageId: "<depdek-html@example.com>" }));
+    await sendMail(vault, {
+      account: "qq",
+      to: "recipient@example.com",
+      subject: "Rich",
+      text: "Plain fallback",
+      html: "<p>Rich body</p>",
+    }, () => ({ sendMail: send }));
+    expect(send).toHaveBeenCalledWith({
+      from: "a@qq.com",
+      to: "recipient@example.com",
+      subject: "Rich",
+      text: "Plain fallback",
+      html: "<p>Rich body</p>",
+    });
+  });
+
+  it("decodes outbound attachments and sanitizes their filenames", async () => {
+    const { vault } = fakeVault({ "mail/accounts.json": JSON.stringify(CONFIG) });
+    const send = vi.fn(async () => ({ messageId: "<depdek-attachment@example.com>" }));
+    await sendMail(vault, {
+      account: "qq",
+      to: "recipient@example.com",
+      text: "See attached",
+      attachments: [{ name: "../报价单.pdf", mime: "application/pdf", content_base64: Buffer.from("PDF").toString("base64") }],
+    }, () => ({ sendMail: send }));
+    const message = send.mock.calls[0]?.[0] as { attachments?: Array<{ filename: string; content: Buffer; contentType: string }> };
+    expect(message.attachments).toHaveLength(1);
+    expect(message.attachments?.[0]?.filename).toBe("报价单.pdf");
+    expect(message.attachments?.[0]?.content.toString()).toBe("PDF");
+    expect(message.attachments?.[0]?.contentType).toBe("application/pdf");
+  });
+
+  it("lists remote folders and preserves special-use metadata", async () => {
+    const { vault } = fakeVault({ "mail/accounts.json": JSON.stringify(CONFIG) });
+    const list = vi.fn(async () => [
+      { path: "INBOX", specialUse: "\\Inbox", subscribed: true, status: { messages: 3, unseen: 1 } },
+      { path: "Archive", specialUse: "\\Archive", subscribed: true, status: { messages: 9, unseen: 0 } },
+    ]);
+    const factory: ImapFactory = () => ({
+      connect: async () => {},
+      getMailboxLock: async () => ({ release: () => {} }),
+      fetch: async function* () {},
+      messageDelete: async () => true,
+      list,
+      logout: async () => {},
+    });
+
+    await expect(listMailboxes(vault, { account: "qq" }, factory)).resolves.toEqual({
+      account: "qq",
+      mailboxes: [
+        { path: "INBOX", special_use: "\\Inbox", subscribed: true, messages: 3, unseen: 1 },
+        { path: "Archive", special_use: "\\Archive", subscribed: true, messages: 9, unseen: 0 },
+      ],
+    });
+    expect(list).toHaveBeenCalledWith({ statusQuery: { messages: true, unseen: true } });
+  });
+
+  it("applies remote actions one UID at a time and reports progress", async () => {
+    const { vault } = fakeVault({ "mail/accounts.json": JSON.stringify(CONFIG) });
+    const active = { value: 0, peak: 0 };
+    const flagsAdd = vi.fn(async () => {
+      active.value += 1;
+      active.peak = Math.max(active.peak, active.value);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      active.value -= 1;
+      return true;
+    });
+    const move = vi.fn(async () => true);
+    const factory: ImapFactory = () => ({
+      connect: async () => {},
+      getMailboxLock: async () => ({ release: () => {} }),
+      fetch: async function* () {},
+      messageDelete: async () => true,
+      messageFlagsAdd: flagsAdd,
+      messageMove: move,
+      logout: async () => {},
+      list: async () => [{ path: "Archive", specialUse: "\\Archive" }],
+    });
+    const events: string[] = [];
+
+    await expect(applyMailAction(vault, {
+      account: "qq",
+      action: "archive",
+      uids: [7, 7, 8],
+    }, factory, (event) => events.push(`${event.uid}:${event.current}/${event.total}`))).resolves.toEqual({
+      account: "qq",
+      action: "archive",
+      processed: 2,
+      destination: "Archive",
+    });
+    expect(move).toHaveBeenNthCalledWith(1, [7], "Archive", { uid: true });
+    expect(move).toHaveBeenNthCalledWith(2, [8], "Archive", { uid: true });
+    expect(move).toHaveBeenCalledTimes(2);
+    expect(active.peak).toBe(0);
+    expect(events).toEqual(["7:1/2", "7:1/2", "8:2/2", "8:2/2"]);
+  });
+
+  it("marks messages read through UID STORE", async () => {
+    const { vault } = fakeVault({ "mail/accounts.json": JSON.stringify(CONFIG) });
+    const flagsAdd = vi.fn(async () => true);
+    const factory: ImapFactory = () => ({
+      connect: async () => {},
+      getMailboxLock: async () => ({ release: () => {} }),
+      fetch: async function* () {},
+      messageDelete: async () => true,
+      messageFlagsAdd: flagsAdd,
+      logout: async () => {},
+    });
+
+    await applyMailAction(vault, { account: "qq", action: "mark_read", uids: [9] }, factory);
+    expect(flagsAdd).toHaveBeenCalledWith([9], ["\\Seen"], { uid: true });
   });
 });
 

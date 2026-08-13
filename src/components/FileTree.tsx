@@ -12,11 +12,13 @@ import {
   FolderOpen,
   HouseLine,
   Info,
+  Sparkle,
   X,
 } from "@phosphor-icons/react";
 import type { Icon } from "@phosphor-icons/react";
 import * as api from "../api";
 import logo from "../assets/depdek-logo.png";
+import AIAnalysisPanel from "./AIAnalysisPanel";
 
 interface TreeNode {
   entries?: api.DirEntry[];
@@ -38,6 +40,8 @@ export type FileViewMode = "tree" | "list" | "preview";
 interface Props {
   /** Lowercase extensions without dot; directories always stay visible. */
   extFilter?: string[];
+  /** Category tabs show matching files from every folder as one flat collection. */
+  flatFiles?: boolean;
   viewMode?: FileViewMode;
   variant?: "sidebar" | "page";
 }
@@ -117,6 +121,12 @@ const fileNameOf = (path: string) => {
   return parts[parts.length - 1] || path;
 };
 
+const folderNameOf = (path: string) => {
+  const separator = path.lastIndexOf("/");
+  if (separator < 0) return "我的数据";
+  return path.slice(0, separator) || "我的数据";
+};
+
 const formatSize = (size: number) => {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
@@ -156,11 +166,16 @@ const base64ToBlobUrl = (base64: string, mime: string) => {
   return URL.createObjectURL(new Blob([bytes], { type: mime }));
 };
 
-export default function FileTree({ extFilter, viewMode = "tree", variant = "sidebar" }: Props) {
+type FlatFileEntry = { entry: api.DirEntry; path: string; folder: string };
+
+export default function FileTree({ extFilter, flatFiles = false, viewMode = "tree", variant = "sidebar" }: Props) {
   const [nodes, setNodes] = useState<Record<string, TreeNode>>({});
+  const [flatEntries, setFlatEntries] = useState<FlatFileEntry[]>([]);
+  const [flatLoading, setFlatLoading] = useState(false);
   const [currentPath, setCurrentPath] = useState(".");
   const [selected, setSelected] = useState<{ path: string; entry: api.DirEntry } | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [analysisOpen, setAnalysisOpen] = useState(false);
   const objectUrlRef = useRef<string | null>(null);
   const requestRef = useRef(0);
   const browserPreview = typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
@@ -218,11 +233,45 @@ export default function FileTree({ extFilter, viewMode = "tree", variant = "side
     }
   };
 
+  const loadFlatFiles = async () => {
+    setFlatLoading(true);
+    const visited = new Set<string>();
+    const collect = async (path: string): Promise<FlatFileEntry[]> => {
+      if (visited.has(path)) return [];
+      visited.add(path);
+      const entries = browserPreview
+        ? PREVIEW_ENTRIES[path] ?? []
+        : (await api.vaultListDir(path)).entries;
+      const files: FlatFileEntry[] = [];
+      for (const entry of sortedVisible(entries)) {
+        const childPath = join(path, entry.name);
+        if (entry.kind === "dir") {
+          files.push(...await collect(childPath));
+        } else if (!extFilter || extFilter.includes(extOf(entry.name))) {
+          files.push({ entry, path: childPath, folder: folderNameOf(childPath) });
+        }
+      }
+      return files;
+    };
+
+    try {
+      const files = await collect(".");
+      files.sort((left, right) => left.entry.name.localeCompare(right.entry.name, "zh-CN") || left.folder.localeCompare(right.folder, "zh-CN"));
+      setFlatEntries(files);
+    } catch (error) {
+      setFlatEntries([]);
+      replacePreview({ path: ".", kind: "error", message: String(error), size: 0 });
+    } finally {
+      setFlatLoading(false);
+    }
+  };
+
   useEffect(() => {
-    load(".");
+    if (flatFiles) void loadFlatFiles();
+    else void load(".");
     // The tab key remounts this component whenever extFilter changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [flatFiles]);
 
   const toggleDir = (path: string) => {
     const node = nodes[path];
@@ -238,6 +287,7 @@ export default function FileTree({ extFilter, viewMode = "tree", variant = "side
   const navigateTo = (path: string) => {
     setCurrentPath(path);
     setSelected(null);
+    setAnalysisOpen(false);
     replacePreview(null);
     if (!nodes[path]?.entries) load(path);
   };
@@ -246,6 +296,7 @@ export default function FileTree({ extFilter, viewMode = "tree", variant = "side
     if (entry.kind === "dir") return;
 
     setSelected({ path, entry });
+    setAnalysisOpen(false);
     const ext = extOf(path);
     const isImage = IMAGE_EXT.includes(ext);
     const isVideo = VIDEO_EXT.includes(ext);
@@ -317,8 +368,21 @@ export default function FileTree({ extFilter, viewMode = "tree", variant = "side
 
   const closePreview = () => {
     setSelected(null);
+    setAnalysisOpen(false);
     replacePreview(null);
   };
+
+  const fileAnalysisContext = useMemo(() => {
+    if (!preview) return null;
+    const content = preview.kind === "text"
+      ? preview.content
+      : `文件：${fileNameOf(preview.path)}\n路径：${preview.path}\n类型：${extOf(preview.path).toUpperCase() || "未知"}\n大小：${formatSize(preview.size)}\n当前仅有文件元数据，未进行视觉或媒体内容识别。`;
+    return {
+      domain: "files" as const,
+      title: `文件：${fileNameOf(preview.path)}`,
+      sources: [{ label: fileNameOf(preview.path), path: preview.path, content }],
+    };
+  }, [preview]);
 
   const renderDir = (path: string, depth: number): ReactNode => {
     const node = nodes[path];
@@ -382,28 +446,33 @@ export default function FileTree({ extFilter, viewMode = "tree", variant = "side
   };
 
   const renderList = () => (
-    <div className="file-manager__list" role="table" aria-label="文件列表">
+    <div className={`file-manager__list ${flatFiles ? "file-manager__list--flat" : ""}`} role="table" aria-label="文件列表">
       <div className="file-manager__list-head" role="row">
         <span role="columnheader">名称</span>
+        {flatFiles && <span role="columnheader">所在文件夹</span>}
         <span role="columnheader">类型</span>
         <span role="columnheader">大小</span>
       </div>
-      {currentEntries.map((entry) => {
+      {(flatFiles ? flatEntries : currentEntries).map((item) => {
+        const flatItem = flatFiles ? item as FlatFileEntry : undefined;
+        const entry = flatItem?.entry ?? item as api.DirEntry;
         const path = join(currentPath, entry.name);
+        const flatPath = flatItem?.path ?? path;
         const EntryIcon = iconFor(entry);
-        const active = selected?.path === path;
+        const active = selected?.path === flatPath;
         return (
           <button
-            key={path}
+            key={flatPath}
             className={`file-manager__list-row ${active ? "file-manager__item--selected" : ""}`}
-            onClick={() => activateEntry(entry)}
+            onClick={() => flatFiles ? openFile(flatPath, entry) : activateEntry(entry)}
             role="row"
-            title={path}
+            title={flatPath}
           >
             <span className="file-manager__list-name" role="cell">
               <EntryIcon size={18} weight={entry.kind === "dir" ? "fill" : "regular"} />
               <b>{entry.name}</b>
             </span>
+            {flatItem && <span className="file-manager__location" role="cell" title={flatItem.folder}>{flatItem.folder}</span>}
             <span role="cell">{typeLabel(entry)}</span>
             <span role="cell">{entry.kind === "file" ? formatSize(entry.size) : "—"}</span>
           </button>
@@ -414,16 +483,19 @@ export default function FileTree({ extFilter, viewMode = "tree", variant = "side
 
   const renderPreviewGrid = () => (
     <div className="file-manager__grid" aria-label="文件预览视图">
-      {currentEntries.map((entry) => {
+      {(flatFiles ? flatEntries : currentEntries).map((item) => {
+        const flatItem = flatFiles ? item as FlatFileEntry : undefined;
+        const entry = flatItem?.entry ?? item as api.DirEntry;
         const path = join(currentPath, entry.name);
+        const flatPath = flatItem?.path ?? path;
         const EntryIcon = iconFor(entry);
-        const active = selected?.path === path;
+        const active = selected?.path === flatPath;
         return (
           <button
-            key={path}
+            key={flatPath}
             className={`file-manager__grid-card ${active ? "file-manager__item--selected" : ""}`}
-            onClick={() => activateEntry(entry)}
-            title={path}
+            onClick={() => flatFiles ? openFile(flatPath, entry) : activateEntry(entry)}
+            title={flatPath}
           >
             <span className={`file-manager__thumbnail file-manager__thumbnail--${entry.kind}`}>
               <EntryIcon size={entry.kind === "dir" ? 38 : 34} weight={entry.kind === "dir" ? "fill" : "duotone"} />
@@ -431,6 +503,7 @@ export default function FileTree({ extFilter, viewMode = "tree", variant = "side
             </span>
             <b>{entry.name}</b>
             <small>{entry.kind === "file" ? `${typeLabel(entry)} · ${formatSize(entry.size)}` : "文件夹"}</small>
+            {flatItem && <small className="file-manager__location">{flatItem.folder}</small>}
           </button>
         );
       })}
@@ -438,6 +511,16 @@ export default function FileTree({ extFilter, viewMode = "tree", variant = "side
   );
 
   const renderBrowser = () => {
+    if (flatFiles) {
+      return (
+        <>
+          <div className="file-manager__flat-summary"><b>{flatEntries.length} 个文件</b><span>已从所有文件夹汇总，所在文件夹显示在文件名后</span></div>
+          <div className="file-manager__flat-scroll">
+            {flatLoading ? <div className="file-manager__loading">正在汇总文件…</div> : viewMode === "preview" ? renderPreviewGrid() : renderList()}
+          </div>
+        </>
+      );
+    }
     if (viewMode === "tree") {
       return <div className="file-manager__tree">{renderDir(".", 0)}</div>;
     }
@@ -493,9 +576,10 @@ export default function FileTree({ extFilter, viewMode = "tree", variant = "side
                 <b title={preview.path}>{fileNameOf(preview.path)}</b>
                 <small title={preview.path}>{preview.path}</small>
               </div>
+              {fileAnalysisContext && preview.kind !== "loading" && <button className="file-manager__preview-ai" onClick={() => setAnalysisOpen((current) => !current)} aria-pressed={analysisOpen}><Sparkle size={14} />AI 分析</button>}
               <button onClick={closePreview} title="关闭预览" aria-label="关闭预览"><X size={16} /></button>
             </header>
-            <div className="file-manager__preview-body">{renderPreviewBody(preview)}</div>
+            <div className="file-manager__preview-body">{renderPreviewBody(preview)}{analysisOpen && fileAnalysisContext && <AIAnalysisPanel context={fileAnalysisContext} compact />}</div>
           </>
         ) : (
           <div className="file-manager__preview-empty">

@@ -1,6 +1,6 @@
 export type TaskStatus = "running" | "success" | "error";
 
-export type TaskKind = "mail_fetch" | "mail_delete" | "file_index" | "calendar_sync" | "model_run" | "other";
+export type TaskKind = "mail_fetch" | "mail_delete" | "mail_action" | "file_index" | "calendar_sync" | "model_run" | "other";
 
 export type TaskLogLevel = "info" | "success" | "warn" | "error";
 

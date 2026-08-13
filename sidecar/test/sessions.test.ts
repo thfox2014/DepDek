@@ -71,6 +71,20 @@ describe("SessionManager", () => {
     expect(deltas.join("")).toBe("Hello, workbench!");
   });
 
+  it("runs one analysis with read-only tools and returns the answer without a persistent session", async () => {
+    faux.setResponses([fauxAssistantMessage("{\"suggestions\":[\"整理这份记录\"]}")]);
+    const { manager, vault } = makeHarness();
+    const result = await manager.runOnceWithModel(
+      faux.getModel(),
+      undefined,
+      "分析这份内容，只给建议",
+      "只读分析，不要修改任何数据。",
+    );
+    expect(result.text).toContain("整理这份记录");
+    expect(manager.has("analysis")).toBe(false);
+    expect(vault.request).not.toHaveBeenCalledWith("vault/write_file", expect.anything());
+  });
+
   it("runs vault tool calls through the RPC client and reports start/end", async () => {
     faux.setResponses([
       fauxAssistantMessage(fauxToolCall("read_file", { path: "a.txt" }, { id: "tc1" }), {

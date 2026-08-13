@@ -13,8 +13,10 @@
   "dependencies": {
     "@mariozechner/pi-agent-core": "^0.73.1",
     "@mariozechner/pi-ai": "^0.73.1",
+    "@types/nodemailer": "^8.0.1",
     "imapflow": "^1.6.5",
-    "mailparser": "^3.9.14"
+    "mailparser": "^3.9.14",
+    "nodemailer": "^9.0.5"
   },
   "devDependencies": {
     "@opentelemetry/api": "^1.9.1",

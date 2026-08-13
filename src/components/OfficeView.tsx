@@ -1,4 +1,7 @@
 import { useState, type ReactNode } from "react";
+import { useEffect } from "react";
+import * as api from "../api";
+import { FileText, FloppyDisk, GearSix, ShieldCheck } from "@phosphor-icons/react";
 import type { ProviderConfig } from "../api";
 import type { ChatBlock, SessionInfo } from "../App";
 
@@ -7,8 +10,10 @@ interface Props {
   running: Record<string, boolean>;
   chats: Record<string, ChatBlock[]>;
   providers: Record<string, ProviderConfig>;
+  settings: api.Settings;
   onEnter: (id: string) => void;
-  onCreate: (label: string, providerName: string) => Promise<void>;
+  onCreate: (label: string, providerName: string, agentId?: string, openWorkbench?: boolean) => Promise<void>;
+  onSaveSettings: (settings: api.Settings) => Promise<void>;
   onOpenSettings: () => void;
 }
 
@@ -169,21 +174,176 @@ function activityOf(blocks: ChatBlock[] | undefined): string {
   return "思考中…";
 }
 
+const AGENT_FILES = ["agent.md", "skill.md", "mcp.md"] as const;
+type AgentFileName = (typeof AGENT_FILES)[number];
+
+function defaultAgentFiles(label: string): Record<AgentFileName, string> {
+  return {
+    "agent.md": `# ${label}\n\n你是 ${label}，DepDek 的个人数据 Agent。先准确复述事实，再给出可由用户确认的建议。\n`,
+    "skill.md": "# Skills\n\n- 识别主题、行动项、时间节点和风险。\n- 所有建议必须保持只读，不代替用户回复、移动、删除或发送。\n",
+    "mcp.md": "# MCP\n\n本文件只记录未来接入的 MCP 说明，不授予本次分析任何工具权限。当前分析不得调用外部服务。\n",
+  };
+}
+
+function agentPath(value: string | undefined, agentId: string): string {
+  const fallbackId = agentId.replace(/[^a-zA-Z0-9_-]/g, "-") || "agent";
+  const candidate = (value || `agents/${fallbackId}`).trim().replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
+  if (!candidate || candidate.split("/").some((part) => !part || part === "." || part === "..")) return `agents/${fallbackId}`;
+  return candidate;
+}
+
+function isLocalProvider(provider: ProviderConfig): boolean {
+  if (provider.kind !== "openai-compatible") return false;
+  try {
+    const host = new URL(provider.base_url).hostname.toLowerCase();
+    return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
+function AgentConfigPanel({
+  settings,
+  providers,
+  agentId,
+  onSelectAgent,
+  onCreate,
+  onSaveSettings,
+  onOpenSettings,
+}: {
+  settings: api.Settings;
+  providers: Record<string, ProviderConfig>;
+  agentId: string;
+  onSelectAgent: (id: string) => void;
+  onCreate: (label: string, providerName: string, agentId?: string, openWorkbench?: boolean) => Promise<void>;
+  onSaveSettings: (settings: api.Settings) => Promise<void>;
+  onOpenSettings: () => void;
+}) {
+  const agent = (settings.agents ?? []).find((item) => item.id === agentId);
+  const agentLabel = agent?.label || (agentId.toLowerCase() === "tanvis" ? "Tanvis" : agentId);
+  const defaults = defaultAgentFiles(agentLabel);
+  const [files, setFiles] = useState<Record<AgentFileName, string>>(defaults);
+  const [systemPrompt, setSystemPrompt] = useState(agent?.system_prompt ?? "");
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const providerNames = Object.keys(providers);
+  const [providerName, setProviderName] = useState(agent?.provider_name || providerNames[0] || "");
+  const usesLocalProvider = Boolean(providerName && providers[providerName] && isLocalProvider(providers[providerName]));
+  const root = agentPath(agent?.config_dir, agentLabel.toLowerCase() === "tanvis" ? "tanvis" : agentId);
+  const browserPreview = typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
+
+  useEffect(() => {
+    setProviderName(agent?.provider_name || providerNames[0] || "");
+    setSystemPrompt(agent?.system_prompt ?? "");
+    setNotice(null);
+    setError(null);
+  }, [agent?.id, agent?.provider_name, agent?.system_prompt, providerNames.join("\u0000")]);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError(null);
+    void Promise.all(AGENT_FILES.map(async (name) => {
+      if (browserPreview) return [name, defaults[name]] as const;
+      try {
+        const result = await api.vaultReadFile(`${root}/${name}`);
+        return [name, result.content] as const;
+      } catch {
+        return [name, defaults[name]] as const;
+      }
+    })).then((entries) => {
+      if (active) setFiles(Object.fromEntries(entries) as Record<AgentFileName, string>);
+    }).catch((reason) => { if (active) setError(String(reason)); }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [agentId, browserPreview, root]);
+
+  const updateFile = (name: AgentFileName, value: string) => setFiles((current) => ({ ...current, [name]: value }));
+
+  const createAgent = async () => {
+    if (!providerName) {
+      setError("请先在设置中配置 provider");
+      return;
+    }
+    setError(null);
+    try {
+      await onCreate(agentLabel, providerName, agentId, false);
+      setNotice(`${agentLabel} 已加入 Agent Team`);
+    } catch (reason) {
+      setError(String(reason));
+    }
+  };
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+      setNotice(null);
+    try {
+      if (!browserPreview) {
+        for (const name of AGENT_FILES) await api.vaultWriteFile(`${root}/${name}`, files[name]);
+      }
+      const nextAgents = agent
+        ? (settings.agents ?? []).map((item) => item.id === agent.id ? { ...item, provider_name: providerName, config_dir: root, system_prompt: systemPrompt.trim() || undefined } : item)
+        : [...(settings.agents ?? []), { id: agentId, label: agentLabel, provider_name: providerName, config_dir: root, system_prompt: systemPrompt.trim() || undefined }];
+      await onSaveSettings({ ...settings, agents: nextAgents });
+      setNotice(browserPreview ? "预览模式已保存本地编辑状态" : `已保存 ${agentLabel} 配置到 Home/${root}`);
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="office__tanvis" aria-label={`${agentLabel} Agent 配置`}>
+      <div className="office__tanvis-head">
+        <div><div className="office__eyebrow"><GearSix size={15} />{agentLabel} 配置</div><h2>{agentLabel === "Tanvis" ? "本地数据分析 Agent" : "Agent 工作配置"}</h2><p>{agentLabel === "Tanvis" ? "单封邮件的“AI 分析”会调用 Tanvis；只读本地内容并返回建议。" : "配置这个 Agent 的角色、技能和连接说明，保存后立即生效。"}</p></div>
+        <div className="office__tanvis-state"><ShieldCheck size={15} />MCP 仅作说明，不授予本次分析工具权限</div>
+      </div>
+      <div className="office__tanvis-toolbar">
+        <label className="office__agent-switcher">当前 Agent<select aria-label="选择要配置的 Agent" value={agentId} onChange={(event) => onSelectAgent(event.target.value)}>{(settings.agents ?? []).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}{!(settings.agents ?? []).some((item) => item.id === agentId) && <option value={agentId}>{agentLabel}</option>}</select></label>
+        <select aria-label={`选择 ${agentLabel} provider`} value={providerName} onChange={(event) => setProviderName(event.target.value)} disabled={!providerNames.length}><option value="">选择 provider</option>{providerNames.map((name) => <option key={name} value={name}>{name} · {providers[name].model}</option>)}</select>
+        {agent ? <span className={usesLocalProvider ? "office__tanvis-ready" : "office__tanvis-warning"}>{usesLocalProvider ? "已连接本地 provider" : "已配置云端 provider · 邮件分析需确认外发"} · {providerName || agent.provider_name}</span> : <><span>尚未加入 Agent Team</span><button className="primary" onClick={() => void createAgent()} disabled={!providerName}>加入 {agentLabel}</button></>}
+        {!usesLocalProvider && <button className="link" onClick={onOpenSettings}>切换本地 provider</button>}
+        <span className="office__tanvis-path">Home/{root}</span>
+      </div>
+      <div className="office__tanvis-files">
+        {AGENT_FILES.map((name) => <label key={name}><span><FileText size={15} />{name}</span><textarea value={files[name]} onChange={(event) => updateFile(name, event.target.value)} spellCheck={false} disabled={loading} /></label>)}
+        <label><span><FileText size={15} />system_prompt（可选）</span><textarea value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} spellCheck={false} disabled={loading} placeholder={`补充 ${agentLabel} 的角色约束`} /></label>
+      </div>
+      {loading && <p className="hint">读取 {agentLabel} 配置…</p>}
+      {notice && <p className="office__tanvis-notice">{notice}</p>}
+      {error && <p className="error-text">{error}</p>}
+      <div className="office__tanvis-actions"><span>配置文件通过 vault 读写，分析过程不会执行文件或 MCP 内容。</span><button className="primary" onClick={() => void save()} disabled={saving || loading || !providerName}><FloppyDisk size={15} />{saving ? "保存中…" : `保存 ${agentLabel} 配置`}</button></div>
+    </section>
+  );
+}
+
 export default function OfficeView({
   sessions,
   running,
   chats,
   providers,
+  settings,
   onEnter,
   onCreate,
+  onSaveSettings,
   onOpenSettings,
 }: Props) {
   const [creating, setCreating] = useState(false);
   const [label, setLabel] = useState("");
   const [providerName, setProviderName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const initialConfigAgent = settings.agents?.find((agent) => agent.label.toLowerCase() === "tanvis")?.id ?? settings.agents?.[0]?.id ?? "tanvis";
+  const [configAgentId, setConfigAgentId] = useState(initialConfigAgent);
 
   const providerNames = Object.keys(providers);
+
+  useEffect(() => {
+    if (settings.agents?.some((agent) => agent.id === configAgentId)) return;
+    setConfigAgentId(settings.agents?.find((agent) => agent.label.toLowerCase() === "tanvis")?.id ?? settings.agents?.[0]?.id ?? "tanvis");
+  }, [configAgentId, settings.agents]);
 
   const submit = async () => {
     const name = providerName || providerNames[0];
@@ -205,6 +365,7 @@ export default function OfficeView({
     <div className="office">
       <h1 className="office__title">Agent Team</h1>
       <p className="office__subtitle">每个工位是一个 agent 会话，点进去即可开始协作。</p>
+      <AgentConfigPanel agentId={configAgentId} onSelectAgent={setConfigAgentId} settings={settings} providers={providers} onCreate={onCreate} onSaveSettings={onSaveSettings} onOpenSettings={onOpenSettings} />
       <div className="office__grid">
         {sessions.map((s, i) => {
           const isRunning = Boolean(running[s.id]);
@@ -228,7 +389,7 @@ export default function OfficeView({
                 <div className="workstation__floor" />
               </div>
               <div className="workstation__label">{s.label}</div>
-              <div className="workstation__provider">{s.providerName}</div>
+              <div className="workstation__provider"><span>{s.providerName}</span><button className="workstation__configure" onClick={(event) => { event.stopPropagation(); setConfigAgentId(s.id); }}>配置</button></div>
             </div>
           );
         })}

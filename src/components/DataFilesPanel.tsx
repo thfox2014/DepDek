@@ -120,6 +120,7 @@ export default function DataFilesPanel({ variant = "sidebar" }: Props) {
             <FileTree
               key={tab}
               extFilter={extensionFilter}
+              flatFiles={tab === "documents" || tab === "images" || tab === "videos"}
               viewMode={variant === "page" ? viewMode : "tree"}
               variant={variant}
             />

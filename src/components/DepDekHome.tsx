@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Books,
   Brain,
+  CaretLeft,
+  CaretRight,
   CalendarBlank,
   Check,
   CheckCircle,
@@ -35,9 +37,10 @@ import type { TaskRecord, TaskReporter, TaskStartInput, TaskUpdate } from "../ta
 import { enqueueTodo, listTodos, subscribeTodoChanges, updateTodo } from "../todoStore";
 import type { TodoItem } from "../todoTypes";
 import logo from "../assets/depdek-logo.png";
-import CalendarView from "./CalendarView";
+import CalendarView, { makePreviewEvents } from "./CalendarView";
 import DataFilesPanel from "./DataFilesPanel";
 import InboxView from "./InboxView";
+import ObsidianPanel from "./ObsidianPanel";
 import TodoBoard from "./TodoBoard";
 import "./depdek-home.css";
 
@@ -111,6 +114,46 @@ const VIEW_TITLES: Record<ViewName, string> = {
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const TASK_HISTORY_PATH = "tasks/history.json";
+const CALENDAR_EVENTS_PATH = "calendar/events.json";
+
+type TimelineTone = "muted" | "now" | "accent";
+
+function dayKey(value: Date): string {
+  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
+}
+
+function parseEventDate(value: string): Date | null {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatTimelineTime(event: api.CalendarEvent): string {
+  if (event.all_day) return "全天";
+  const start = parseEventDate(event.start);
+  return start ? new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(start) : "--:--";
+}
+
+function formatUpcomingTime(event: api.CalendarEvent): string {
+  if (event.all_day) {
+    const start = parseEventDate(event.start);
+    return start ? new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(start) + " 全天" : "日期待定";
+  }
+  const start = parseEventDate(event.start);
+  return start ? new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(start) : "日期待定";
+}
+
+function timelineStatus(event: api.CalendarEvent, now: Date): { label: string; tone: TimelineTone } {
+  if (event.all_day) return { label: "全天", tone: "accent" };
+  const start = parseEventDate(event.start);
+  const end = parseEventDate(event.end);
+  if (!start || !end || end <= now) return { label: "已结束", tone: "muted" };
+  if (start <= now) return { label: "进行中", tone: "now" };
+  return { label: "即将开始", tone: "accent" };
+}
+
+function timelineMeta(event: api.CalendarEvent): string {
+  return [event.location, event.source_name ? `来源：${event.source_name}` : "来源：本地日历"].filter(Boolean).join(" · ");
+}
 
 function ToolButtons() {
   return (
@@ -141,35 +184,58 @@ function StatusPill({ children, tone = "accent" }: { children: React.ReactNode; 
   return <span className={`dd-pill dd-pill--${tone}`}>{children}</span>;
 }
 
-function Timeline() {
-  const items = [
-    ["09:30", "产品周会", "已结束", "腾讯会议 · 与李雯、Chen 等 6 人 · 来源：日历同步", "muted"],
-    ["13:00", "DepDek 重构评审", "已结束", "会议室 B · 纪要已同步到知识库", "muted"],
-    ["19:00", "与 Alice 对齐 Q3 预算", "即将开始", "线上 · 关联 3 封邮件与 1 份文档", "now"],
-    ["21:30", "深度工作块 · 建议", "", "依据：已确认记忆「晚间适合写作」· 置信度 86%", "accent"],
-  ];
+function Timeline({ events, loading }: { events: api.CalendarEvent[]; loading: boolean }) {
+  const now = new Date();
+  const todayKey = dayKey(now);
+  const tomorrow = new Date(now);
+  tomorrow.setHours(0, 0, 0, 0);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const sortedEvents = [...events].filter((event) => parseEventDate(event.start)).sort((a, b) => a.start.localeCompare(b.start));
+  const todayEvents = sortedEvents.filter((event) => {
+    const start = parseEventDate(event.start);
+    return start ? dayKey(start) === todayKey : false;
+  });
+  const upcomingEvents = sortedEvents.filter((event) => {
+    const start = parseEventDate(event.start);
+    return start ? start >= tomorrow : false;
+  }).slice(0, 5);
+
   return (
     <div className="dd-timeline">
-      {items.map(([time, title, status, meta, tone]) => (
-        <div className="dd-timeline-item" key={time}>
-          <time>{time}</time>
-          <span className={`dd-timeline-dot dd-timeline-dot--${tone}`} />
-          <div className={`dd-timeline-body ${tone === "now" ? "dd-timeline-body--hot" : ""}`}>
-            <div className="dd-timeline-title">
-              {title}
-              {status && <StatusPill tone={tone === "now" ? "warn" : "muted"}>{status}</StatusPill>}
+      {loading ? <div className="dd-timeline-empty"><b>正在读取日历…</b></div> : todayEvents.length ? todayEvents.map((event) => {
+        const status = timelineStatus(event, now);
+        return (
+          <div className="dd-timeline-item" key={event.id}>
+            <time>{formatTimelineTime(event)}</time>
+            <span className={`dd-timeline-dot dd-timeline-dot--${status.tone}`} />
+            <div className={`dd-timeline-body ${status.tone === "now" ? "dd-timeline-body--hot" : ""}`}>
+              <div className="dd-timeline-title">
+                {event.title}
+                <StatusPill tone={status.tone === "now" ? "warn" : status.tone === "muted" ? "muted" : "accent"}>{status.label}</StatusPill>
+              </div>
+              <div className="dd-timeline-meta">{timelineMeta(event)}</div>
             </div>
-            <div className="dd-timeline-meta">{meta}{tone === "now" && <button>查看上下文</button>}</div>
           </div>
-        </div>
-      ))}
+        );
+      }) : <div className="dd-timeline-empty"><b>今日暂无安排</b><span>可以利用这段时间处理待办或安排新的日程</span></div>}
+
+      {!!upcomingEvents.length && <div className="dd-timeline-upcoming">
+        <div className="dd-timeline-section-label">接下来 5 项</div>
+        {upcomingEvents.map((event) => <div className="dd-timeline-upcoming-item" key={event.id}>
+          <time>{formatUpcomingTime(event)}</time>
+          <span><b>{event.title}</b><small>{event.location || event.source_name || "日历安排"}</small></span>
+        </div>)}
+      </div>}
     </div>
   );
 }
 
 function TodayView({ notify, openAction }: { notify: (message: string) => void; openAction: () => void }) {
   const [tasks, setTasks] = useState<TodoItem[]>([]);
+  const [calendarEvents, setCalendarEvents] = useState<api.CalendarEvent[]>([]);
+  const [calendarLoading, setCalendarLoading] = useState(true);
   const [draft, setDraft] = useState("");
+  const browserPreview = typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
   const loadTasks = useCallback(async () => {
     try {
       setTasks((await listTodos()).slice(0, 6));
@@ -181,6 +247,28 @@ function TodayView({ notify, openAction }: { notify: (message: string) => void; 
     void loadTasks();
     return subscribeTodoChanges(() => void loadTasks());
   }, [loadTasks]);
+
+  const loadCalendar = useCallback(async () => {
+    setCalendarLoading(true);
+    try {
+      if (browserPreview) {
+        setCalendarEvents(makePreviewEvents());
+        return;
+      }
+      const result = await api.vaultReadFile(CALENDAR_EVENTS_PATH).catch(() => ({ content: "{\"version\":1,\"events\":[]}" }));
+      const data = JSON.parse(result.content) as { events?: api.CalendarEvent[] };
+      setCalendarEvents(data.events ?? []);
+    } catch (error) {
+      setCalendarEvents([]);
+      notify(`读取今日日历失败：${String(error)}`);
+    } finally {
+      setCalendarLoading(false);
+    }
+  }, [browserPreview, notify]);
+
+  useEffect(() => {
+    void loadCalendar();
+  }, [loadCalendar]);
   const doneCount = tasks.filter((task) => task.lane === "done").length;
 
   const toggleTask = async (id: string) => {
@@ -217,8 +305,8 @@ function TodayView({ notify, openAction }: { notify: (message: string) => void; 
       <div className="dd-grid">
         <article className="dd-card dd-col-7 dd-card--timeline">
           <CardHeader tag="日程与时间轴 · 日历中枢" title="今日时间轴" />
-          <Timeline />
-          <SourceNote>来源：本地日历中枢 · 外部连接 10 分钟前同步</SourceNote>
+          <Timeline events={calendarEvents} loading={calendarLoading} />
+          <SourceNote>来源：本地日历中枢 · 已读取 {calendarEvents.length} 项日历事件</SourceNote>
         </article>
 
         <article className="dd-card dd-col-5 dd-card--tasks">
@@ -341,6 +429,7 @@ function DomainView({ name, root, providerCount, sessionCount, openAgentTeam, no
   if (name === "calendar") return <CalendarView onStartTask={onStartTask} onUpdateTask={onUpdateTask} />;
   if (name === "todo") return <TodoBoard notify={notify} />;
   if (name === "files") return <FilesView root={root} />;
+  if (name === "knowledge") return <ObsidianPanel />;
   const view = VIEW_COPY[name];
   return (
     <>
@@ -577,7 +666,15 @@ export default function DepDekHome({ root, providerCount, sessionCount, onOpenAg
           return entries.filter((entry) => {
             if (entry.kind !== "file" || !entry.name.endsWith(".md")) return false;
             const state = messageStates[`mail/${account.name}/${entry.name}`];
-            return !state?.read && !state?.archived && !["trash", "sent", "drafts", "archive"].includes(state?.folder ?? "");
+            // Sent/draft copies created by older builds may not have a state
+            // index entry yet; their filename remains the durable fallback.
+            const inferredFolder = entry.name.toLocaleLowerCase().startsWith("sent-")
+              ? "sent"
+              : entry.name.toLocaleLowerCase().startsWith("draft-")
+                ? "drafts"
+                : undefined;
+            const effectiveFolder = state?.folder ?? inferredFolder;
+            return !state?.read && !state?.archived && (!effectiveFolder || effectiveFolder === "inbox");
           }).length;
         } catch {
           return 0;
@@ -664,16 +761,19 @@ export default function DepDekHome({ root, providerCount, sessionCount, onOpenAg
 
   return (
     <div className={`depdek ${copilotOpen ? "depdek--copilot-open" : ""} ${sidebarCollapsed ? "depdek--sidebar-collapsed" : ""}`}>
-      <aside className="dd-sidebar">
-        <div className="dd-brand"><img src={logo} alt="DepDek 图标" /><div><b>DepDek</b></div><button className="dd-sidebar-toggle" onClick={() => setSidebarCollapsed((current) => !current)} aria-label={sidebarCollapsed ? "展开侧栏" : "收拢侧栏"} title={sidebarCollapsed ? "展开侧栏" : "收拢侧栏"}><SidebarSimple size={18} weight="regular" /></button></div>
-        <nav>{navGroup("工作台", WORK_NAV)}{navGroup("数据领域", DATA_NAV)}{navGroup("信任与系统", TRUST_NAV)}</nav>
-        <div className="dd-sidebar-foot">
-          <button onClick={onOpenAgentTeam}><Robot size={16} />Agent Team <span>{sessionCount}</span></button>
-          <button onClick={onOpenSettings}><GearSix size={16} />模型与 Provider <span>{providerCount}</span></button>
-          <button onClick={onPickRoot}><HardDrives size={16} />更换 Home</button>
-          <p><span />Home 已连接 · Rust Vault</p><small title={root}>{root}</small>
-        </div>
-      </aside>
+      <div className="dd-sidebar-shell">
+        <aside className="dd-sidebar">
+          <div className="dd-brand"><img src={logo} alt="DepDek 图标" /><div><b>DepDek</b></div></div>
+          <nav>{navGroup("工作台", WORK_NAV)}{navGroup("数据领域", DATA_NAV)}{navGroup("信任与系统", TRUST_NAV)}</nav>
+          <div className="dd-sidebar-foot">
+            <button onClick={onOpenAgentTeam}><Robot size={16} />Agent Team <span>{sessionCount}</span></button>
+            <button onClick={onOpenSettings}><GearSix size={16} />模型与 Provider <span>{providerCount}</span></button>
+            <button onClick={onPickRoot}><HardDrives size={16} />更换 Home</button>
+            <p><span />Home 已连接 · Rust Vault</p><small title={root}>{root}</small>
+          </div>
+        </aside>
+        <button className="dd-sidebar-toggle" onClick={() => setSidebarCollapsed((current) => !current)} aria-label={sidebarCollapsed ? "展开侧栏" : "收拢侧栏"} title={sidebarCollapsed ? "展开侧栏" : "收拢侧栏"}>{sidebarCollapsed ? <CaretRight size={13} weight="bold" /> : <CaretLeft size={13} weight="bold" />}</button>
+      </div>
 
       <div className="dd-main">
         {activeView === "today" && <header className="dd-topbar">

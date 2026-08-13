@@ -157,3 +157,10 @@ export function createVaultTools(client: VaultClient, sessionId: string): AgentT
     },
   ];
 }
+
+/** Read-only subset used by structured analysis runs. No mutation or network tools are exposed. */
+export function createReadOnlyVaultTools(client: VaultClient, sessionId: string): AgentTool<any>[] {
+  return createVaultTools(client, sessionId).filter((tool) =>
+    tool.name === "read_file" || tool.name === "list_files" || tool.name === "search_files",
+  );
+}

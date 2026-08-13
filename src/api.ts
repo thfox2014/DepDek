@@ -27,10 +27,13 @@ export interface SavedAgent {
   label: string;
   provider_name: string;
   system_prompt?: string;
+  /** Local, non-executable prompt workspace for this agent. */
+  config_dir?: string;
 }
 
 export interface Settings {
   last_root?: string | null;
+  obsidian_root?: string | null;
   providers: Record<string, ProviderConfig>;
   agents?: SavedAgent[];
 }
@@ -78,6 +81,21 @@ export interface SearchMatch {
   snippet: string;
 }
 
+export interface ObsidianNote {
+  path: string;
+  title: string;
+  folder: string;
+  size: number;
+  modified_ms: number;
+}
+
+export interface ObsidianReadResult {
+  path: string;
+  content: string;
+  size: number;
+  sha256: string;
+}
+
 // Mail (contract sections 2.5 and 7).
 export interface MailAccount {
   name: string;
@@ -88,6 +106,9 @@ export interface MailAccount {
   password: string;
   mailbox?: string;
   last_uid?: number;
+  smtp_host?: string;
+  smtp_port?: number;
+  smtp_secure?: boolean;
 }
 
 export interface MailFetchAccountResult {
@@ -114,6 +135,62 @@ export interface MailProgressEvent {
 export interface MailDeleteResult {
   account: string;
   deleted: number;
+}
+
+export interface MailSendInput {
+  account: string;
+  to: string;
+  cc?: string;
+  bcc?: string;
+  subject?: string;
+  text: string;
+  html?: string;
+  attachments?: MailSendAttachment[];
+}
+
+export interface MailSendAttachment {
+  name: string;
+  content_base64: string;
+  mime?: string;
+  size?: number;
+}
+
+export interface MailSendResult {
+  account: string;
+  message_id: string;
+}
+
+export interface MailboxInfo {
+  path: string;
+  special_use?: string;
+  subscribed?: boolean;
+  messages?: number;
+  unseen?: number;
+}
+
+export type MailActionName =
+  | "mark_read"
+  | "mark_unread"
+  | "star"
+  | "unstar"
+  | "move"
+  | "archive"
+  | "trash";
+
+export interface MailActionResult {
+  account: string;
+  action: MailActionName;
+  processed: number;
+  destination?: string;
+}
+
+export interface MailActionProgressEvent {
+  account: string;
+  action: MailActionName;
+  uid: number;
+  current: number;
+  total: number;
+  message: string;
 }
 
 export type CalendarProvider = "google" | "microsoft" | "apple" | "caldav" | "ics";
@@ -200,6 +277,8 @@ export const vaultReadBinary = (path: string) =>
   invoke<ReadBinaryResult>("vault_read_binary", { path });
 export const vaultWriteFile = (path: string, content: string) =>
   invoke<WriteFileResult>("vault_write_file", { path, content });
+export const vaultWriteBinary = (path: string, dataBase64: string) =>
+  invoke<WriteFileResult>("vault_write_binary", { path, dataBase64 });
 export const vaultListDir = (path: string) =>
   invoke<{ entries: DirEntry[] }>("vault_list_dir", { path });
 export const vaultSearchFiles = (query: string) =>
@@ -216,17 +295,34 @@ export const agentCreateSession = (
 ) => invoke<{ session_id: string }>("agent_create_session", { sessionId, provider, systemPrompt });
 export const agentSend = (sessionId: string, text: string) =>
   invoke<void>("agent_send", { sessionId, text });
+export const agentAnalyze = (provider: ProviderConfig, text: string, systemPrompt: string) =>
+  invoke<{ text: string }>("agent_analyze", { provider, text, systemPrompt });
 export const agentAbort = (sessionId: string) => invoke<void>("agent_abort", { sessionId });
 export const agentClose = (sessionId: string) => invoke<void>("agent_close", { sessionId });
 
 export const settingsGet = () => invoke<Settings>("settings_get");
 export const settingsSet = (settings: Settings) => invoke<void>("settings_set", { settings });
+export const obsidianSetRoot = (path: string) => invoke<string>("obsidian_set_root", { path });
+export const obsidianGetRoot = () => invoke<string | null>("obsidian_get_root");
+export const obsidianClearRoot = () => invoke<void>("obsidian_clear_root");
+export const obsidianListNotes = (query?: string) => invoke<{ notes: ObsidianNote[] }>("obsidian_list_notes", { query });
+export const obsidianReadNote = (path: string) => invoke<ObsidianReadResult>("obsidian_read_note", { path });
 
 export const mailFetch = (account?: string, refreshBody = false) =>
   invoke<MailFetchResult>("mail_fetch", { account, refreshBody });
 
 export const mailDelete = (account: string, uids: number[]) =>
   invoke<MailDeleteResult>("mail_delete", { account, uids });
+export const mailListMailboxes = (account: string) =>
+  invoke<{ account: string; mailboxes: MailboxInfo[] }>("mail_list_mailboxes", { account });
+export const mailAction = (
+  account: string,
+  action: MailActionName,
+  uids: number[],
+  options: { destination?: string; mailbox?: string } = {},
+) => invoke<MailActionResult>("mail_action", { account, action, uids, ...options });
+export const mailSend = (input: MailSendInput) =>
+  invoke<MailSendResult>("mail_send", { ...input } as Record<string, unknown>);
 
 export const calendarSync = (account?: string) =>
   invoke<CalendarSyncResult>("calendar_sync", { account });
@@ -252,6 +348,9 @@ export const onAuditEntry = (cb: (entry: AuditEntry) => void): Promise<UnlistenF
 
 export const onMailEvent = (cb: (payload: MailProgressEvent) => void): Promise<UnlistenFn> =>
   listen<MailProgressEvent>("mail://event", (e) => cb(e.payload));
+
+export const onMailActionEvent = (cb: (payload: MailActionProgressEvent) => void): Promise<UnlistenFn> =>
+  listen<MailActionProgressEvent>("mail://action-event", (e) => cb(e.payload));
 
 export const onTodoEvent = (cb: (payload: Record<string, unknown>) => void): Promise<UnlistenFn> =>
   listen<Record<string, unknown>>("todo://event", (e) => cb(e.payload));

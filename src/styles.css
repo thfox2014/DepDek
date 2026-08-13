@@ -290,6 +290,12 @@ textarea:focus {
   border-bottom: 1px solid var(--border);
 }
 
+.panel-title > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 /* ---- session list ------------------------------------------------------------ */
 
 .session-list {
@@ -477,6 +483,58 @@ textarea:focus {
   padding: 10px 12px 14px;
 }
 
+.file-manager__flat-summary {
+  display: flex;
+  min-height: 39px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  border-bottom: 1px solid #e6e4ef;
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.file-manager__flat-summary b {
+  color: #4a3f91;
+  font-size: 10px;
+}
+
+.file-manager__flat-summary span {
+  color: #9a9dae;
+  font-size: 9px;
+}
+
+.file-manager__flat-scroll {
+  min-height: 0;
+  flex: 1 1 0;
+  overflow: auto;
+  scrollbar-color: rgba(112, 102, 170, 0.34) transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.file-manager__flat-scroll::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+.file-manager__flat-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.file-manager__flat-scroll::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: rgba(112, 102, 170, 0.3);
+  background-clip: padding-box;
+}
+
+.file-manager__flat-scroll .file-manager__list-head {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  background: rgba(252, 252, 255, 0.96);
+}
+
 .file-manager__tree-row {
   display: grid;
   width: 100%;
@@ -585,6 +643,11 @@ textarea:focus {
   gap: 14px;
 }
 
+.file-manager__list--flat .file-manager__list-head,
+.file-manager__list--flat .file-manager__list-row {
+  grid-template-columns: minmax(220px, 1fr) minmax(145px, 0.8fr) 120px 90px;
+}
+
 .file-manager__list-head {
   min-height: 31px;
   padding: 0 10px;
@@ -618,6 +681,15 @@ textarea:focus {
   color: #333344;
   font-size: 11px;
   font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-manager__location {
+  min-width: 0;
+  overflow: hidden;
+  color: #9699aa;
+  font-size: 9px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -687,6 +759,10 @@ textarea:focus {
   white-space: nowrap;
 }
 
+.file-manager__grid-card > small.file-manager__location {
+  color: #7568b1;
+}
+
 .file-manager__preview {
   display: flex;
   min-width: 0;
@@ -745,6 +821,25 @@ textarea:focus {
 .file-manager__preview > header button:hover {
   background: rgba(112, 87, 226, 0.08);
   color: #5d46d5;
+}
+
+.file-manager__preview > header .file-manager__preview-ai {
+  display: inline-flex;
+  width: auto;
+  height: 25px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 7px;
+  border: 1px solid rgba(112, 87, 226, 0.2);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #5d46d5;
+  font-size: 8px;
+}
+
+.file-manager__preview > header .file-manager__preview-ai:hover {
+  border-color: rgba(112, 87, 226, 0.4);
+  background: rgba(239, 236, 255, 0.9);
 }
 
 .file-manager__preview-body {
@@ -878,6 +973,23 @@ textarea:focus {
 }
 
 .file-manager--sidebar .file-manager__preview:not(.file-manager__preview--open) {
+  display: none;
+}
+
+.file-manager--sidebar .file-manager__list--flat {
+  min-width: 0;
+}
+
+.file-manager--sidebar .file-manager__list--flat .file-manager__list-head,
+.file-manager--sidebar .file-manager__list--flat .file-manager__list-row {
+  grid-template-columns: minmax(0, 1fr) minmax(72px, 0.72fr);
+  gap: 7px;
+}
+
+.file-manager--sidebar .file-manager__list--flat .file-manager__list-head > :nth-child(3),
+.file-manager--sidebar .file-manager__list--flat .file-manager__list-head > :nth-child(4),
+.file-manager--sidebar .file-manager__list--flat .file-manager__list-row > :nth-child(3),
+.file-manager--sidebar .file-manager__list--flat .file-manager__list-row > :nth-child(4) {
   display: none;
 }
 
@@ -1174,6 +1286,40 @@ textarea:focus {
   margin: 0 0 40px;
 }
 
+.office__tanvis {
+  max-width: 1020px;
+  margin: 0 auto 26px;
+  padding: 22px 24px 20px;
+  border: 1px solid #dfdef1;
+  border-radius: 22px;
+  background: linear-gradient(135deg, rgba(255,255,255,.96), rgba(247,245,255,.9));
+  box-shadow: 0 14px 34px rgba(80, 65, 160, .08);
+}
+.office__tanvis-head { display:flex; align-items:flex-start; justify-content:space-between; gap:24px; }
+.office__tanvis-head h2 { margin:5px 0 4px; font-size:20px; color:#29263f; }
+.office__tanvis-head p { margin:0; color:#77718f; font-size:13px; }
+.office__eyebrow { display:flex; align-items:center; gap:6px; color:#7057e8; font-size:12px; font-weight:700; letter-spacing:.03em; }
+.office__tanvis-state { display:flex; align-items:center; gap:6px; max-width:300px; padding:8px 11px; color:#267a62; background:#ecfaf3; border-radius:12px; font-size:12px; line-height:1.35; }
+.office__tanvis-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin:18px 0 14px; color:#6e6981; font-size:13px; }
+.office__tanvis-toolbar select { min-width:190px; }
+.office__tanvis-ready { color:#257860; font-weight:700; }
+.office__tanvis-warning { color:#a66b20; font-weight:700; }
+.office__tanvis-path { margin-left:auto; color:#9a94ab; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px; }
+.office__tanvis-files { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:12px; }
+.office__tanvis-files label { display:flex; flex-direction:column; gap:7px; min-width:0; }
+.office__tanvis-files label > span { display:flex; align-items:center; gap:6px; color:#403b58; font-size:13px; font-weight:700; }
+.office__tanvis-files textarea { width:100%; min-height:140px; box-sizing:border-box; padding:11px 12px; resize:vertical; border:1px solid #e1def0; border-radius:13px; background:#fff; color:#4b4662; font:12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.office__tanvis-files textarea:focus { outline:2px solid rgba(112,87,232,.2); border-color:#8168ed; }
+.office__tanvis-actions { display:flex; align-items:center; justify-content:space-between; gap:14px; margin-top:14px; color:#928ca6; font-size:12px; }
+.office__tanvis-actions button { display:inline-flex; align-items:center; gap:6px; }
+.office__tanvis-notice { margin:10px 0 0; color:#287960; font-size:12px; }
+@media (max-width: 860px) {
+  .office__tanvis-head { flex-direction:column; }
+  .office__tanvis-files { grid-template-columns:1fr; }
+  .office__tanvis-path { margin-left:0; width:100%; }
+  .office__tanvis-actions { align-items:flex-start; flex-direction:column; }
+}
+
 .office__grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(240px, 1fr));
@@ -1441,9 +1587,28 @@ textarea:focus {
 }
 
 .workstation__provider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   text-align: center;
   color: var(--text-dim);
   font-size: 11px;
+}
+
+.workstation__configure {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--accent);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.workstation__configure:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 /* ---- monitor code lines -------------------------------------------------------- */

@@ -12,12 +12,14 @@ import {
   LinkSimple,
   MapPin,
   Plus,
+  Sparkle,
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
 import * as api from "../api";
 import type { TaskReporter } from "../taskTypes";
 import { enqueueTodo } from "../todoStore";
+import AIAnalysisPanel from "./AIAnalysisPanel";
 import "./calendar.css";
 
 const ACCOUNTS_PATH = "calendar/accounts.json";
@@ -67,7 +69,7 @@ function dateTime(date: Date, hour: number, minute: number): string {
   return next.toISOString();
 }
 
-function makePreviewEvents(): api.CalendarEvent[] {
+export function makePreviewEvents(): api.CalendarEvent[] {
   const today = new Date();
   const tomorrow = new Date(today);
   tomorrow.setDate(today.getDate() + 1);
@@ -76,8 +78,11 @@ function makePreviewEvents(): api.CalendarEvent[] {
   return [
     { id: "preview-standup", remote_id: "standup", source_account_id: "preview-google", source_name: "Google 工作日历", title: "产品周会", start: dateTime(today, 9, 30), end: dateTime(today, 10, 15), location: "线上 · 腾讯会议" },
     { id: "preview-review", remote_id: "review", source_account_id: "preview-google", source_name: "Google 工作日历", title: "DepDek 重构评审", start: dateTime(today, 13, 0), end: dateTime(today, 14, 0), location: "会议室 B" },
+    { id: "preview-sync", source_account_id: "preview-local", source_name: "DepDek 本地日历", title: "日历同步回顾", start: dateTime(tomorrow, 9, 0), end: dateTime(tomorrow, 9, 30), location: "本地" },
     { id: "preview-deep-work", source_account_id: "preview-local", source_name: "DepDek 本地日历", title: "深度工作块 · 邮件整理", start: dateTime(tomorrow, 19, 0), end: dateTime(tomorrow, 21, 0), location: "本地" },
+    { id: "preview-one-on-one", remote_id: "one-on-one", source_account_id: "preview-google", source_name: "Google 工作日历", title: "一对一沟通", start: dateTime(later, 10, 30), end: dateTime(later, 11, 0), location: "线上" },
     { id: "preview-budget", remote_id: "budget", source_account_id: "preview-google", source_name: "Google 工作日历", title: "与 Alice 对齐 Q3 预算", start: dateTime(later, 15, 0), end: dateTime(later, 16, 0), location: "线上" },
+    { id: "preview-review-week", source_account_id: "preview-local", source_name: "DepDek 本地日历", title: "周计划复盘", start: dateTime(later, 17, 30), end: dateTime(later, 18, 0), location: "本地" },
   ];
 }
 
@@ -186,6 +191,7 @@ export default function CalendarView({ onStartTask, onUpdateTask }: TaskReporter
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<api.CalendarAccount | null>(null);
   const [eventModalOpen, setEventModalOpen] = useState(false);
+  const [analysisOpen, setAnalysisOpen] = useState(false);
 
   const loadCalendar = useCallback(async () => {
     if (browserPreview) {
@@ -245,6 +251,19 @@ export default function CalendarView({ onStartTask, onUpdateTask }: TaskReporter
   }, [month]);
   const selectedEvents = useMemo(() => filteredEvents.filter((event) => dayKey(new Date(event.start)) === selectedDate).sort((a, b) => a.start.localeCompare(b.start)), [filteredEvents, selectedDate]);
   const monthEventCount = filteredEvents.filter((event) => new Date(event.start).getFullYear() === month.getFullYear() && new Date(event.start).getMonth() === month.getMonth()).length;
+  const calendarAnalysisContext = useMemo(() => {
+    const monthEvents = filteredEvents.filter((event) => new Date(event.start).getFullYear() === month.getFullYear() && new Date(event.start).getMonth() === month.getMonth());
+    const sourceEvents = selectedEvents.length ? selectedEvents : monthEvents.slice(0, 40);
+    return {
+      domain: "calendar" as const,
+      title: selectedEvents.length ? `日历事件：${formatDay(dateAtKey(selectedDate))}` : `日历：${monthLabel(month)}`,
+      sources: sourceEvents.map((event) => ({
+        label: event.title,
+        path: event.source_account_id ? `calendar/${event.source_account_id}/${event.id}` : `calendar/events.json#${event.id}`,
+        content: `标题：${event.title}\n开始：${event.start}\n结束：${event.end}\n地点：${event.location ?? "未填写"}\n来源：${event.source_name ?? "DepDek 本地日历"}\n描述：${event.description ?? ""}`,
+      })),
+    };
+  }, [filteredEvents, month, selectedDate, selectedEvents]);
 
   const syncCalendars = async (accountId?: string) => {
     const targetAccounts = accountId ? accounts.filter((account) => account.id === accountId) : accounts;
@@ -350,8 +369,9 @@ export default function CalendarView({ onStartTask, onUpdateTask }: TaskReporter
 
   return <>
     <div className="dd-view-head dd-calendar-head"><div><div className="dd-eyebrow">CALENDAR / 时间主权</div><h1>日历</h1></div><span>外部日历回到本地 · DepDek 是你的日程中枢 · 写回逐次确认</span></div>
-    <section className="dd-calendar-toolbar"><div className="dd-calendar-filter"><CalendarBlank size={17} /><select aria-label="筛选日历" value={accountFilter} onChange={(event) => setAccountFilter(event.target.value)}><option value="all">所有日历 · {events.length} 项</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></div><div className="dd-calendar-toolbar-actions"><button onClick={() => { setMonth(new Date(today.getFullYear(), today.getMonth(), 1)); setSelectedDate(dayKey(today)); }}>今天</button><button onClick={() => void syncCalendars()} disabled={syncing}><ArrowClockwise size={16} />{syncing ? "同步中…" : "同步日历"}</button><button onClick={() => openAccountSettings()}><LinkSimple size={16} />连接日历</button><button className="dd-calendar-primary" onClick={() => setEventModalOpen(true)}><Plus size={16} />新建日程</button></div></section>
+    <section className="dd-calendar-toolbar"><div className="dd-calendar-filter"><CalendarBlank size={17} /><select aria-label="筛选日历" value={accountFilter} onChange={(event) => setAccountFilter(event.target.value)}><option value="all">所有日历 · {events.length} 项</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></div><div className="dd-calendar-toolbar-actions"><button onClick={() => setAnalysisOpen((current) => !current)}><Sparkle size={16} />AI 分析</button><button onClick={() => { setMonth(new Date(today.getFullYear(), today.getMonth(), 1)); setSelectedDate(dayKey(today)); }}>今天</button><button onClick={() => void syncCalendars()} disabled={syncing}><ArrowClockwise size={16} />{syncing ? "同步中…" : "同步日历"}</button><button onClick={() => openAccountSettings()}><LinkSimple size={16} />连接日历</button><button className="dd-calendar-primary" onClick={() => setEventModalOpen(true)}><Plus size={16} />新建日程</button></div></section>
     {notice && <div className={`dd-calendar-notice ${notice.includes("失败") ? "dd-calendar-notice--error" : ""}`}>{notice.includes("失败") ? <WarningCircle size={15} /> : <CheckCircle size={15} />}{notice}</div>}
+    {analysisOpen && <AIAnalysisPanel context={calendarAnalysisContext} />}
     <section className="dd-calendar-layout">
       <aside className="dd-calendar-sidebar"><div className="dd-calendar-side-title"><b>我的日历</b><button onClick={() => openAccountSettings()} aria-label="添加日历连接"><Plus size={15} /></button></div>{accounts.map((account) => { const state = connectionStates[account.id] ?? { status: "idle" as CalendarConnectionStatus, logs: [] }; const statusText = state.status === "connecting" ? "连接中…" : state.status === "connected" ? `已连接${state.lastSyncAt ? ` · ${formatConnectionTime(state.lastSyncAt)}` : ""}` : state.status === "error" ? "连接失败" : "未连接"; return <div key={account.id} className={`dd-calendar-account ${accountFilter === account.id ? "dd-calendar-account--active" : ""}`}><button className="dd-calendar-account-main" onClick={() => setAccountFilter(account.id)}><span className={`dd-calendar-account-dot dd-calendar-account-dot--${account.provider}`} /><span className="dd-calendar-account-copy"><b>{account.name}</b><small>{PROVIDERS[account.provider].label} · {PROVIDERS[account.provider].write ? "可写" : "只读"}</small><em className={`dd-calendar-account-status dd-calendar-account-status--${state.status}`}>{state.status === "connecting" && <CircleNotch size={11} className="dd-calendar-spin" />}{state.status === "connected" && <CheckCircle size={11} />}{state.status === "error" && <WarningCircle size={11} />}{statusText}</em></span></button><div className="dd-calendar-account-actions"><button className="dd-calendar-account-settings" onClick={(event) => { event.stopPropagation(); openAccountSettings(account); }} aria-label={`设置${account.name}`}><GearSix size={12} /></button><button className="dd-calendar-account-connect" onClick={() => void syncCalendars(account.id)} disabled={state.status === "connecting"}>{state.status === "connecting" ? "连接中" : state.status === "error" ? "重试" : "连接"}</button></div>{state.status === "error" && <div className="dd-calendar-account-error"><div><WarningCircle size={13} /><span>{state.error}</span></div>{state.logs.length > 0 && <details><summary>查看连接日志（{state.logs.length}）</summary><pre>{state.logs.join("\n")}</pre></details>}</div>}</div>; })}{!accounts.length && !loading && <div className="dd-calendar-empty-side">连接 Google、Outlook、Apple、CalDAV 或 ICS 日历，统一带回本地。</div>}<div className="dd-calendar-hub-note"><CloudArrowUp size={16} /><span><b>本地中枢</b><small>事件先保存到 `calendar/events.json`，外部写回需单独确认。</small></span></div></aside>
       <div className="dd-calendar-main"><div className="dd-calendar-month-head"><button onClick={() => moveMonth(-1)} aria-label="上个月"><CaretLeft size={17} /></button><h2>{monthLabel(month)}</h2><button onClick={() => moveMonth(1)} aria-label="下个月"><CaretRight size={17} /></button><span>{monthEventCount} 项日程</span></div><div className="dd-calendar-weekdays">{["日", "一", "二", "三", "四", "五", "六"].map((day) => <span key={day}>{day}</span>)}</div><div className="dd-calendar-grid">{monthDays.map((day) => { const key = dayKey(day); const dayEvents = filteredEvents.filter((event) => dayKey(new Date(event.start)) === key); return <button key={key} className={`dd-calendar-day ${day.getMonth() !== month.getMonth() ? "dd-calendar-day--muted" : ""} ${key === selectedDate ? "dd-calendar-day--selected" : ""} ${key === dayKey(today) ? "dd-calendar-day--today" : ""}`} onClick={() => setSelectedDate(key)}><time>{day.getDate()}</time><div>{dayEvents.slice(0, 3).map((event) => <span key={event.id} className="dd-calendar-event-chip" title={event.title}>{event.title}</span>)}{dayEvents.length > 3 && <small>+{dayEvents.length - 3} 项</small>}</div></button>; })}</div></div>

@@ -69,9 +69,14 @@ export default function SettingsPanel({ settings, onSave, onClose }: Props) {
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="panel-title">
           设置 — Providers
-          <button className="link" onClick={() => setRows((p) => [...p, { name: "", config: newConfig() }])}>
-            添加 provider
-          </button>
+          <span>
+            <button className="link" onClick={() => setRows((p) => [...p, { name: "", config: newConfig() }])}>
+              添加 provider
+            </button>
+            <button className="link" onClick={() => setRows((p) => [...p, { name: "Local Ollama", config: { kind: "openai-compatible", api_key: "", model: "qwen3:8b", base_url: "http://127.0.0.1:11434/v1" } }])}>
+              添加本地 Ollama
+            </button>
+          </span>
         </div>
         <div className="provider-list">
           {rows.length === 0 && <p className="hint">尚未配置任何 provider。</p>}

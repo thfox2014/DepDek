@@ -9,6 +9,7 @@
 .dd-calendar-toolbar-actions .dd-calendar-primary:hover, .dd-calendar-primary:hover { background: var(--dd-accent-deep); color: #fff; }
 .dd-calendar-notice { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; padding: 8px 11px; border: 1px solid rgba(39, 154, 113, 0.2); border-radius: 10px; background: #f1fbf6; color: var(--dd-ok); font-size: 10px; }
 .dd-calendar-notice--error { border-color: rgba(207, 86, 100, 0.2); background: var(--dd-risk-bg); color: var(--dd-risk); }
+.dd-calendar-head + .dd-ai-analysis, .dd-calendar-toolbar + .dd-ai-analysis, .dd-calendar-notice + .dd-ai-analysis { margin-bottom: 10px; }
 .dd-calendar-layout { display: grid; height: calc(100% - 91px); min-height: 550px; grid-template-columns: 185px minmax(0, 1fr) 250px; overflow: hidden; border: 1px solid var(--dd-line); border-radius: 18px; background: rgba(255, 255, 255, 0.68); box-shadow: 0 8px 30px rgba(78, 66, 140, 0.07); }
 .dd-calendar-sidebar { min-width: 0; overflow: auto; padding: 14px 9px; border-right: 1px solid var(--dd-line); background: rgba(248, 248, 255, 0.42); }
 .dd-calendar-side-title { display: flex; align-items: center; justify-content: space-between; padding: 0 8px 8px; color: var(--dd-ink-2); font-size: 10px; }

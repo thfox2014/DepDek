@@ -36,12 +36,19 @@ pub struct SavedAgent {
     pub provider_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
+    /// Relative vault directory containing optional agent.md/skill.md/mcp.md
+    /// prompt material. These files are never treated as executable tools by
+    /// the one-shot analysis endpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(default)]
 pub struct Settings {
     pub last_root: Option<String>,
+    /// Read-only Obsidian vault connection, kept outside the writable Home.
+    pub obsidian_root: Option<String>,
     /// Display name -> provider config.
     pub providers: HashMap<String, ProviderConfig>,
     /// Saved agent session configurations, restored on next launch.
