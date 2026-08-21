@@ -15,11 +15,13 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use serde::Serialize;
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::oneshot;
 
+use crate::memory::MemoryStore;
 use crate::vault::{Vault, VaultError};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
@@ -37,6 +39,7 @@ pub struct Sidecar {
 
 struct SidecarInner {
     vault: Vault,
+    memory: MemoryStore,
     emit: EmitFn,
     node_path: PathBuf,
     sidecar_path: PathBuf,
@@ -75,6 +78,7 @@ impl Sidecar {
     ) -> Self {
         Self {
             inner: Arc::new(SidecarInner {
+                memory: MemoryStore::new(vault.clone()),
                 vault,
                 emit,
                 node_path,
@@ -143,7 +147,7 @@ impl Sidecar {
 
         let inner = self.inner.clone();
         tokio::spawn(async move {
-            read_loop(inner.clone(), stdout).await;
+            read_loop(inner.clone(), BufReader::new(stdout)).await;
             inner.mark_dead().await;
         });
         Ok(())
@@ -280,8 +284,8 @@ impl SidecarInner {
         let path = params.get("path").and_then(Value::as_str).unwrap_or("");
         let vault = &self.vault;
         let result = match method {
-            "vault/read_file" => serde_json::to_value(vault.read_file(session_id, path)?),
-            "vault/read_binary" => serde_json::to_value(vault.read_binary(session_id, path)?),
+            "vault/read_file" => encode(vault.read_file(session_id, path)?),
+            "vault/read_binary" => encode(vault.read_binary(session_id, path)?),
             "vault/write_binary" => {
                 let data_base64 = params
                     .get("data_base64")
@@ -289,44 +293,59 @@ impl SidecarInner {
                     .ok_or_else(|| {
                         VaultError::InvalidParams("data_base64 is required".to_string())
                     })?;
-                serde_json::to_value(vault.write_binary(session_id, path, data_base64)?)
+                encode(vault.write_binary(session_id, path, data_base64)?)
             }
             "vault/write_file" => {
                 let content = params
                     .get("content")
                     .and_then(Value::as_str)
                     .ok_or_else(|| VaultError::InvalidParams("content is required".to_string()))?;
-                serde_json::to_value(vault.write_file(session_id, path, content)?)
+                encode(vault.write_file(session_id, path, content)?)
             }
-            "vault/list_dir" => serde_json::to_value(vault.list_dir(session_id, path)?),
+            "vault/list_dir" => encode(vault.list_dir(session_id, path)?),
             "vault/search_files" => {
                 let query = params
                     .get("query")
                     .and_then(Value::as_str)
                     .ok_or_else(|| VaultError::InvalidParams("query is required".to_string()))?;
-                serde_json::to_value(vault.search_files(session_id, query)?)
+                encode(vault.search_files(session_id, query)?)
             }
             "vault/delete_file" => {
                 vault.delete_file(session_id, path)?;
                 Ok(json!({}))
             }
-            "vault/stat" => serde_json::to_value(vault.stat(session_id, path)?),
+            "vault/stat" => encode(vault.stat(session_id, path)?),
+            "vault/compress" => {
+                let archive = params.get("archive_path").and_then(Value::as_str);
+                encode(vault.compress(session_id, path, archive)?)
+            }
+            method if method.starts_with("memory/") => self.memory.handle(method, &params),
             _ => return Err(VaultError::UnknownMethod(method.to_string())),
         };
-        result.map_err(|e| VaultError::InvalidParams(format!("serialization failed: {e}")))
+        result
     }
 }
 
+fn encode<T: Serialize>(value: T) -> Result<Value, VaultError> {
+    serde_json::to_value(value)
+        .map_err(|error| VaultError::InvalidParams(format!("serialization failed: {error}")))
+}
+
 /// Read sidecar stdout line by line and dispatch each message.
-async fn read_loop(inner: Arc<SidecarInner>, stdout: ChildStdout) {
-    let mut lines = BufReader::new(stdout).lines();
+async fn read_loop<R>(inner: Arc<SidecarInner>, stdout: R)
+where
+    R: AsyncBufRead + Unpin,
+{
+    let mut lines = stdout.lines();
     loop {
         match lines.next_line().await {
             Ok(Some(line)) => {
-                let inner = inner.clone();
-                tokio::spawn(async move {
-                    inner.handle_line(&line).await;
-                });
+                // Keep wire order. Spawning one task per line lets a later
+                // notification reach the UI before an earlier one, because
+                // `handle_line` can yield while serving a vault request. In
+                // particular, adjacent text_delta events would then append
+                // chunks out of order and visibly scramble email addresses.
+                inner.handle_line(&line).await;
             }
             // EOF or read error: the process is gone.
             _ => break,
@@ -419,5 +438,53 @@ mod tests {
         assert_eq!(events[0].0, "mail://action-event");
         assert_eq!(events[0].1["uid"], 42);
         assert_eq!(events[0].1["total"], 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn read_loop_preserves_agent_delta_order() {
+        let emitted = Arc::new(Mutex::new(Vec::<String>::new()));
+        let emitted_sink = emitted.clone();
+        let emit: EmitFn = Arc::new(move |_, params| {
+            let delta = params
+                .pointer("/data/delta")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            // A slow first event makes the old per-line tokio::spawn loop
+            // observable: the second event could overtake it on another
+            // worker. The reader must wait for each line in wire order.
+            if delta == "first" {
+                std::thread::sleep(Duration::from_millis(30));
+            }
+            emitted_sink.lock().unwrap().push(delta.to_string());
+        });
+        let inner = Arc::new(SidecarInner {
+            vault: Vault::new(),
+            memory: MemoryStore::new(Vault::new()),
+            emit,
+            node_path: PathBuf::from("node"),
+            sidecar_path: PathBuf::from("unused.js"),
+            proc: tokio::sync::Mutex::new(None),
+            pending: Mutex::new(HashMap::new()),
+            next_id: AtomicI64::new(0),
+            alive: Arc::new(AtomicBool::new(false)),
+        });
+        let first = json!({
+            "jsonrpc": "2.0",
+            "method": "agent/event",
+            "params": {"data": {"delta": "first"}}
+        });
+        let second = json!({
+            "jsonrpc": "2.0",
+            "method": "agent/event",
+            "params": {"data": {"delta": "second"}}
+        });
+        let input = format!("{}\n{}\n", first, second);
+        read_loop(
+            inner,
+            BufReader::new(std::io::Cursor::new(input.into_bytes())),
+        )
+        .await;
+
+        assert_eq!(*emitted.lock().unwrap(), vec!["first", "second"]);
     }
 }

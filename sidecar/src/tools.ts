@@ -29,7 +29,9 @@ interface VaultToolOptions<TParameters extends TSchema> {
   /** Build the RPC params from the validated tool arguments. */
   toParams: (args: Static<TParameters>) => Record<string, unknown>;
   /** Render the RPC result as text content for the model. */
-  format: (result: any) => string;
+  format: (result: any, args: Static<TParameters>) => string;
+  /** Reject a tool call before it reaches the vault. */
+  guard?: (args: Static<TParameters>) => string | undefined;
 }
 
 function vaultTool<TParameters extends TSchema>(
@@ -43,12 +45,19 @@ function vaultTool<TParameters extends TSchema>(
     description: `${options.description}\n\n${SANDBOX_NOTE}`,
     parameters: options.parameters,
     execute: async (_toolCallId, args): Promise<AgentToolResult<any>> => {
+      const blocked = options.guard?.(args);
+      if (blocked) {
+        return {
+          content: [{ type: "text", text: blocked }],
+          details: { blocked: true },
+        };
+      }
       const result = await client.request(options.method, {
         session_id: sessionId,
         ...options.toParams(args),
       });
       return {
-        content: [{ type: "text", text: options.format(result) }],
+        content: [{ type: "text", text: options.format(result, args) }],
         details: result,
       };
     },
@@ -58,6 +67,23 @@ function vaultTool<TParameters extends TSchema>(
 const pathParam = Type.String({
   description: "Path relative to the data folder root (POSIX style, '.' for the root).",
 });
+
+function normalizedPath(value: string): string {
+  return value.replaceAll("\\", "/").replace(/^\.\/+/, "").replace(/\/+$/, "");
+}
+
+function isProtectedContextPath(value: string): boolean {
+  return normalizedPath(value) === "tasks/history.json";
+}
+
+const PROTECTED_CONTEXT_MESSAGE =
+  "tasks/history.json is an internal task log and is excluded from AI context. " +
+  "Use the task center for task status and summaries instead.";
+
+const MEMORY_NOTE =
+  "Memory is shared by the Agent Team but remains local. Propose only a concise, " +
+  "source-backed fact, preference, constraint or procedure; the user must confirm " +
+  "it before it can enter any Agent context. Never include passwords, tokens or secrets.";
 
 const MAIL_CONFIG_NOTE =
   "Mail accounts live in the data folder at mail/accounts.json with shape " +
@@ -78,6 +104,7 @@ export function createVaultTools(client: VaultClient, sessionId: string): AgentT
       method: "vault/read_file",
       toParams: (args) => ({ path: args.path }),
       format: (result) => result.content,
+      guard: (args) => isProtectedContextPath(args.path) ? PROTECTED_CONTEXT_MESSAGE : undefined,
     }),
     vaultTool(client, sessionId, {
       name: "write_file",
@@ -99,8 +126,9 @@ export function createVaultTools(client: VaultClient, sessionId: string): AgentT
       parameters: Type.Object({ path: pathParam }, { additionalProperties: false }),
       method: "vault/list_dir",
       toParams: (args) => ({ path: args.path }),
-      format: (result) =>
+      format: (result, args) =>
         (result.entries as { name: string; kind: string; size: number }[])
+          .filter((entry) => !isProtectedContextPath(`${args.path}/${entry.name}`))
           .map((entry) => `${entry.kind === "dir" ? "d" : "f"} ${String(entry.size).padStart(10)} ${entry.name}`)
           .join("\n") || "(empty directory)",
     }),
@@ -115,6 +143,7 @@ export function createVaultTools(client: VaultClient, sessionId: string): AgentT
       toParams: (args) => ({ query: args.query }),
       format: (result) =>
         (result.matches as { path: string; line: number; snippet: string }[])
+          .filter((match) => !isProtectedContextPath(match.path))
           .map((match) => `${match.path}:${match.line}: ${match.snippet}`)
           .join("\n") || "(no matches)",
     }),
@@ -125,6 +154,51 @@ export function createVaultTools(client: VaultClient, sessionId: string): AgentT
       method: "vault/delete_file",
       toParams: (args) => ({ path: args.path }),
       format: () => "Deleted.",
+    }),
+    vaultTool(client, sessionId, {
+      name: "compress",
+      description:
+        "Create a local .tar.gz archive of a file or directory. This is a safe built-in " +
+        "vault action; it never runs shell commands or accesses data outside the vault. " +
+        "Use it when the user asks to compress, archive, or package local data.",
+      parameters: Type.Object(
+        {
+          path: pathParam,
+          archive_path: Type.Optional(
+            Type.String({ description: "Optional output path, relative to the data folder root." }),
+          ),
+        },
+        { additionalProperties: false },
+      ),
+      method: "vault/compress",
+      toParams: (args) => ({ path: args.path, archive_path: args.archive_path }),
+      format: (result) =>
+        `Compressed ${result.source} into ${result.archive} (${result.files} file(s), ${result.bytes} bytes).`,
+    }),
+    vaultTool(client, sessionId, {
+      name: "propose_memory",
+      description: MEMORY_NOTE,
+      parameters: Type.Object(
+        {
+          text: Type.String({ description: "The concise memory statement to propose." }),
+          kind: Type.Optional(Type.String({ description: "fact, preference, constraint, procedure, episode or summary." })),
+          scope: Type.Optional(Type.String({ description: "Usually team or user; agent:<id> is allowed for private agent memory." })),
+          source_refs: Type.Array(Type.String({ description: "Vault paths or entity references supporting this memory." })),
+          confidence: Type.Optional(Type.Number({ description: "Confidence from 0 to 1." })),
+        },
+        { additionalProperties: false },
+      ),
+      method: "memory/propose",
+      toParams: (args) => ({
+        text: args.text,
+        kind: args.kind,
+        scope: args.scope,
+        source_refs: args.source_refs,
+        confidence: args.confidence,
+        sensitivity: "private",
+        engine: "pi",
+      }),
+      format: (result) => `Memory candidate ${result.id} saved for user confirmation.`,
     }),
     {
       name: "fetch_mail",

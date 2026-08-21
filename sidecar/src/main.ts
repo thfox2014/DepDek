@@ -10,6 +10,7 @@ import { SessionManager } from "./sessions.js";
 import { applyMailAction, deleteMail, fetchMail, listMailboxes, sendMail } from "./mail.js";
 import { pushCalendarEvent, syncCalendar } from "./calendar.js";
 import { enqueueTodo, listTodos, updateTodo } from "./todo.js";
+import { registerMemoryHandlers } from "./memory.js";
 import type { ProviderConfig } from "./providers.js";
 
 // Anything accidentally logged via console.log must not corrupt the protocol
@@ -21,14 +22,17 @@ console.warn = (...args: unknown[]) => console.error(...args);
 const peer = createStdioPeer();
 const sessions = new SessionManager(peer, peer);
 
+registerMemoryHandlers(peer);
+
 peer.register("agent/create_session", (params) =>
-  sessions.createSession(params.session_id, params.provider as ProviderConfig, params.system_prompt),
+  sessions.createSession(params.session_id, params.provider as ProviderConfig, params.system_prompt, params.engine),
 );
 peer.register("agent/send", (params) => sessions.send(params.session_id, params.text));
 peer.register("agent/analyze", (params) => sessions.runOnce(
   params.provider as ProviderConfig,
   String(params.text ?? ""),
   String(params.system_prompt ?? ""),
+  params.engine,
 ));
 peer.register("agent/abort", (params) => sessions.abort(params.session_id));
 peer.register("agent/close_session", (params) => sessions.closeSession(params.session_id));

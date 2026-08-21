@@ -9,7 +9,7 @@ describe("convertAgentEvent", () => {
       message: {} as any,
       assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "abc", partial: {} as any },
     });
-    expect(notifications).toEqual([{ type: "text_delta", data: { delta: "abc" } }]);
+    expect(notifications).toEqual([{ type: "text_delta", data: { delta: "abc", engine: "pi" } }]);
   });
 
   it("ignores non-text message updates", () => {
@@ -31,7 +31,7 @@ describe("convertAgentEvent", () => {
     expect(notifications).toEqual([
       {
         type: "tool_call_start",
-        data: { tool_call_id: "tc1", name: "read_file", args: { path: "a.txt" } },
+        data: { tool_call_id: "tc1", name: "read_file", args: { path: "a.txt" }, engine: "pi" },
       },
     ]);
   });
@@ -47,7 +47,7 @@ describe("convertAgentEvent", () => {
     expect(notifications).toEqual([
       {
         type: "tool_call_end",
-        data: { tool_call_id: "tc1", name: "read_file", ok: true, result_preview: "file body" },
+        data: { tool_call_id: "tc1", name: "read_file", ok: true, result_preview: "file body", engine: "pi" },
       },
     ]);
   });
@@ -68,7 +68,10 @@ describe("convertAgentEvent", () => {
       type: "agent_end",
       messages: [fauxAssistantMessage("done", { stopReason: "stop" })],
     });
-    expect(notifications).toEqual([{ type: "message_complete", data: { stop_reason: "stop" } }]);
+    expect(notifications).toEqual([
+      { type: "progress", data: { phase: "complete", message: "Pi Agent Core 已完成", engine: "pi" } },
+      { type: "message_complete", data: { stop_reason: "stop", engine: "pi" } },
+    ]);
   });
 
   it("converts an errored final assistant message to an error notification", () => {
@@ -76,7 +79,7 @@ describe("convertAgentEvent", () => {
       type: "agent_end",
       messages: [fauxAssistantMessage("", { stopReason: "error", errorMessage: "401 unauthorized" })],
     });
-    expect(notifications).toEqual([{ type: "error", data: { message: "401 unauthorized" } }]);
+    expect(notifications).toEqual([{ type: "error", data: { message: "401 unauthorized", engine: "pi" } }]);
   });
 
   it("reports aborts as message_complete with stop_reason aborted", () => {
@@ -84,12 +87,24 @@ describe("convertAgentEvent", () => {
       type: "agent_end",
       messages: [fauxAssistantMessage("partial", { stopReason: "aborted" })],
     });
-    expect(notifications).toEqual([{ type: "message_complete", data: { stop_reason: "aborted" } }]);
+    expect(notifications).toEqual([
+      { type: "progress", data: { phase: "complete", message: "Pi Agent Core 已完成", engine: "pi" } },
+      { type: "message_complete", data: { stop_reason: "aborted", engine: "pi" } },
+    ]);
   });
 
   it("ignores unrelated events", () => {
-    expect(convertAgentEvent({ type: "agent_start" })).toEqual([]);
-    expect(convertAgentEvent({ type: "turn_start" })).toEqual([]);
+    expect(convertAgentEvent({ type: "agent_start" })).toEqual([{ type: "progress", data: { phase: "started", message: "Pi Agent Core 已启动", engine: "pi" } }]);
+    expect(convertAgentEvent({ type: "turn_start" })).toEqual([{ type: "progress", data: { phase: "thinking", message: "Pi 正在分析当前上下文", engine: "pi" } }]);
+  });
+
+  it("shows safe thinking milestones without exposing raw chain-of-thought", () => {
+    const notifications = convertAgentEvent({
+      type: "message_update",
+      message: {} as any,
+      assistantMessageEvent: { type: "thinking_start", contentIndex: 0, partial: {} as any },
+    });
+    expect(notifications).toEqual([{ type: "progress", data: { phase: "thinking", message: "Pi 正在整理推理线索", engine: "pi" } }]);
   });
 });
 

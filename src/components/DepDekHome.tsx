@@ -1,21 +1,22 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import {
   Books,
   Brain,
   CaretLeft,
   CaretRight,
+  CaretDown,
   CalendarBlank,
+  ArrowClockwise,
+  ChatCircleText,
   Check,
   CheckCircle,
   CheckSquare,
   ClipboardText,
-  CirclesThreePlus,
   EnvelopeSimple,
   FileText,
   Folder,
   GearSix,
   HardDrives,
-  LinkSimple,
   ListChecks,
   MagnifyingGlass,
   Minus,
@@ -23,16 +24,13 @@ import {
   Plus,
   Robot,
   ShieldCheck,
-  Sparkle,
   SquaresFour,
   SidebarSimple,
-  Tray,
-  Warning,
   X,
 } from "@phosphor-icons/react";
 import type { Icon } from "@phosphor-icons/react";
 import * as api from "../api";
-import type { ChatBlock, SessionInfo } from "../App";
+import type { ChatBlock, ConversationRecord, SessionInfo } from "../App";
 import type { TaskRecord, TaskReporter, TaskStartInput, TaskUpdate } from "../taskTypes";
 import { enqueueTodo, listTodos, subscribeTodoChanges, updateTodo } from "../todoStore";
 import type { TodoItem } from "../todoTypes";
@@ -42,16 +40,24 @@ import DataFilesPanel from "./DataFilesPanel";
 import InboxView from "./InboxView";
 import ObsidianPanel from "./ObsidianPanel";
 import TodoBoard from "./TodoBoard";
+import ApplicationConfigView from "./ApplicationConfigView";
+import MarkdownText from "./MarkdownText";
+import ToolProcessPanel from "./ToolProcessPanel";
+import OfficeView from "./OfficeView";
+import MemoryPanel from "./MemoryPanel";
+import SessionsView from "./SessionsView";
 import "./depdek-home.css";
 
 type ViewName =
   | "today"
+  | "sessions"
   | "calendar"
   | "todo"
   | "inbox"
   | "knowledge"
   | "files"
   | "automation"
+  | "agentteam"
   | "connections"
   | "memory"
   | "privacy";
@@ -60,9 +66,13 @@ interface Props {
   root: string;
   providerCount: number;
   sessionCount: number;
-  onOpenAgentTeam: () => void;
+  providers: Record<string, api.ProviderConfig>;
+  settings: api.Settings;
+  conversationHistory: Record<string, ConversationRecord[]>;
   onOpenSettings: () => void;
   onPickRoot: () => void;
+  onCreateAgent: (label: string, providerName: string, agentId?: string, openWorkbench?: boolean, engine?: api.AgentEngine) => Promise<void>;
+  onSaveAgentSettings: (settings: api.Settings) => Promise<void>;
   sessions: SessionInfo[];
   activeAgentId: string | null;
   chats: Record<string, ChatBlock[]>;
@@ -70,6 +80,12 @@ interface Props {
   onSelectAgent: (id: string) => void;
   onSendAgent: (id: string, text: string) => Promise<void>;
   onAbortAgent: (id: string) => Promise<void>;
+  onNewConversation: (id: string) => Promise<void>;
+  onConversationHistoryChange: (history: Record<string, ConversationRecord[]>) => void;
+  /** 进入某个会话的聊天工作台。 */
+  onEnterAgent: (id: string) => void;
+  /** 关闭某个会话。 */
+  onCloseAgent: (id: string) => void;
 }
 
 interface NavItem {
@@ -81,33 +97,36 @@ interface NavItem {
 }
 
 const WORK_NAV: NavItem[] = [
+  { key: "sessions", label: "会话", icon: ChatCircleText },
   { key: "today", label: "今天", icon: SquaresFour },
-  { key: "calendar", label: "日历", icon: CalendarBlank },
   { key: "todo", label: "待办", icon: CheckSquare },
-  { key: "inbox", label: "收件箱", icon: Tray },
+  { key: "inbox", label: "Mail", icon: EnvelopeSimple },
+  { key: "knowledge", label: "知识库", icon: Books },
+  { key: "calendar", label: "日历", icon: CalendarBlank },
 ];
 
 const DATA_NAV: NavItem[] = [
-  { key: "knowledge", label: "知识", icon: Books },
   { key: "files", label: "文件", icon: Folder },
   { key: "automation", label: "自动化", icon: Robot },
-  { key: "connections", label: "连接", icon: LinkSimple, badge: "1", badgeTone: "warn" },
 ];
 
-const TRUST_NAV: NavItem[] = [
+const SYSTEM_NAV: NavItem[] = [
+  { key: "connections", label: "应用配置", icon: GearSix, badge: "1", badgeTone: "warn" },
   { key: "memory", label: "记忆", icon: Brain, badge: "2", badgeTone: "warn" },
   { key: "privacy", label: "数据与隐私", icon: ShieldCheck },
 ];
 
 const VIEW_TITLES: Record<ViewName, string> = {
   today: "今天",
+  sessions: "会话",
   calendar: "日历",
   todo: "待办",
-  inbox: "收件箱",
-  knowledge: "知识",
+  inbox: "Mail",
+  knowledge: "知识库",
   files: "文件",
   automation: "自动化",
-  connections: "连接",
+  agentteam: "Agent Team",
+  connections: "应用配置",
   memory: "记忆",
   privacy: "数据与隐私",
 };
@@ -230,7 +249,114 @@ function Timeline({ events, loading }: { events: api.CalendarEvent[]; loading: b
   );
 }
 
-function TodayView({ notify, openAction }: { notify: (message: string) => void; openAction: () => void }) {
+function TodayDrawer({
+  calendarEvents,
+  calendarLoading,
+  tasks,
+  doneCount,
+  draft,
+  setDraft,
+  toggleTask,
+  addTask,
+}: {
+  calendarEvents: api.CalendarEvent[];
+  calendarLoading: boolean;
+  tasks: TodoItem[];
+  doneCount: number;
+  draft: string;
+  setDraft: (value: string) => void;
+  toggleTask: (id: string) => void;
+  addTask: () => void;
+}) {
+  const [timelineRatio, setTimelineRatio] = useState(56);
+  const [collapsed, setCollapsed] = useState(false);
+  const drawerRef = useRef<HTMLElement>(null);
+  const resizing = useRef(false);
+
+  const startResize = (event: PointerEvent<HTMLButtonElement>) => {
+    if (collapsed) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    resizing.current = true;
+  };
+
+  const resize = (event: PointerEvent<HTMLButtonElement>) => {
+    if (!resizing.current || !drawerRef.current) return;
+    const bounds = drawerRef.current.getBoundingClientRect();
+    const ratio = ((event.clientY - bounds.top - 62) / Math.max(1, bounds.height - 62)) * 100;
+    setTimelineRatio(Math.max(24, Math.min(76, ratio)));
+  };
+
+  const stopResize = () => {
+    resizing.current = false;
+  };
+
+  return (
+    <aside ref={drawerRef} className={`dd-today-drawer ${collapsed ? "dd-today-drawer--collapsed" : ""}`}>
+      <header className="dd-today-drawer__head">
+        <div>
+          <div className="dd-eyebrow">TODAY / 本地数据抽屉</div>
+          <h2>今日中枢</h2>
+        </div>
+        <span>上下拖动分隔线调整</span>
+        <button onClick={() => setCollapsed((value) => !value)} aria-label={collapsed ? "展开今日中枢" : "收起今日中枢"} title={collapsed ? "展开" : "收起"}>
+          <CaretDown size={16} className={collapsed ? "dd-today-drawer__expand-icon" : ""} />
+        </button>
+      </header>
+      {!collapsed && <div className="dd-today-drawer__body" style={{ gridTemplateRows: `minmax(0, ${timelineRatio}fr) 10px minmax(0, ${100 - timelineRatio}fr)` }}>
+        <article className="dd-card dd-card--timeline">
+          <CardHeader tag="日程与时间轴 · 日历中枢" title="今日时间轴" />
+          <Timeline events={calendarEvents} loading={calendarLoading} />
+          <SourceNote>来源：本地日历中枢 · 已读取 {calendarEvents.length} 项日历事件</SourceNote>
+        </article>
+
+        <button
+          className="dd-today-drawer__resize"
+          onPointerDown={startResize}
+          onPointerMove={resize}
+          onPointerUp={stopResize}
+          onPointerCancel={stopResize}
+          aria-label="上下拖动调整时间轴和待办区域高度"
+          title="上下拖动调整区域高度"
+        ><span /></button>
+
+        <article className="dd-card dd-card--tasks">
+          <CardHeader tag="待办与任务" title="今天要完成的事" />
+          <div className="dd-progress-head"><strong>{doneCount}</strong> / {tasks.length} 项 <span>{tasks.length ? `${Math.round(doneCount / tasks.length * 100)}%` : "暂无"}</span></div>
+          <div className="dd-progress"><i style={{ width: `${tasks.length ? doneCount / tasks.length * 100 : 0}%` }} /></div>
+          <div className="dd-task-list">
+            {tasks.map((task) => (
+              <button className={`dd-task ${task.lane === "done" ? "dd-task--done" : ""}`} key={task.id} onClick={() => toggleTask(task.id)}>
+                <span className="dd-check">{task.lane === "done" && <Check size={11} weight="bold" />}</span>
+                <span><b>{task.title}</b><small>{task.source.type === "mail" ? "来源：邮件" : task.source.type === "calendar" ? "来源：日历" : task.source.label ?? "来源：待办队列"}</small></span>
+                {task.lane === "blocked" && <StatusPill tone="warn">等待中</StatusPill>}
+                {task.lane === "done" && <StatusPill tone="ok">已完成</StatusPill>}
+              </button>
+            ))}
+          </div>
+          <div className="dd-quick-add">
+            <Plus size={15} />
+            <input value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => event.key === "Enter" && addTask()} placeholder="把一个承诺放进队列…" />
+            <button onClick={addTask}>添加</button>
+          </div>
+          <SourceNote>统一队列 · 写回外部服务需逐次确认</SourceNote>
+        </article>
+      </div>}
+    </aside>
+  );
+}
+
+function TodayView({ notify, refreshKey, sessions, activeAgentId, chats, running, onSelectAgent, onSendAgent, onAbortAgent, onOpenAgentTeam }: {
+  notify: (message: string) => void;
+  refreshKey: number;
+  sessions: SessionInfo[];
+  activeAgentId: string | null;
+  chats: Record<string, ChatBlock[]>;
+  running: Record<string, boolean>;
+  onSelectAgent: (id: string) => void;
+  onSendAgent: (id: string, text: string) => Promise<void>;
+  onAbortAgent: (id: string) => Promise<void>;
+  onOpenAgentTeam: () => void;
+}) {
   const [tasks, setTasks] = useState<TodoItem[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<api.CalendarEvent[]>([]);
   const [calendarLoading, setCalendarLoading] = useState(true);
@@ -242,7 +368,7 @@ function TodayView({ notify, openAction }: { notify: (message: string) => void; 
     } catch (error) {
       notify(`读取今日待办失败：${String(error)}`);
     }
-  }, [notify]);
+  }, [notify, refreshKey]);
   useEffect(() => {
     void loadTasks();
     return subscribeTodoChanges(() => void loadTasks());
@@ -264,7 +390,7 @@ function TodayView({ notify, openAction }: { notify: (message: string) => void; 
     } finally {
       setCalendarLoading(false);
     }
-  }, [browserPreview, notify]);
+  }, [browserPreview, notify, refreshKey]);
 
   useEffect(() => {
     void loadCalendar();
@@ -296,112 +422,44 @@ function TodayView({ notify, openAction }: { notify: (message: string) => void; 
     }
   };
 
-  return (
-    <>
-      <div className="dd-view-head">
-        <div><div className="dd-eyebrow">HOME / 今日概览</div><h1>我的一天</h1></div>
-        <span>拖动卡片排序 · 右上角调整尺寸 · 布局保存在本地</span>
-      </div>
-      <div className="dd-grid">
-        <article className="dd-card dd-col-7 dd-card--timeline">
-          <CardHeader tag="日程与时间轴 · 日历中枢" title="今日时间轴" />
-          <Timeline events={calendarEvents} loading={calendarLoading} />
-          <SourceNote>来源：本地日历中枢 · 已读取 {calendarEvents.length} 项日历事件</SourceNote>
-        </article>
-
-        <article className="dd-card dd-col-5 dd-card--tasks">
-          <CardHeader tag="待办与任务" title="今天要完成的事" />
-          <div className="dd-progress-head"><strong>{doneCount}</strong> / {tasks.length} 项 <span>{tasks.length ? `${Math.round(doneCount / tasks.length * 100)}%` : "暂无"}</span></div>
-          <div className="dd-progress"><i style={{ width: `${tasks.length ? doneCount / tasks.length * 100 : 0}%` }} /></div>
-          <div className="dd-task-list">
-            {tasks.map((task) => (
-              <button className={`dd-task ${task.lane === "done" ? "dd-task--done" : ""}`} key={task.id} onClick={() => void toggleTask(task.id)}>
-                <span className="dd-check">{task.lane === "done" && <Check size={11} weight="bold" />}</span>
-                <span><b>{task.title}</b><small>{task.source.type === "mail" ? "来源：邮件" : task.source.type === "calendar" ? "来源：日历" : task.source.label ?? "来源：待办队列"}</small></span>
-                {task.lane === "blocked" && <StatusPill tone="warn">等待中</StatusPill>}
-                {task.lane === "done" && <StatusPill tone="ok">已完成</StatusPill>}
-              </button>
-            ))}
-          </div>
-          <div className="dd-quick-add">
-            <Plus size={15} />
-            <input value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => event.key === "Enter" && void addTask()} placeholder="试试输入「明天下午 3 点提醒我续费」" />
-            <button onClick={() => void addTask()}>添加</button>
-          </div>
-          <SourceNote>统一队列 · 写回外部服务需逐次确认</SourceNote>
-        </article>
-
-        <article className="dd-card dd-col-4">
-          <CardHeader tag="收件 · 审批 · 冲突" title="需要处理" />
-          <button className="dd-attention-row" onClick={openAction}>
-            <span className="dd-row-icon dd-row-icon--risk"><PaperPlaneTilt size={18} /></span>
-            <span><b>高风险行动待审批</b><small>发送邮件给 Alice · 将写回外部服务</small></span>
-            <StatusPill tone="risk">1 项</StatusPill>
-          </button>
-          <button className="dd-attention-row" onClick={() => notify("已打开收件箱筛选 · 3 封待回复") }>
-            <span className="dd-row-icon dd-row-icon--info"><EnvelopeSimple size={18} /></span>
-            <span><b>3 封邮件需要回复</b><small>含 2 个已抽取的行动项</small></span>
-          </button>
-          <button className="dd-attention-row" onClick={() => notify("冲突对比将在 Sync Engine 接通后可用") }>
-            <span className="dd-row-icon dd-row-icon--warn"><Warning size={18} /></span>
-            <span><b>1 条同步冲突</b><small>「团队周会」在两端均被修改</small></span>
-          </button>
-          <SourceNote>审批与回执全程可审计 · append-only</SourceNote>
-        </article>
-
-        <article className="dd-card dd-col-5">
-          <CardHeader tag="项目脉搏 · 跨来源聚合" title="近期项目" />
-          <div className="dd-project">
-            <span className="dd-project-mark">D</span>
-            <div><b>DepDek MVP 重构</b><small>里程碑「连接中心」· 3 个阻塞等待项</small><div className="dd-mini-progress"><i style={{ width: "62%" }} /></div></div>
-            <StatusPill tone="accent">62%</StatusPill>
-          </div>
-          <div className="dd-project">
-            <span className="dd-project-mark dd-project-mark--cyan">读</span>
-            <div><b>阅读计划 · Local-first</b><small>本周已读 2 / 5 篇 · 下篇已标注 3 条笔记</small></div>
-            <StatusPill tone="ok">节奏正常</StatusPill>
-          </div>
-          <div className="dd-project">
-            <span className="dd-project-mark dd-project-mark--rose">财</span>
-            <div><b>Q3 个人预算复盘</b><small>等待 Alice 确认数据 · 已等待 4 天</small></div>
-            <button className="dd-small-button" onClick={() => notify("已生成跟进草稿 · 等待你确认")}>生成跟进</button>
-          </div>
-          <SourceNote>聚合自任务、邮件、日历和文档 · 均可回溯来源</SourceNote>
-        </article>
-
-        <article className="dd-card dd-col-3">
-          <CardHeader tag="个人数据健康" title="系统与连接状态" />
-          <div className="dd-health-meters">
-            <div><span>CPU</span><i><b style={{ width: "28%" }} /></i><em>28%</em></div>
-            <div><span>内存</span><i><b style={{ width: "78%" }} /></i><em>12.5 / 16 GB</em></div>
-            <div><span>Home</span><i><b style={{ width: "40%" }} /></i><em>241 GB 可用</em></div>
-          </div>
-          <div className="dd-health-item"><Robot size={17} /><span><b>本地模型 Qwen3-8B</b><small>运行中 · 38 tok/s</small></span><StatusPill tone="ok">本地</StatusPill></div>
-          <div className="dd-health-item"><EnvelopeSimple size={17} /><span><b>邮件连接</b><small>10 分钟前同步</small></span><StatusPill tone="ok">健康</StatusPill></div>
-          <div className="dd-health-item"><CalendarBlank size={17} /><span><b>日历中枢</b><small>外部连接 10 分钟前同步</small></span><StatusPill tone="ok">健康</StatusPill></div>
-          <SourceNote>断网仍可浏览、搜索与编辑</SourceNote>
-        </article>
-
-        <article className="dd-card dd-col-12 dd-suggestion-card">
-          <CardHeader tag="DepDek 建议 · 可解释 · 可忽略" title="也许可以…" />
-          <div className="dd-suggestions">
-            <div><Sparkle size={20} /><span><b>把「预算对齐」前的 30 分钟设为准备时间块？</b><small>依据：你 3 次在类似会议前手动创建准备块 · 置信度 78%</small></span><button onClick={() => notify("已加入今日时间轴")}>采纳</button><button onClick={() => notify("已忽略建议")}>忽略</button></div>
-            <div><CirclesThreePlus size={20} /><span><b>12 条「Q3 预算」相关记录，要整理成项目吗？</b><small>跨邮件 / 文档 / 日历共现分析 · 本地模型完成，未外发</small></span><button onClick={() => notify("已创建项目草稿")}>整理成项目</button></div>
-          </div>
-        </article>
-      </div>
-    </>
-  );
+  return <div className="dd-today-layout">
+    <section className="dd-today-chat" aria-label="DepDek 对话">
+      <Copilot
+        open
+        embedded
+        close={() => undefined}
+        activeView="today"
+        sessions={sessions}
+        activeAgentId={activeAgentId}
+        chats={chats}
+        running={running}
+        onSelectAgent={onSelectAgent}
+        onSendAgent={onSendAgent}
+        onAbortAgent={onAbortAgent}
+        onOpenAgentTeam={onOpenAgentTeam}
+      />
+    </section>
+    <TodayDrawer
+      calendarEvents={calendarEvents}
+      calendarLoading={calendarLoading}
+      tasks={tasks}
+      doneCount={doneCount}
+      draft={draft}
+      setDraft={setDraft}
+      toggleTask={(id) => void toggleTask(id)}
+      addTask={() => void addTask()}
+    />
+  </div>;
 }
 
-const VIEW_COPY: Record<Exclude<ViewName, "today">, { eyebrow: string; title: string; lead: string; cards: Array<[string, string, string]> }> = {
+const VIEW_COPY: Record<Exclude<ViewName, "today" | "agentteam" | "sessions">, { eyebrow: string; title: string; lead: string; cards: Array<[string, string, string]> }> = {
   calendar: { eyebrow: "CALENDAR / 时间主权", title: "日历", lead: "先看见时间，再让模型提出建议；外部写回由你逐次确认。", cards: [["本周时间分配", "深度工作 11h · 会议 8h", "本地聚合"], ["冲突与建议", "周四 15:00 有一处重叠", "等待确认"], ["连接状态", "外部连接 10 分钟前同步", "来源可追溯"]] },
   todo: { eyebrow: "TASKS / 个人承诺", title: "待办", lead: "从邮件、日历和文档发现承诺，先确认，再进入执行系统。", cards: [["今天", "4 项 · 已完成 2 项", "本地记录"], ["待确认抽取", "2 项来自邮件", "模型推断"], ["等待中", "3 项等待他人", "建议跟进"]] },
   inbox: { eyebrow: "INBOX / 从信息到行动", title: "收件箱", lead: "统一处理邮件、行动项、草稿和需要你做决定的内容。", cards: [["需要回复", "3 封邮件", "IMAP 本地副本"], ["行动项", "2 项待你确认", "来源可回溯"], ["待发送草稿", "1 封高风险行动", "逐次审批"]] },
   knowledge: { eyebrow: "KNOWLEDGE / 可追溯的理解", title: "知识", lead: "跨来源检索你的文档、笔记和记录；事实、推断与建议严格分开。", cards: [["本地索引", "12,482 条记录", "SQLite FTS"], ["最近知识", "Q3 预算口径备忘", "来自本地文件"], ["语义检索", "可关闭且不影响全文搜索", "本地模型"]] },
   files: { eyebrow: "FILES / 开放的数据家园", title: "文件", lead: "现有 Vault 继续作为本地文件信任边界，并逐步迁移到 Personal Data Home。", cards: [["当前 Home", "已连接本地目录", "Rust Vault"], ["对象与记录", "Home v2 待实现", "不伪装为已接通"], ["可验证导出", "JSONL / Markdown / ICS", "开放格式"]] },
   automation: { eyebrow: "AUTOMATION / 有边界的代理", title: "自动化", lead: "低风险任务可以自动执行；越接近外部世界，审批越明确。", cards: [["运行中", "3 条本地整理规则", "无需联网"], ["等待审批", "发送邮件给 Alice", "高风险"], ["失败队列", "日历权限即将到期", "需处理"]] },
-  connections: { eyebrow: "CONNECTIONS / 数据回到本地", title: "连接", lead: "服务是数据源和行动通道，DepDek 才是你的长期主数据层。", cards: [["邮件", "10 分钟前同步", "凭据将迁移到钥匙串"], ["日历", "本地中枢 · 可选写回", "固定权限范围"], ["本地文件", "索引健康", "Rust 沙箱"]] },
+  connections: { eyebrow: "APP CONFIG / 应用配置", title: "应用配置", lead: "统一管理 Mail、Obsidian 和日历等应用连接；每个应用都可以单独配置和断开。", cards: [["Mail", "支持多个邮箱账号", "IMAP 本地副本"], ["Obsidian", "连接本地 Vault", "只读展示 Markdown"], ["日历", "支持多个日历", "按账户筛选与同步"]] },
   memory: { eyebrow: "MEMORY / 你定义你自己", title: "记忆", lead: "模型推断先进入待确认；每条记忆都有来源、置信度、有效期和使用记录。", cards: [["待确认", "2 条候选记忆", "模型推断"], ["已确认", "9 条长期记忆", "用户治理"], ["本月删除", "5 条", "删除立即生效"]] },
   privacy: { eyebrow: "PRIVACY / 数据去哪了", title: "数据与隐私", lead: "每次数据访问、模型外发和外部写操作都应该留下可理解的凭证。", cards: [["本地数据", "83.6 GB · 100% 本机", "Personal Data Home"], ["云端外发", "本月 3 次", "均有回执"], ["凭据", "0 条进入数据目录", "OS Keychain 目标"]] },
 };
@@ -424,12 +482,41 @@ function FilesView({ root }: { root: string }) {
   );
 }
 
-function DomainView({ name, root, providerCount, sessionCount, openAgentTeam, notify, onStartTask, onUpdateTask, onInboxCountChange }: { name: Exclude<ViewName, "today">; root: string; providerCount: number; sessionCount: number; openAgentTeam: () => void; notify: (message: string) => void; onInboxCountChange: (previewCount?: number) => void } & TaskReporter) {
-  if (name === "inbox") return <InboxView onStartTask={onStartTask} onUpdateTask={onUpdateTask} onInboxCountChange={onInboxCountChange} />;
-  if (name === "calendar") return <CalendarView onStartTask={onStartTask} onUpdateTask={onUpdateTask} />;
+function DomainView({ name, root, providerCount, sessionCount, openAgentTeam, notify, onStartTask, onUpdateTask, onInboxCountChange, onOpenAppConfig, sessions, activeAgentId, running, chats, providers, settings, conversationHistory, onSendAgent, onAbortAgent, onEnterAgent, onCloseAgent, onCreateAgent, onSaveAgentSettings, onOpenSettings, onNewConversation, onConversationHistoryChange }: {
+  name: Exclude<ViewName, "today">;
+  root: string;
+  providerCount: number;
+  sessionCount: number;
+  openAgentTeam: () => void;
+  notify: (message: string) => void;
+  onInboxCountChange: (previewCount?: number) => void;
+  onOpenAppConfig: () => void;
+  sessions: SessionInfo[];
+  activeAgentId: string | null;
+  running: Record<string, boolean>;
+  chats: Record<string, ChatBlock[]>;
+  onSendAgent: (id: string, text: string) => Promise<void>;
+  onAbortAgent: (id: string) => Promise<void>;
+  providers: Record<string, api.ProviderConfig>;
+  settings: api.Settings;
+  conversationHistory: Record<string, ConversationRecord[]>;
+  onEnterAgent: (id: string) => void;
+  onCloseAgent: (id: string) => void;
+  onCreateAgent: (label: string, providerName: string, agentId?: string, openWorkbench?: boolean, engine?: api.AgentEngine) => Promise<void>;
+  onSaveAgentSettings: (settings: api.Settings) => Promise<void>;
+  onOpenSettings: () => void;
+  onNewConversation: (id: string) => Promise<void>;
+  onConversationHistoryChange: (history: Record<string, ConversationRecord[]>) => void;
+} & TaskReporter) {
+  if (name === "sessions") return <SessionsView sessions={sessions} activeId={activeAgentId} providers={providers} chats={chats} onSelect={onEnterAgent} onCreate={(label, providerName) => onCreateAgent(label, providerName, undefined, false)} onClose={onCloseAgent} onOpenSettings={onOpenSettings} />;
+  if (name === "inbox") return <InboxView onStartTask={onStartTask} onUpdateTask={onUpdateTask} onInboxCountChange={onInboxCountChange} onOpenAppConfig={onOpenAppConfig} />;
+  if (name === "calendar") return <CalendarView onStartTask={onStartTask} onUpdateTask={onUpdateTask} onOpenAppConfig={onOpenAppConfig} />;
   if (name === "todo") return <TodoBoard notify={notify} />;
   if (name === "files") return <FilesView root={root} />;
-  if (name === "knowledge") return <ObsidianPanel />;
+  if (name === "knowledge") return <ObsidianPanel onOpenAppConfig={onOpenAppConfig} />;
+  if (name === "connections") return <ApplicationConfigView onNotify={notify} />;
+  if (name === "memory") return <MemoryPanel />;
+  if (name === "agentteam") return <OfficeView embedded sessions={sessions} running={running} chats={chats} providers={providers} settings={settings} conversationHistory={conversationHistory} onEnter={onEnterAgent} onCreate={onCreateAgent} onSaveSettings={onSaveAgentSettings} onOpenSettings={onOpenSettings} onSend={onSendAgent} onAbort={onAbortAgent} onNewConversation={onNewConversation} onConversationHistoryChange={onConversationHistoryChange} />;
   const view = VIEW_COPY[name];
   return (
     <>
@@ -439,7 +526,6 @@ function DomainView({ name, root, providerCount, sessionCount, openAgentTeam, no
           <article className="dd-domain-card" key={title}>
             <span className="dd-domain-index">0{index + 1}</span>
             <h2>{title}</h2><strong>{value}</strong><p>{note}</p>
-            {name === "connections" && index === 0 && <button onClick={() => notify("邮件连接详情来自当前 Vault 配置")}>查看连接</button>}
           </article>
         ))}
       </div>
@@ -522,8 +608,26 @@ function ActionSheet({ open, close, notify }: { open: boolean; close: () => void
   );
 }
 
+function SystemSheet({ open, close, onRefresh, refreshing, root, providerCount, sessionCount, inboxCount, todoCount }: { open: boolean; close: () => void; onRefresh: () => void; refreshing: boolean; root: string; providerCount: number; sessionCount: number; inboxCount: number; todoCount: number }) {
+  if (!open) return null;
+  return (
+    <div className="dd-overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && close()}>
+      <section className="dd-system-sheet" role="dialog" aria-modal="true" aria-label="系统与连接状态">
+        <header><div><div className="dd-eyebrow">个人数据健康</div><h2>系统与连接状态</h2></div><div className="dd-system-head-actions"><button onClick={onRefresh} disabled={refreshing} aria-label="刷新系统状态" title="刷新"><ArrowClockwise size={17} className={refreshing ? "dd-refresh-spin" : ""} /></button><button onClick={close} aria-label="关闭系统状态"><X size={18} /></button></div></header>
+        <div className="dd-system-body">
+          <div className="dd-system-meters"><div><span>Home</span><i><b style={{ width: "40%" }} /></i><em>本地已连接</em></div><div><span>待办</span><i><b style={{ width: `${Math.min(100, todoCount * 10)}%` }} /></i><em>{todoCount} 项待处理</em></div><div><span>收件箱</span><i><b style={{ width: `${Math.min(100, inboxCount * 4)}%` }} /></i><em>{inboxCount} 封未读</em></div></div>
+          <div className="dd-system-status-list"><div><Robot size={20} /><span><b>Agent Team</b><small>{sessionCount} 个 Agent · {providerCount} 个 Provider · 默认本地优先</small></span><StatusPill tone="ok">可用</StatusPill></div><div><EnvelopeSimple size={20} /><span><b>邮件连接</b><small>收件箱 {inboxCount} 封未读，数据保存在本地 Home</small></span><StatusPill tone={inboxCount > 0 ? "warn" : "ok"}>{inboxCount > 0 ? "待处理" : "健康"}</StatusPill></div><div><CalendarBlank size={20} /><span><b>日历中枢</b><small>本地事件与外部连接状态可在日历页面查看</small></span><StatusPill tone="ok">本地</StatusPill></div></div>
+          <div className="dd-system-root"><HardDrives size={17} /><span><b>当前 Home</b><small title={root}>{root}</small></span><StatusPill tone="ok">Rust Vault</StatusPill></div>
+        </div>
+        <footer><span>刷新只重新读取本地数据，不会向外部服务写入。</span><button onClick={close}>完成</button></footer>
+      </section>
+    </div>
+  );
+}
+
 function Copilot({
   open,
+  embedded = false,
   close,
   activeView,
   sessions,
@@ -536,6 +640,7 @@ function Copilot({
   onOpenAgentTeam,
 }: {
   open: boolean;
+  embedded?: boolean;
   close: () => void;
   activeView: ViewName;
   sessions: SessionInfo[];
@@ -552,6 +657,8 @@ function Copilot({
   const selectedAgent = sessions.find((session) => session.id === selectedAgentId) ?? sessions[0];
   const selectedBlocks = selectedAgent ? chats[selectedAgent.id] ?? [] : [];
   const isRunning = selectedAgent ? Boolean(running[selectedAgent.id]) : false;
+
+  const streamingLines = (text: string) => text.split("\n").filter((line) => line.trim()).slice(-2).join("\n");
 
   useEffect(() => {
     const next = activeAgentId && sessions.some((session) => session.id === activeAgentId) ? activeAgentId : sessions[0]?.id ?? "";
@@ -580,23 +687,44 @@ function Copilot({
       case "user":
         return <div key={block.id} className="dd-message dd-message--me">{block.text}</div>;
       case "assistant":
-        return <div key={block.id} className="dd-message dd-message--ai">{block.text || "…"}</div>;
+        {
+          const isStreamingBlock = isRunning && block.id === selectedBlocks[selectedBlocks.length - 1]?.id;
+          return <div key={block.id} className={`dd-message dd-message--ai${isStreamingBlock ? " dd-message--streaming" : ""}`}>
+            {isStreamingBlock ? <><span className="dd-streaming-label">Tanvis 正在分析</span><MarkdownText markdown={streamingLines(block.text) || "分析中…"} compact /></> : <MarkdownText markdown={block.text || "…"} />}
+          </div>;
+        }
       case "error":
         return <div key={block.id} className="dd-message dd-message--ai dd-message--error"><StatusPill tone="risk">执行失败</StatusPill><p>{block.message}</p></div>;
       case "tool":
-        return <div key={block.id} className="dd-message dd-message--ai dd-message--tool"><StatusPill tone={block.ok === false ? "risk" : block.ok ? "ok" : "muted"}>工具 · {block.ok === undefined ? "执行中" : block.ok ? "完成" : "失败"}</StatusPill><p>{block.name}</p></div>;
+        return null;
       case "status":
         return <div key={block.id} className="dd-message dd-message--status">{block.text}</div>;
     }
   };
 
   return (
-    <aside className={`dd-copilot ${open ? "dd-copilot--open" : ""}`}>
+    <aside className={`dd-copilot ${embedded ? "dd-copilot--embedded" : ""} ${open ? "dd-copilot--open" : ""}`}>
       <header><img src={logo} alt="DepDek" /><div><b>DepDek Copilot</b><small>{selectedAgent ? `Agent Team · ${selectedAgent.label}` : `围绕「${VIEW_TITLES[activeView]}」协作 · 请选择 Agent`}</small></div><button onClick={close} aria-label="关闭 Copilot"><X size={18} /></button></header>
       <div className="dd-copilot-body">
         {!selectedAgent && <div className="dd-copilot-empty"><Robot size={28} /><b>先选择一个 Agent</b><span>从 Agent Team 选择工作伙伴，建立独立 chat。</span><button onClick={openTeam}>打开 Agent Team</button></div>}
         {selectedAgent && selectedBlocks.length === 0 && <div className="dd-copilot-empty dd-copilot-empty--agent"><StatusPill tone="ok">已连接</StatusPill><b>{selectedAgent.label}</b><span>向这个 Agent 发送第一条消息即可建立 chat。</span></div>}
-        {selectedBlocks.map(renderBlock)}
+        {(() => {
+          const rendered: ReactNode[] = [];
+          let tools: Extract<ChatBlock, { kind: "tool" }>[] = [];
+          const flushTools = () => {
+            if (tools.length) rendered.push(<ToolProcessPanel key={`tools-${tools[0].id}`} blocks={tools} />);
+            tools = [];
+          };
+          selectedBlocks.forEach((block) => {
+            if (block.kind === "tool") tools.push(block);
+            else {
+              flushTools();
+              rendered.push(renderBlock(block));
+            }
+          });
+          flushTools();
+          return rendered;
+        })()}
         {selectedAgent && isRunning && <div className="dd-message dd-message--status">{selectedAgent.label} 正在思考…</div>}
       </div>
       <footer>
@@ -622,12 +750,15 @@ function Copilot({
   );
 }
 
-export default function DepDekHome({ root, providerCount, sessionCount, onOpenAgentTeam, onOpenSettings, onPickRoot, sessions, activeAgentId, chats, running, onSelectAgent, onSendAgent, onAbortAgent }: Props) {
+export default function DepDekHome({ root, providerCount, sessionCount, providers, settings, conversationHistory, onOpenSettings, onPickRoot, onCreateAgent, onSaveAgentSettings, sessions, activeAgentId, chats, running, onSelectAgent, onSendAgent, onAbortAgent, onNewConversation, onConversationHistoryChange, onEnterAgent, onCloseAgent }: Props) {
   const [activeView, setActiveView] = useState<ViewName>("today");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [actionOpen, setActionOpen] = useState(false);
+  const [systemOpen, setSystemOpen] = useState(false);
+  const [systemRefreshing, setSystemRefreshing] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [taskCenterOpen, setTaskCenterOpen] = useState(false);
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [taskHistoryLoaded, setTaskHistoryLoaded] = useState(false);
@@ -636,6 +767,7 @@ export default function DepDekHome({ root, providerCount, sessionCount, onOpenAg
   const [inboxCount, setInboxCount] = useState(0);
   const now = useMemo(() => new Date(), []);
   const [time, setTime] = useState(`${pad(now.getHours())}:${pad(now.getMinutes())}`);
+  const openAgentTeam = useCallback(() => setActiveView("agentteam"), []);
 
   const refreshTodoCount = useCallback(async () => {
     try {
@@ -751,6 +883,17 @@ export default function DepDekHome({ root, providerCount, sessionCount, onOpenAg
 
   const runningTaskCount = tasks.filter((task) => task.status === "running").length;
 
+  const refreshSystem = async () => {
+    setSystemRefreshing(true);
+    try {
+      await Promise.all([refreshTodoCount(), refreshInboxCount()]);
+      setRefreshKey((value) => value + 1);
+      notify("系统状态和首页数据已刷新");
+    } finally {
+      setSystemRefreshing(false);
+    }
+  };
+
   const navGroup = (label: string, items: NavItem[]) => (
     <><span className="dd-nav-label">{label}</span>{items.map((item) => {
       const Icon = item.icon;
@@ -764,9 +907,9 @@ export default function DepDekHome({ root, providerCount, sessionCount, onOpenAg
       <div className="dd-sidebar-shell">
         <aside className="dd-sidebar">
           <div className="dd-brand"><img src={logo} alt="DepDek 图标" /><div><b>DepDek</b></div></div>
-          <nav>{navGroup("工作台", WORK_NAV)}{navGroup("数据领域", DATA_NAV)}{navGroup("信任与系统", TRUST_NAV)}</nav>
+          <nav>{navGroup("工作台", WORK_NAV)}{navGroup("数据领域", DATA_NAV)}{navGroup("系统", SYSTEM_NAV)}</nav>
           <div className="dd-sidebar-foot">
-            <button onClick={onOpenAgentTeam}><Robot size={16} />Agent Team <span>{sessionCount}</span></button>
+            <button className={activeView === "agentteam" ? "dd-sidebar-foot__active" : ""} onClick={openAgentTeam}><Robot size={16} />Agent Team <span>{sessionCount}</span></button>
             <button onClick={onOpenSettings}><GearSix size={16} />模型与 Provider <span>{providerCount}</span></button>
             <button onClick={onPickRoot}><HardDrives size={16} />更换 Home</button>
             <p><span />Home 已连接 · Rust Vault</p><small title={root}>{root}</small>
@@ -779,24 +922,23 @@ export default function DepDekHome({ root, providerCount, sessionCount, onOpenAg
         {activeView === "today" && <header className="dd-topbar">
           <div className="dd-clock"><strong>{time}</strong><span>{now.getMonth() + 1}月{now.getDate()}日 · 本地优先<em>本地优先 · 今日安好</em></span></div>
           <div className="dd-greeting"><b>晚上好，阿哲。</b><span>今天也从容一点。尚有 <strong>1 项承诺</strong> 待闭环</span></div>
-          <button className="dd-command" onClick={() => setPaletteOpen(true)}><MagnifyingGlass size={17} /><span>搜索、导航、创建、提问…<small>试试「我这周还有哪些承诺没完成？」</small></span><kbd>⌘ K</kbd></button>
           <div className="dd-top-actions">
-            <button onClick={() => setPaletteOpen(true)}><Plus size={18} /><span>新建</span></button>
+            <button onClick={() => setSystemOpen(true)}><GearSix size={18} /><span>系统</span></button>
             <button onClick={() => setActionOpen(true)}><ListChecks size={18} /><span>审批</span><i /></button>
             <button onClick={() => setTaskCenterOpen((current) => !current)} aria-label="打开任务中心"><ClipboardText size={18} /><span>任务</span>{runningTaskCount > 0 && <i />}</button>
-            <button onClick={() => setCopilotOpen((current) => !current)}><Sparkle size={18} /><span>Copilot</span></button>
           </div>
         </header>}
 
-        <main className={`dd-workbench ${activeView === "inbox" ? "dd-workbench--inbox" : ""}`}>
-          {activeView === "today" ? <TodayView notify={notify} openAction={() => setActionOpen(true)} /> : <DomainView name={activeView} root={root} providerCount={providerCount} sessionCount={sessionCount} openAgentTeam={onOpenAgentTeam} notify={notify} onStartTask={startTask} onUpdateTask={updateTask} onInboxCountChange={refreshInboxCount} />}
+        <main className={`dd-workbench ${activeView === "inbox" ? "dd-workbench--inbox" : ""} ${activeView === "today" ? "dd-workbench--today" : ""}`}>
+          {activeView === "today" ? <TodayView notify={notify} refreshKey={refreshKey} sessions={sessions} activeAgentId={activeAgentId} chats={chats} running={running} onSelectAgent={onSelectAgent} onSendAgent={onSendAgent} onAbortAgent={onAbortAgent} onOpenAgentTeam={openAgentTeam} /> : <DomainView name={activeView} root={root} providerCount={providerCount} sessionCount={sessionCount} openAgentTeam={openAgentTeam} notify={notify} onStartTask={startTask} onUpdateTask={updateTask} onInboxCountChange={refreshInboxCount} onOpenAppConfig={() => setActiveView("connections")} sessions={sessions} activeAgentId={activeAgentId} running={running} chats={chats} providers={providers} settings={settings} conversationHistory={conversationHistory} onSendAgent={onSendAgent} onAbortAgent={onAbortAgent} onEnterAgent={onEnterAgent} onCloseAgent={onCloseAgent} onCreateAgent={onCreateAgent} onSaveAgentSettings={onSaveAgentSettings} onOpenSettings={onOpenSettings} onNewConversation={onNewConversation} onConversationHistoryChange={onConversationHistoryChange} />}
         </main>
       </div>
 
       <TaskCenter open={taskCenterOpen} tasks={tasks} close={() => setTaskCenterOpen(false)} />
-      <Copilot open={copilotOpen} close={() => setCopilotOpen(false)} activeView={activeView} sessions={sessions} activeAgentId={activeAgentId} chats={chats} running={running} onSelectAgent={onSelectAgent} onSendAgent={onSendAgent} onAbortAgent={onAbortAgent} onOpenAgentTeam={onOpenAgentTeam} />
+      {activeView !== "today" && <Copilot open={copilotOpen} close={() => setCopilotOpen(false)} activeView={activeView} sessions={sessions} activeAgentId={activeAgentId} chats={chats} running={running} onSelectAgent={onSelectAgent} onSendAgent={onSendAgent} onAbortAgent={onAbortAgent} onOpenAgentTeam={openAgentTeam} />}
       <CommandPalette open={paletteOpen} close={() => setPaletteOpen(false)} go={setActiveView} openAction={() => setActionOpen(true)} />
       <ActionSheet open={actionOpen} close={() => setActionOpen(false)} notify={notify} />
+      <SystemSheet open={systemOpen} close={() => setSystemOpen(false)} onRefresh={() => void refreshSystem()} refreshing={systemRefreshing} root={root} providerCount={providerCount} sessionCount={sessionCount} inboxCount={inboxCount} todoCount={todoCount} />
       {toast && <div className="dd-toast"><CheckCircle size={18} weight="fill" />{toast}</div>}
     </div>
   );

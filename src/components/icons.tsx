@@ -74,6 +74,19 @@ export const IconIdCard = make(
   </>,
 );
 
+export const IconChat = make(
+  <>
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+  </>,
+);
+
+export const IconPlus = make(
+  <>
+    <path d="M5 12h14" />
+    <path d="M12 5v14" />
+  </>,
+);
+
 export const IconChevron = make(<path d="m6 9 6 6 6-6" />);
 
 export const IconMail = make(

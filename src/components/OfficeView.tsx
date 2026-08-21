@@ -1,9 +1,10 @@
-import { useState, type ReactNode } from "react";
-import { useEffect } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as api from "../api";
-import { FileText, FloppyDisk, GearSix, ShieldCheck } from "@phosphor-icons/react";
+import { ChatCircleText, ClockCounterClockwise, FileText, FloppyDisk, GearSix, PaperPlaneTilt, Plus, ShieldCheck } from "@phosphor-icons/react";
 import type { ProviderConfig } from "../api";
-import type { ChatBlock, SessionInfo } from "../App";
+import type { ChatBlock, ConversationRecord, SessionInfo } from "../App";
+import MarkdownText from "./MarkdownText";
+import ToolProcessPanel from "./ToolProcessPanel";
 
 interface Props {
   sessions: SessionInfo[];
@@ -11,10 +12,16 @@ interface Props {
   chats: Record<string, ChatBlock[]>;
   providers: Record<string, ProviderConfig>;
   settings: api.Settings;
+  conversationHistory: Record<string, ConversationRecord[]>;
   onEnter: (id: string) => void;
-  onCreate: (label: string, providerName: string, agentId?: string, openWorkbench?: boolean) => Promise<void>;
+  onCreate: (label: string, providerName: string, agentId?: string, openWorkbench?: boolean, engine?: api.AgentEngine) => Promise<void>;
   onSaveSettings: (settings: api.Settings) => Promise<void>;
   onOpenSettings: () => void;
+  onSend: (id: string, text: string) => Promise<void>;
+  onAbort: (id: string) => Promise<void>;
+  onNewConversation: (id: string) => Promise<void>;
+  onConversationHistoryChange: (history: Record<string, ConversationRecord[]>) => void;
+  embedded?: boolean;
 }
 
 // Body colors rotate per session index (matches the reference artwork).
@@ -176,6 +183,14 @@ function activityOf(blocks: ChatBlock[] | undefined): string {
 
 const AGENT_FILES = ["agent.md", "skill.md", "mcp.md"] as const;
 type AgentFileName = (typeof AGENT_FILES)[number];
+type AgentConfigTab = AgentFileName | "system_prompt";
+
+const AGENT_CONFIG_TABS: Array<{ id: AgentConfigTab; label: string; optional?: boolean }> = [
+  { id: "agent.md", label: "agent.md" },
+  { id: "skill.md", label: "skill.md" },
+  { id: "mcp.md", label: "mcp.md" },
+  { id: "system_prompt", label: "system_prompt", optional: true },
+];
 
 function defaultAgentFiles(label: string): Record<AgentFileName, string> {
   return {
@@ -210,26 +225,30 @@ function AgentConfigPanel({
   onCreate,
   onSaveSettings,
   onOpenSettings,
+  onEnterSession,
 }: {
   settings: api.Settings;
   providers: Record<string, ProviderConfig>;
   agentId: string;
   onSelectAgent: (id: string) => void;
-  onCreate: (label: string, providerName: string, agentId?: string, openWorkbench?: boolean) => Promise<void>;
+  onCreate: (label: string, providerName: string, agentId?: string, openWorkbench?: boolean, engine?: api.AgentEngine) => Promise<void>;
   onSaveSettings: (settings: api.Settings) => Promise<void>;
   onOpenSettings: () => void;
+  onEnterSession?: () => void;
 }) {
   const agent = (settings.agents ?? []).find((item) => item.id === agentId);
   const agentLabel = agent?.label || (agentId.toLowerCase() === "tanvis" ? "Tanvis" : agentId);
   const defaults = defaultAgentFiles(agentLabel);
   const [files, setFiles] = useState<Record<AgentFileName, string>>(defaults);
   const [systemPrompt, setSystemPrompt] = useState(agent?.system_prompt ?? "");
+  const [activeTab, setActiveTab] = useState<AgentConfigTab>("agent.md");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const providerNames = Object.keys(providers);
   const [providerName, setProviderName] = useState(agent?.provider_name || providerNames[0] || "");
+  const [engine, setEngine] = useState<api.AgentEngine>(agent?.engine ?? "pi");
   const usesLocalProvider = Boolean(providerName && providers[providerName] && isLocalProvider(providers[providerName]));
   const root = agentPath(agent?.config_dir, agentLabel.toLowerCase() === "tanvis" ? "tanvis" : agentId);
   const browserPreview = typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
@@ -237,9 +256,11 @@ function AgentConfigPanel({
   useEffect(() => {
     setProviderName(agent?.provider_name || providerNames[0] || "");
     setSystemPrompt(agent?.system_prompt ?? "");
+    setEngine(agent?.engine ?? "pi");
+    setActiveTab("agent.md");
     setNotice(null);
     setError(null);
-  }, [agent?.id, agent?.provider_name, agent?.system_prompt, providerNames.join("\u0000")]);
+  }, [agent?.id, agent?.provider_name, agent?.system_prompt, agent?.engine, providerNames.join("\u0000")]);
 
   useEffect(() => {
     let active = true;
@@ -268,7 +289,7 @@ function AgentConfigPanel({
     }
     setError(null);
     try {
-      await onCreate(agentLabel, providerName, agentId, false);
+      await onCreate(agentLabel, providerName, agentId, false, engine);
       setNotice(`${agentLabel} 已加入 Agent Team`);
     } catch (reason) {
       setError(String(reason));
@@ -284,8 +305,8 @@ function AgentConfigPanel({
         for (const name of AGENT_FILES) await api.vaultWriteFile(`${root}/${name}`, files[name]);
       }
       const nextAgents = agent
-        ? (settings.agents ?? []).map((item) => item.id === agent.id ? { ...item, provider_name: providerName, config_dir: root, system_prompt: systemPrompt.trim() || undefined } : item)
-        : [...(settings.agents ?? []), { id: agentId, label: agentLabel, provider_name: providerName, config_dir: root, system_prompt: systemPrompt.trim() || undefined }];
+        ? (settings.agents ?? []).map((item) => item.id === agent.id ? { ...item, provider_name: providerName, config_dir: root, system_prompt: systemPrompt.trim() || undefined, engine } : item)
+        : [...(settings.agents ?? []), { id: agentId, label: agentLabel, provider_name: providerName, config_dir: root, system_prompt: systemPrompt.trim() || undefined, engine }];
       await onSaveSettings({ ...settings, agents: nextAgents });
       setNotice(browserPreview ? "预览模式已保存本地编辑状态" : `已保存 ${agentLabel} 配置到 Home/${root}`);
     } catch (reason) {
@@ -299,23 +320,177 @@ function AgentConfigPanel({
     <section className="office__tanvis" aria-label={`${agentLabel} Agent 配置`}>
       <div className="office__tanvis-head">
         <div><div className="office__eyebrow"><GearSix size={15} />{agentLabel} 配置</div><h2>{agentLabel === "Tanvis" ? "本地数据分析 Agent" : "Agent 工作配置"}</h2><p>{agentLabel === "Tanvis" ? "单封邮件的“AI 分析”会调用 Tanvis；只读本地内容并返回建议。" : "配置这个 Agent 的角色、技能和连接说明，保存后立即生效。"}</p></div>
-        <div className="office__tanvis-state"><ShieldCheck size={15} />MCP 仅作说明，不授予本次分析工具权限</div>
+        <div className="office__tanvis-head-actions"><div className="office__tanvis-state"><ShieldCheck size={15} />MCP 仅作说明，不授予本次分析工具权限</div>{onEnterSession && <button type="button" className="office__session-enter" onClick={onEnterSession}><ChatCircleText size={15} />进入会话</button>}</div>
       </div>
       <div className="office__tanvis-toolbar">
         <label className="office__agent-switcher">当前 Agent<select aria-label="选择要配置的 Agent" value={agentId} onChange={(event) => onSelectAgent(event.target.value)}>{(settings.agents ?? []).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}{!(settings.agents ?? []).some((item) => item.id === agentId) && <option value={agentId}>{agentLabel}</option>}</select></label>
         <select aria-label={`选择 ${agentLabel} provider`} value={providerName} onChange={(event) => setProviderName(event.target.value)} disabled={!providerNames.length}><option value="">选择 provider</option>{providerNames.map((name) => <option key={name} value={name}>{name} · {providers[name].model}</option>)}</select>
-        {agent ? <span className={usesLocalProvider ? "office__tanvis-ready" : "office__tanvis-warning"}>{usesLocalProvider ? "已连接本地 provider" : "已配置云端 provider · 邮件分析需确认外发"} · {providerName || agent.provider_name}</span> : <><span>尚未加入 Agent Team</span><button className="primary" onClick={() => void createAgent()} disabled={!providerName}>加入 {agentLabel}</button></>}
+        <select aria-label={`选择 ${agentLabel} 引擎`} value={engine} onChange={(event) => setEngine(event.target.value as api.AgentEngine)}><option value="pi">Pi Agent Core</option><option value="deepseek-harness">DeepSeek Harness</option></select>
+        {engine === "deepseek-harness" && <small className="office__engine-hint">需本机安装 dsh；可用 DEPDEK_DSH_COMMAND 指定路径</small>}
+        {agent ? <span className={usesLocalProvider && engine !== "deepseek-harness" ? "office__tanvis-ready" : "office__tanvis-warning"}>{engine === "deepseek-harness" ? (usesLocalProvider ? "Harness 不支持本地兼容端点" : "Harness · 云端 provider") : usesLocalProvider ? "已连接本地 provider" : "已配置云端 provider · 邮件分析需确认外发"} · {providerName || agent.provider_name}</span> : <><span>尚未加入 Agent Team</span><button className="primary" onClick={() => void createAgent()} disabled={!providerName}>加入 {agentLabel}</button></>}
         {!usesLocalProvider && <button className="link" onClick={onOpenSettings}>切换本地 provider</button>}
         <span className="office__tanvis-path">Home/{root}</span>
       </div>
-      <div className="office__tanvis-files">
-        {AGENT_FILES.map((name) => <label key={name}><span><FileText size={15} />{name}</span><textarea value={files[name]} onChange={(event) => updateFile(name, event.target.value)} spellCheck={false} disabled={loading} /></label>)}
-        <label><span><FileText size={15} />system_prompt（可选）</span><textarea value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} spellCheck={false} disabled={loading} placeholder={`补充 ${agentLabel} 的角色约束`} /></label>
+      <div className="office__tanvis-tabs" role="tablist" aria-label={`${agentLabel} 配置文件`}>
+        {AGENT_CONFIG_TABS.map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} className={activeTab === tab.id ? "office__tanvis-tab office__tanvis-tab--active" : "office__tanvis-tab"} onClick={() => setActiveTab(tab.id)}><FileText size={14} />{tab.label}{tab.optional && <small>可选</small>}</button>)}
+      </div>
+      <div className="office__tanvis-editor">
+        {activeTab === "system_prompt" ? <label><span><FileText size={15} />system_prompt（可选）</span><textarea value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} spellCheck={false} disabled={loading} placeholder={`补充 ${agentLabel} 的角色约束`} /></label> : <label><span><FileText size={15} />{activeTab}</span><textarea value={files[activeTab]} onChange={(event) => updateFile(activeTab, event.target.value)} spellCheck={false} disabled={loading} /></label>}
       </div>
       {loading && <p className="hint">读取 {agentLabel} 配置…</p>}
       {notice && <p className="office__tanvis-notice">{notice}</p>}
       {error && <p className="error-text">{error}</p>}
       <div className="office__tanvis-actions"><span>配置文件通过 vault 读写，分析过程不会执行文件或 MCP 内容。</span><button className="primary" onClick={() => void save()} disabled={saving || loading || !providerName}><FloppyDisk size={15} />{saving ? "保存中…" : `保存 ${agentLabel} 配置`}</button></div>
+    </section>
+  );
+}
+
+function AgentSessionPanel({
+  agentId,
+  agentLabel,
+  providerName,
+  blocks,
+  running,
+  conversationHistory,
+  onSend,
+  onAbort,
+  onNewConversation,
+  onConversationHistoryChange,
+}: {
+  agentId: string;
+  agentLabel: string;
+  providerName: string;
+  blocks: ChatBlock[];
+  running: boolean;
+  conversationHistory: Record<string, ConversationRecord[]>;
+  onSend: (id: string, text: string) => Promise<void>;
+  onAbort: (id: string) => Promise<void>;
+  onNewConversation: (id: string) => Promise<void>;
+  onConversationHistoryChange: (history: Record<string, ConversationRecord[]>) => void;
+}) {
+  const [input, setInput] = useState("");
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const history = conversationHistory[agentId] ?? [];
+  const selectedHistory = history.find((record) => record.id === selectedHistoryId) ?? null;
+  const visibleBlocks = selectedHistory?.blocks ?? blocks;
+  const readOnly = Boolean(selectedHistory);
+
+  useEffect(() => {
+    setSelectedHistoryId(history[history.length - 1]?.id ?? null);
+    setHistoryOpen(false);
+    setInput("");
+    setError(null);
+  }, [agentId]);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+  }, [visibleBlocks.length, visibleBlocks[visibleBlocks.length - 1]]);
+
+  const formatHistoryTime = (value: number) => new Intl.DateTimeFormat("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(value);
+
+  const archiveCurrentConversation = () => {
+    const meaningful = blocks.filter((block) => block.kind === "user" || block.kind === "assistant" || block.kind === "error" || block.kind === "tool");
+    if (!meaningful.length) return;
+    const firstUserMessage = blocks.find((block): block is Extract<ChatBlock, { kind: "user" }> => block.kind === "user");
+    const title = firstUserMessage?.text.trim().replace(/\s+/g, " ").slice(0, 42) || `${agentLabel} 会话`;
+    const record: ConversationRecord = {
+      id: `conversation-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+      title,
+      createdAt: Date.now(),
+      blocks: meaningful.slice(-400),
+    };
+    onConversationHistoryChange({
+      ...conversationHistory,
+      [agentId]: [...history, record].slice(-30),
+    });
+  };
+
+  const createConversation = async () => {
+    setError(null);
+    archiveCurrentConversation();
+    setSelectedHistoryId(null);
+    setHistoryOpen(false);
+    setInput("");
+    try {
+      await onNewConversation(agentId);
+    } catch (reason) {
+      setError(String(reason));
+    }
+  };
+
+  const submit = () => {
+    const text = input.trim();
+    if (!text || running || readOnly) return;
+    setInput("");
+    void onSend(agentId, text);
+  };
+
+  const renderBlocks = () => {
+    const rendered: ReactNode[] = [];
+    let tools: Extract<ChatBlock, { kind: "tool" }>[] = [];
+    const flushTools = () => {
+      if (tools.length) rendered.push(<ToolProcessPanel key={`session-tools-${tools[0].id}`} blocks={tools} />);
+      tools = [];
+    };
+    visibleBlocks.forEach((block) => {
+      if (block.kind === "tool") {
+        tools.push(block);
+        return;
+      }
+      flushTools();
+      if (block.kind === "user") rendered.push(<div key={block.id} className="msg user">{block.text}</div>);
+      if (block.kind === "assistant") rendered.push(<div key={block.id} className="msg assistant"><MarkdownText markdown={block.text} /></div>);
+      if (block.kind === "error") rendered.push(<div key={block.id} className="msg error-text">{block.message}</div>);
+      if (block.kind === "status") rendered.push(<div key={block.id} className="msg status">{block.text}</div>);
+    });
+    flushTools();
+    return rendered;
+  };
+
+  return (
+    <section className="office__session-panel" aria-label={`${agentLabel} 会话`}>
+      <header className="office__session-head">
+        <div>
+          <div className="office__eyebrow"><ChatCircleText size={15} />{agentLabel} / 会话</div>
+          <h2>{selectedHistory ? selectedHistory.title : "当前会话"}</h2>
+          <p>{providerName || "未配置 Provider"}{selectedHistory ? ` · 历史于 ${formatHistoryTime(selectedHistory.createdAt)}` : " · 消息会实时显示在这里"}</p>
+        </div>
+        <div className="office__session-head-actions">
+          <div className="office__history-wrap">
+            <button type="button" className={`office__session-action${historyOpen ? " is-active" : ""}`} onClick={() => setHistoryOpen((value) => !value)} aria-expanded={historyOpen} aria-haspopup="listbox"><ClockCounterClockwise size={15} />历史对话</button>
+            {historyOpen && <div className="office__history-popover" role="listbox" aria-label="历史对话">
+              <div className="office__history-title">{agentLabel} 的会话历史</div>
+              <button type="button" className={`office__history-item${!selectedHistoryId ? " is-active" : ""}`} onClick={() => { setSelectedHistoryId(null); setHistoryOpen(false); }}>
+                <span><b>当前会话</b><small>{blocks.length ? `${blocks.length} 条消息` : "尚未开始"}</small></span><em>进入</em>
+              </button>
+              {history.slice().reverse().map((record) => <button type="button" className={`office__history-item${selectedHistoryId === record.id ? " is-active" : ""}`} key={record.id} onClick={() => { setSelectedHistoryId(record.id); setHistoryOpen(false); }}>
+                <span><b>{record.title}</b><small>{formatHistoryTime(record.createdAt)} · {record.blocks.length} 条记录</small></span><em>查看</em>
+              </button>)}
+              {!history.length && <div className="office__history-empty">还没有历史对话。完成一次对话后，新建会话会自动归档。</div>}
+            </div>}
+          </div>
+          <button type="button" className="office__session-new" onClick={() => void createConversation()}><Plus size={15} />新建会话</button>
+        </div>
+      </header>
+      <div className="office__session-context">
+        {selectedHistory ? <><span>历史对话 · 只读查看</span><button type="button" onClick={() => setSelectedHistoryId(null)}>返回当前会话</button></> : <span>当前会话 · Agent 会保留本次上下文</span>}
+      </div>
+      <div className="messages office__session-messages" ref={scrollRef}>
+        {visibleBlocks.length ? renderBlocks() : <div className="office__session-empty"><ChatCircleText size={28} /><b>还没有消息</b><span>输入一条消息，开始与 {agentLabel} 协作。</span></div>}
+      </div>
+      {error && <p className="error-text office__session-error">{error}</p>}
+      {readOnly ? <div className="office__session-readonly"><span>这是历史对话快照，不能直接继续写入原会话。</span><button type="button" onClick={() => setSelectedHistoryId(null)}>进入当前会话</button></div> : <div className="composer office__session-composer">
+        <textarea value={input} disabled={running} placeholder={running ? "Agent 正在处理…" : `和 ${agentLabel} 聊点什么…`} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); } }} />
+        {running ? <button type="button" onClick={() => void onAbort(agentId)}>中止</button> : <button type="button" className="primary" disabled={!input.trim()} onClick={submit}><PaperPlaneTilt size={15} />发送</button>}
+      </div>}
     </section>
   );
 }
@@ -326,19 +501,37 @@ export default function OfficeView({
   chats,
   providers,
   settings,
+  conversationHistory,
   onEnter,
   onCreate,
   onSaveSettings,
   onOpenSettings,
+  onSend,
+  onAbort,
+  onNewConversation,
+  onConversationHistoryChange,
+  embedded = false,
 }: Props) {
   const [creating, setCreating] = useState(false);
   const [label, setLabel] = useState("");
   const [providerName, setProviderName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [rightTab, setRightTab] = useState<"config" | "session">("config");
   const initialConfigAgent = settings.agents?.find((agent) => agent.label.toLowerCase() === "tanvis")?.id ?? settings.agents?.[0]?.id ?? "tanvis";
   const [configAgentId, setConfigAgentId] = useState(initialConfigAgent);
 
   const providerNames = Object.keys(providers);
+
+  const teamAgents = useMemo(() => {
+    const merged = new Map<string, { id: string; label: string; providerName: string; engine?: api.AgentEngine; running: boolean }>();
+    for (const agent of settings.agents ?? []) {
+      merged.set(agent.id, { id: agent.id, label: agent.label, providerName: agent.provider_name, engine: agent.engine, running: Boolean(running[agent.id]) });
+    }
+    for (const session of sessions) {
+      if (!merged.has(session.id)) merged.set(session.id, { id: session.id, label: session.label, providerName: session.providerName, engine: session.engine, running: Boolean(running[session.id]) });
+    }
+    return [...merged.values()];
+  }, [running, sessions, settings.agents]);
 
   useEffect(() => {
     if (settings.agents?.some((agent) => agent.id === configAgentId)) return;
@@ -353,13 +546,52 @@ export default function OfficeView({
     }
     setError(null);
     try {
-      await onCreate(label.trim(), name);
+      const requestedId = label.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || undefined;
+      await onCreate(label.trim(), name, requestedId, false);
       setCreating(false);
       setLabel("");
+      if (requestedId) setConfigAgentId(requestedId);
     } catch (e) {
       setError(String(e));
     }
   };
+
+  if (embedded) {
+    return (
+      <div className="office office--embedded">
+        <header className="office__embedded-head">
+          <div><div className="office__eyebrow"><GearSix size={15} />AGENT TEAM / 本地协作</div><h1 className="office__title">Agent Team</h1><p className="office__subtitle">选择一个 Agent，在右侧配置角色文件、Provider 和执行引擎。</p></div>
+          <div className="office__embedded-summary"><b>{teamAgents.length}</b><span>个 Agent</span></div>
+        </header>
+        <div className="office__split">
+          <aside className="office__agent-rail" aria-label="Agent 列表">
+            <div className="office__agent-rail-head"><b>我的 Agent</b><span>{teamAgents.length} 个</span></div>
+            <div className="office__agent-list">
+              {teamAgents.map((agent, index) => <button type="button" key={agent.id} className={`office__agent-item ${configAgentId === agent.id ? "office__agent-item--active" : ""}`} onClick={() => setConfigAgentId(agent.id)}>
+                <span className="office__agent-avatar"><PixelOctopus colorIndex={index} running={agent.running} /></span>
+                <span className="office__agent-copy"><b>{agent.label}</b><small>{agent.providerName || "未配置 Provider"}{agent.engine === "deepseek-harness" ? " · Harness" : ""}</small></span>
+                <i className={agent.running ? "office__agent-status office__agent-status--running" : "office__agent-status"} />
+              </button>)}
+            </div>
+            {creating ? <div className="office__agent-create" onClick={(event) => event.stopPropagation()}>
+              <input autoFocus placeholder="Agent 名称" value={label} onChange={(event) => setLabel(event.target.value)} />
+              {providerNames.length > 0 ? <select value={providerName || providerNames[0]} onChange={(event) => setProviderName(event.target.value)}>{providerNames.map((name) => <option key={name} value={name}>{name}</option>)}</select> : <p className="hint">请先配置 Provider</p>}
+              <div><button type="button" onClick={() => { setCreating(false); setLabel(""); }}>取消</button><button type="button" className="primary" onClick={() => void submit()}>创建</button></div>
+              {error && <p className="error-text">{error}</p>}
+            </div> : <button type="button" className="office__agent-add" onClick={() => setCreating(true)}><span>＋</span>新建 Agent</button>}
+            <div className="office__agent-rail-note"><ShieldCheck size={14} />配置文件只通过本地 Vault 读写</div>
+          </aside>
+          <main className="office__config-main">
+            <div className="office__right-tabs" role="tablist" aria-label="Agent Team 工作区">
+              <button type="button" role="tab" aria-selected={rightTab === "config"} className={rightTab === "config" ? "office__right-tab is-active" : "office__right-tab"} onClick={() => setRightTab("config")}><GearSix size={15} />配置</button>
+              <button type="button" role="tab" aria-selected={rightTab === "session"} className={rightTab === "session" ? "office__right-tab is-active" : "office__right-tab"} onClick={() => setRightTab("session")}><ChatCircleText size={15} />会话</button>
+            </div>
+            {rightTab === "config" ? <AgentConfigPanel agentId={configAgentId} onSelectAgent={setConfigAgentId} settings={settings} providers={providers} onCreate={onCreate} onSaveSettings={onSaveSettings} onOpenSettings={onOpenSettings} onEnterSession={() => setRightTab("session")} /> : <AgentSessionPanel agentId={configAgentId} agentLabel={teamAgents.find((agent) => agent.id === configAgentId)?.label ?? configAgentId} providerName={teamAgents.find((agent) => agent.id === configAgentId)?.providerName ?? ""} blocks={chats[configAgentId] ?? []} running={Boolean(running[configAgentId])} conversationHistory={conversationHistory} onSend={onSend} onAbort={onAbort} onNewConversation={onNewConversation} onConversationHistoryChange={onConversationHistoryChange} />}
+          </main>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="office">
@@ -389,7 +621,7 @@ export default function OfficeView({
                 <div className="workstation__floor" />
               </div>
               <div className="workstation__label">{s.label}</div>
-              <div className="workstation__provider"><span>{s.providerName}</span><button className="workstation__configure" onClick={(event) => { event.stopPropagation(); setConfigAgentId(s.id); }}>配置</button></div>
+              <div className="workstation__provider"><span>{s.providerName}{s.engine === "deepseek-harness" ? " · Harness" : ""}</span><button className="workstation__configure" onClick={(event) => { event.stopPropagation(); setConfigAgentId(s.id); }}>配置</button></div>
             </div>
           );
         })}

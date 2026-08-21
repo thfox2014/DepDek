@@ -13,10 +13,10 @@ function toolByName(client: VaultClient, name: string) {
 }
 
 describe("vault tools", () => {
-  it("creates exactly the six contract tools, no fs/bash access", () => {
+  it("creates the vault tools without fs/bash access", () => {
     const tools = createVaultTools(mockClient({}), "sess-1");
     expect(tools.map((t) => t.name).sort()).toEqual(
-      ["delete_file", "fetch_mail", "list_files", "read_file", "search_files", "write_file"].sort(),
+      ["compress", "delete_file", "fetch_mail", "list_files", "propose_memory", "read_file", "search_files", "write_file"].sort(),
     );
   });
 
@@ -53,6 +53,33 @@ describe("vault tools", () => {
       path: "notes/a.txt",
     });
     expect(result.content).toEqual([{ type: "text", text: "hello" }]);
+  });
+
+  it("blocks the internal task history from agent context", async () => {
+    const client = mockClient({ content: "must not be read" });
+    const result = await toolByName(client, "read_file").execute("tc1", { path: "./tasks/history.json" });
+    expect(client.request).not.toHaveBeenCalled();
+    expect(result.content[0].text).toContain("tasks/history.json");
+    expect(result.content[0].text).toContain("excluded from AI context");
+  });
+
+  it("filters the internal task history from search results", async () => {
+    const client = mockClient({ matches: [
+      { path: "tasks/history.json", line: 1, snippet: "internal" },
+      { path: "notes/a.txt", line: 2, snippet: "safe" },
+    ] });
+    const result = await toolByName(client, "search_files").execute("tc1", { query: "safe" });
+    expect(result.content[0].text).toBe("notes/a.txt:2: safe");
+  });
+
+  it("hides the internal task history from directory listings", async () => {
+    const client = mockClient({ entries: [
+      { name: "queue.json", kind: "file", size: 12 },
+      { name: "history.json", kind: "file", size: 999 },
+    ] });
+    const result = await toolByName(client, "list_files").execute("tc1", { path: "tasks" });
+    expect(result.content[0].text).toContain("queue.json");
+    expect(result.content[0].text).not.toContain("history.json");
   });
 
   it("write_file forwards content and reports size/sha256", async () => {
@@ -104,6 +131,49 @@ describe("vault tools", () => {
       path: "a.txt",
     });
     expect(result.content[0].text).toBe("Deleted.");
+  });
+
+  it("compress maps to vault/compress and reports the archive", async () => {
+    const client = mockClient({
+      source: "docs",
+      archive: "docs.tar.gz",
+      files: 3,
+      bytes: 42,
+      archive_size: 18,
+    });
+    const result = await toolByName(client, "compress").execute("tc1", {
+      path: "docs",
+      archive_path: "archives/docs.tar.gz",
+    });
+    expect(client.request).toHaveBeenCalledWith("vault/compress", {
+      session_id: "sess-1",
+      path: "docs",
+      archive_path: "archives/docs.tar.gz",
+    });
+    expect(result.content[0].text).toContain("docs.tar.gz");
+    expect(result.content[0].text).toContain("3 file(s)");
+  });
+
+  it("propose_memory writes a source-backed candidate through memory RPC", async () => {
+    const client = mockClient({ id: "mem-1" });
+    const result = await toolByName(client, "propose_memory").execute("tc1", {
+      text: "先给建议再执行",
+      kind: "procedure",
+      scope: "team",
+      source_refs: ["settings/policy.json"],
+      confidence: 0.9,
+    });
+    expect(client.request).toHaveBeenCalledWith("memory/propose", {
+      session_id: "sess-1",
+      text: "先给建议再执行",
+      kind: "procedure",
+      scope: "team",
+      source_refs: ["settings/policy.json"],
+      confidence: 0.9,
+      sensitivity: "private",
+      engine: "pi",
+    });
+    expect(result.content[0].text).toContain("mem-1");
   });
 
   it("propagates vault RPC errors to the caller", async () => {

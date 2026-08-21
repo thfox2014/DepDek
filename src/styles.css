@@ -105,6 +105,22 @@ textarea:focus {
   font-size: 12px;
 }
 
+/* Shared tool log used by Agent Team and Copilot. Keep all tool calls in one
+   bounded viewport so long-running runs never create an unbounded card stack. */
+.dd-tool-process { align-self: stretch; max-width: 100%; padding: 10px 12px; border: 1px solid #e3defb; border-radius: 12px; background: #f7f5ff; }
+.dd-tool-process__head { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 6px; color: #625b80; font-size: 11px; }
+.dd-tool-process__title { display: inline-flex; align-items: center; gap: 6px; color: #6048cc; font-weight: 650; }
+.dd-tool-process__title i, .dd-tool-process__dot { width: 7px; height: 7px; border-radius: 50%; background: #2da44e; }
+.dd-tool-process__title i.is-running, .dd-tool-process__dot.is-running { background: #735ce8; }
+.dd-tool-process__title i.is-failed, .dd-tool-process__dot.is-failed { background: #d94c5d; }
+.dd-tool-process__log { max-height: 150px; overflow-y: auto; scroll-behavior: smooth; }
+.dd-tool-process__line { display: grid; grid-template-columns: 8px 96px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 28px; border-top: 1px solid #e9e5fb; color: #625b80; }
+.dd-tool-process__line:first-child { border-top: 0; }
+.dd-tool-process__action { color: #4e3bb2; font-weight: 600; white-space: nowrap; }
+.dd-tool-process__line code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.dd-tool-process__status, .dd-tool-process__summary { color: #8b83a7; font-size: 10px; white-space: nowrap; }
+.dd-tool-process__detail { grid-column: 2 / -1; overflow: hidden; color: #d94c5d; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+
 /* ---- folder picker ------------------------------------------------------- */
 
 .folder-picker-page,
@@ -303,6 +319,81 @@ textarea:focus {
   max-height: 45%;
   display: flex;
   flex-direction: column;
+}
+
+/* Current session card: the session currently connected to the agent. */
+.session-current {
+  margin: 8px 8px 4px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.session-current--on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.session-current__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.session-current__title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.session-current__badge {
+  font-size: 10px;
+  line-height: 1.5;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+}
+
+.session-current__badge--off {
+  background: var(--text-dim);
+}
+
+.session-current__label {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-current__meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-current__empty {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.session-toolbar {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.session-toolbar__new {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .session-create {
@@ -1086,6 +1177,9 @@ textarea:focus {
   border-bottom-left-radius: 4px;
 }
 
+.msg.assistant .markdown-text p { margin: 0 0 8px; }
+.msg.assistant .markdown-text > :last-child { margin-bottom: 0; }
+
 .msg.status {
   align-self: center;
   background: none;
@@ -1310,6 +1404,16 @@ textarea:focus {
 .office__tanvis-files label > span { display:flex; align-items:center; gap:6px; color:#403b58; font-size:13px; font-weight:700; }
 .office__tanvis-files textarea { width:100%; min-height:140px; box-sizing:border-box; padding:11px 12px; resize:vertical; border:1px solid #e1def0; border-radius:13px; background:#fff; color:#4b4662; font:12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .office__tanvis-files textarea:focus { outline:2px solid rgba(112,87,232,.2); border-color:#8168ed; }
+.office__tanvis-tabs { display:flex; align-items:center; gap:5px; overflow:auto; margin-top:16px; padding:4px; border:1px solid #e1def0; border-radius:12px; background:#f7f5ff; }
+.office__tanvis-tab { display:inline-flex; align-items:center; gap:6px; flex:0 0 auto; padding:8px 11px; border:0; border-radius:8px; background:transparent; color:#77718f; font-size:12px; cursor:pointer; }
+.office__tanvis-tab:hover { color:#5140b9; background:#eeeaff; }
+.office__tanvis-tab--active { color:#fff; background:#7057e8; box-shadow:0 4px 10px rgba(112,87,232,.2); }
+.office__tanvis-tab small { font-size:9px; opacity:.76; }
+.office__tanvis-editor { margin-top:10px; }
+.office__tanvis-editor label { display:flex; flex-direction:column; gap:7px; }
+.office__tanvis-editor label > span { display:flex; align-items:center; gap:6px; color:#403b58; font-size:13px; font-weight:700; }
+.office__tanvis-editor textarea { width:100%; min-height:270px; box-sizing:border-box; padding:13px 14px; resize:vertical; border:1px solid #e1def0; border-radius:13px; background:#fff; color:#4b4662; font:13px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.office__tanvis-editor textarea:focus { outline:2px solid rgba(112,87,232,.2); border-color:#8168ed; }
 .office__tanvis-actions { display:flex; align-items:center; justify-content:space-between; gap:14px; margin-top:14px; color:#928ca6; font-size:12px; }
 .office__tanvis-actions button { display:inline-flex; align-items:center; gap:6px; }
 .office__tanvis-notice { margin:10px 0 0; color:#287960; font-size:12px; }
@@ -1319,6 +1423,98 @@ textarea:focus {
   .office__tanvis-path { margin-left:0; width:100%; }
   .office__tanvis-actions { align-items:flex-start; flex-direction:column; }
 }
+
+/* ---- embedded Agent Team ----------------------------------------------------- */
+.office--embedded { display:flex; min-height:0; flex-direction:column; overflow:auto; padding:6px 2px 18px; background:transparent; }
+.office__embedded-head { display:flex; align-items:flex-end; justify-content:space-between; gap:18px; padding:3px 5px 14px; }
+.office__embedded-head .office__title { margin:4px 0 2px; text-align:left; font-size:24px; }
+.office__embedded-head .office__subtitle { margin:0; text-align:left; font-size:11px; }
+.office__embedded-summary { display:flex; align-items:baseline; gap:5px; padding:9px 13px; border:1px solid #dfdef1; border-radius:12px; background:rgba(255,255,255,.74); color:#77718f; font-size:11px; white-space:nowrap; }
+.office__embedded-summary b { color:#7057e8; font-size:18px; }
+.office__split { display:grid; min-height:520px; flex:1; grid-template-columns:205px minmax(0,1fr); gap:14px; }
+.office__agent-rail { display:flex; min-width:0; flex-direction:column; overflow:hidden; padding:12px 10px; border:1px solid #dfdef1; border-radius:18px; background:rgba(255,255,255,.82); box-shadow:0 8px 22px rgba(80,65,160,.06); }
+.office__agent-rail-head { display:flex; align-items:center; justify-content:space-between; padding:4px 6px 10px; color:#403b58; font-size:13px; }
+.office__agent-rail-head span { color:#9a94ab; font-size:10px; }
+.office__agent-list { display:flex; min-height:0; flex:1; flex-direction:column; gap:6px; overflow:auto; }
+.office__agent-item { display:flex; min-width:0; align-items:center; gap:8px; padding:9px 7px; border:1px solid transparent; border-radius:12px; background:transparent; color:#403b58; text-align:left; cursor:pointer; }
+.office__agent-item:hover { background:#f4f1ff; }
+.office__agent-item--active { border-color:#c9bbff; background:#eeeaff; box-shadow:0 4px 12px rgba(112,87,232,.12); }
+.office__agent-avatar { display:grid; width:42px; height:42px; flex:0 0 42px; place-items:center; overflow:hidden; border-radius:11px; background:#f5f5ff; }
+.office__agent-avatar .octopus { width:48px; height:42px; }
+.office__agent-copy { display:flex; min-width:0; flex:1; flex-direction:column; gap:3px; }
+.office__agent-copy b { overflow:hidden; color:#332e4d; font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+.office__agent-copy small { overflow:hidden; color:#8c86a2; font-size:9px; text-overflow:ellipsis; white-space:nowrap; }
+.office__agent-status { width:7px; height:7px; flex:0 0 7px; border-radius:50%; background:#b9b3cc; }
+.office__agent-status--running { background:#2ba77a; box-shadow:0 0 0 3px rgba(43,167,122,.13); }
+.office__agent-add { display:flex; align-items:center; justify-content:center; gap:5px; margin-top:9px; padding:9px 8px; border:1px dashed #c9c2e6; border-radius:10px; background:#fbfaff; color:#7057e8; font-size:11px; cursor:pointer; }
+.office__agent-add:hover { border-color:#7057e8; background:#f2efff; }
+.office__agent-add span { font-size:16px; line-height:1; }
+.office__agent-create { display:flex; flex-direction:column; gap:7px; margin-top:9px; padding:9px; border:1px solid #dfdef1; border-radius:11px; background:#faf9ff; }
+.office__agent-create input, .office__agent-create select { min-width:0; width:100%; box-sizing:border-box; }
+.office__agent-create > div { display:flex; justify-content:flex-end; gap:6px; }
+.office__agent-create > div button { padding:5px 8px; border:1px solid #dfdef1; border-radius:7px; background:#fff; color:#6e6981; font-size:10px; cursor:pointer; }
+.office__agent-create > div .primary { border-color:#7057e8; background:#7057e8; color:#fff; }
+.office__agent-create .error-text { margin:0; font-size:10px; }
+.office__agent-rail-note { display:flex; align-items:flex-start; gap:5px; margin:12px 5px 1px; color:#928ca6; font-size:9px; line-height:1.45; }
+.office__agent-rail-note svg { flex:0 0 auto; color:#2b9b78; }
+.office__config-main { display:flex; min-width:0; min-height:0; flex:1; flex-direction:column; gap:10px; }
+.office__right-tabs { display:flex; flex:0 0 auto; gap:4px; padding:4px; border:1px solid #dfdef1; border-radius:13px; background:rgba(255,255,255,.78); box-shadow:0 5px 14px rgba(80,65,160,.05); }
+.office__right-tab { display:inline-flex; min-height:35px; flex:1; align-items:center; justify-content:center; gap:7px; border:0; border-radius:9px; background:transparent; color:#807a96; font-size:12px; font-weight:650; cursor:pointer; transition:background .16s ease, color .16s ease, box-shadow .16s ease; }
+.office__right-tab:hover { background:#f3efff; color:#5e49c9; }
+.office__right-tab.is-active { background:#7057e8; color:#fff; box-shadow:0 5px 12px rgba(112,87,232,.2); }
+.office__tanvis-head-actions { display:flex; align-items:flex-end; flex-direction:column; gap:10px; }
+.office__session-enter { display:inline-flex; align-items:center; gap:6px; padding:7px 10px; border:1px solid #cfc3ff; border-radius:9px; background:#f5f1ff; color:#5d48c7; font-size:11px; font-weight:700; cursor:pointer; }
+.office__session-enter:hover { border-color:#7057e8; background:#eee9ff; }
+.office__session-panel { display:flex; min-height:0; flex:1; flex-direction:column; overflow:hidden; border:1px solid #dfdef1; border-radius:18px; background:rgba(255,255,255,.84); box-shadow:0 8px 22px rgba(80,65,160,.06); }
+.office__session-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:18px 20px 13px; border-bottom:1px solid #e8e5f4; background:linear-gradient(135deg,rgba(255,255,255,.94),rgba(248,246,255,.92)); }
+.office__session-head h2 { margin:5px 0 3px; color:#29263f; font-size:19px; }
+.office__session-head p { margin:0; color:#817b96; font-size:11px; }
+.office__session-head-actions { display:flex; align-items:center; gap:7px; }
+.office__session-action, .office__session-new { display:inline-flex; align-items:center; gap:6px; min-height:32px; padding:0 10px; border:1px solid #dfdef1; border-radius:9px; background:#fff; color:#625b79; font-size:11px; font-weight:650; white-space:nowrap; cursor:pointer; }
+.office__session-action:hover, .office__session-action.is-active { border-color:#c8baff; background:#f3efff; color:#5d48c7; }
+.office__session-new { border-color:#7057e8; background:#7057e8; color:#fff; box-shadow:0 5px 12px rgba(112,87,232,.18); }
+.office__session-new:hover { background:#6048d7; }
+.office__history-wrap { position:relative; }
+.office__history-popover { position:absolute; z-index:20; top:calc(100% + 8px); right:0; display:flex; width:min(355px, 48vw); max-height:360px; flex-direction:column; overflow:auto; padding:8px; border:1px solid #dcd6f0; border-radius:14px; background:#fff; box-shadow:0 16px 36px rgba(60,47,122,.18); }
+.office__history-title { padding:5px 8px 8px; color:#8f89a4; font-size:10px; font-weight:700; letter-spacing:.04em; }
+.office__history-item { display:flex; align-items:center; gap:8px; width:100%; padding:9px 8px; border:0; border-radius:9px; background:transparent; color:#403b58; text-align:left; cursor:pointer; }
+.office__history-item:hover, .office__history-item.is-active { background:#f3efff; }
+.office__history-item > span { display:flex; min-width:0; flex:1; flex-direction:column; gap:3px; }
+.office__history-item b { overflow:hidden; font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
+.office__history-item small { color:#9891ac; font-size:9px; }
+.office__history-item em { color:#7057e8; font-size:9px; font-style:normal; font-weight:700; }
+.office__history-empty { padding:13px 8px; color:#9a94ab; font-size:10px; line-height:1.5; }
+.office__session-context { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:31px; padding:0 20px; border-bottom:1px solid #eeeaf6; color:#938ca8; font-size:10px; background:#fbfaff; }
+.office__session-context button, .office__session-readonly button { padding:4px 7px; border:0; border-radius:6px; background:#eeeaff; color:#5d48c7; font-size:10px; cursor:pointer; }
+.office__session-messages { min-height:0; padding:18px 20px; background:radial-gradient(circle at 90% 0%,rgba(224,218,255,.42),transparent 38%),#fbfbfe; }
+.office__session-messages .msg { max-width:82%; }
+.office__session-messages .dd-tool-process { align-self:stretch; }
+.office__session-empty { display:flex; min-height:180px; align-items:center; justify-content:center; flex-direction:column; gap:7px; color:#9790a9; text-align:center; }
+.office__session-empty svg { color:#9d8ce9; }
+.office__session-empty b { color:#5a536f; font-size:13px; }
+.office__session-empty span { font-size:10px; }
+.office__session-composer { flex:0 0 auto; }
+.office__session-composer textarea { min-height:52px; border:1px solid #e1def0; border-radius:10px; background:#fff; }
+.office__session-composer button { display:inline-flex; align-items:center; gap:5px; }
+.office__session-readonly { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 16px; border-top:1px solid #e8e5f4; color:#958ea8; font-size:10px; background:#fff; }
+.office__session-error { margin:8px 18px 0; font-size:10px; }
+.office--embedded .office__tanvis { display:flex; max-width:none; min-height:100%; box-sizing:border-box; flex-direction:column; margin:0; padding:18px 20px 16px; border-radius:18px; }
+.office--embedded .office__tanvis-head h2 { font-size:18px; }
+.office--embedded .office__tanvis-head p { font-size:11px; }
+.office--embedded .office__tanvis-toolbar { margin-top:14px; }
+.office--embedded .office__tanvis-toolbar select { min-width:150px; }
+.office--embedded .office__tanvis-editor textarea { min-height:310px; }
+.office--embedded .office__tanvis-actions { margin-top:auto; padding-top:13px; }
+
+@media (max-width: 860px) {
+  .office__split { grid-template-columns:1fr; }
+  .office__agent-rail { max-height:300px; }
+  .office__session-head { flex-direction:column; }
+  .office__session-head-actions { width:100%; justify-content:flex-end; }
+  .office__history-popover { left:0; right:auto; width:min(355px, calc(100vw - 72px)); }
+  .office__tanvis-head-actions { width:100%; align-items:flex-start; }
+}
+.dd-sidebar-foot__active { background:var(--dd-accent-soft) !important; color:var(--dd-accent-deep) !important; font-weight:650; }
 
 .office__grid {
   display: grid;
@@ -1738,9 +1934,9 @@ textarea:focus {
   transform: rotate(0deg);
 }
 
-.side-menu__group-body--team {
+.side-menu__group-body--sessions {
   overflow-y: auto;
-  max-height: 38vh;
+  max-height: 42vh;
 }
 
 .side-menu__group-body--data {

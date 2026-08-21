@@ -17,6 +17,7 @@ export interface AnalysisAgentOption {
   isLocal: boolean;
   systemPrompt?: string;
   configDir?: string;
+  engine?: api.AgentEngine;
 }
 
 export type MailSuggestionAction = "delete" | "reply" | "todo" | "archive";
@@ -41,6 +42,7 @@ export interface AnalysisResult {
 }
 
 const ANALYSIS_SYSTEM_PROMPT = `你是 DepDek 的个人数据分析顾问。你只能分析用户提供的数据，绝不修改、删除、移动、发送或同步任何数据。
+tasks/history.json 是内部任务日志，不属于分析上下文，禁止读取、引用或分析它。
 严格区分事实、推断和建议：事实只能复述来源中明确出现的内容；推断必须标注为推断；建议只能描述用户可以考虑的下一步，不能使用命令式执行语言。
 只返回 JSON，不要 Markdown 代码围栏，格式为：
 {"facts":["事实"],"inferences":["推断"],"suggestions":[{"title":"建议标题","reason":"依据和原因","confidence":0到1,"risk":"low|medium|high","action":"delete|reply|todo|archive"}]}
@@ -79,7 +81,8 @@ export function configuredAnalysisAgents(settings: api.Settings): AnalysisAgentO
   const agents = (settings.agents ?? []).flatMap((agent) => {
     const provider = settings.providers[agent.provider_name];
     if (!provider) return [];
-    return [{ id: agent.id, label: agent.label, providerName: agent.provider_name, provider, isLocal: isLocalProvider(provider), systemPrompt: agent.system_prompt, configDir: agent.config_dir }];
+    const isLocal = isLocalProvider(provider) && agent.engine !== "deepseek-harness";
+    return [{ id: agent.id, label: agent.label, providerName: agent.provider_name, provider, isLocal, systemPrompt: agent.system_prompt, configDir: agent.config_dir, engine: agent.engine }];
   }).reduce<AnalysisAgentOption[]>((result, agent) => {
     if (!result.some((item) => item.id === agent.id)) result.push(agent);
     return result;
@@ -190,16 +193,17 @@ export async function analyzeLocally(context: AnalysisContext, selectedAgent?: A
   const providerName = selectedAgent?.providerName ?? (options.requireAgent ? undefined : localEntry?.[0]);
   const provider = selectedAgent?.provider ?? (options.requireAgent ? undefined : localEntry?.[1]);
   if (!providerName || !provider) return fallback(context, options.requireAgent ? "尚未配置 Tanvis；当前只生成本地规则建议。" : "未配置分析 Agent；当前只生成本地规则建议。" );
-  if (!isLocalProvider(provider) && !options.allowRemote) return fallback(context, `Tanvis 当前绑定的是云端 provider「${providerName}」；等待你确认后才会发送邮件内容进行分析。`, "local-rules");
-  const sourceText = context.sources.map((source, index) => `来源 ${index + 1}：${source.label}${isLocalProvider(provider) && source.path ? `\n路径：${source.path}` : ""}\n内容：${source.content.slice(0, 6000)}`).join("\n\n");
+  const localDataPath = isLocalProvider(provider) && selectedAgent?.engine !== "deepseek-harness";
+  if (!localDataPath && !options.allowRemote) return fallback(context, `Tanvis 当前绑定的是云端 provider「${providerName}」；等待你确认后才会发送邮件内容进行分析。`, "local-rules");
+  const sourceText = context.sources.map((source, index) => `来源 ${index + 1}：${source.label}${localDataPath && source.path ? `\n路径：${source.path}` : ""}\n内容：${source.content.slice(0, 6000)}`).join("\n\n");
   const prompt = `请分析以下 ${context.domain} 数据。标题：${context.title}\n\n${sourceText || "（无内容）"}\n\n只给事实、推断和供用户确认的建议，不要执行任何操作。`;
   try {
     const files = selectedAgent ? await loadAgentPromptFiles(selectedAgent) : TANVIS_DEFAULT_FILES;
     const agentPrompt = selectedAgent ? composeAgentPrompt(files) : "";
     const systemPrompt = `${agentPrompt}${selectedAgent?.systemPrompt ? `\n\n${selectedAgent.systemPrompt}\n\n` : ""}${ANALYSIS_SYSTEM_PROMPT}`;
-    const response = await api.agentAnalyze(provider, prompt, systemPrompt);
+    const response = await api.agentAnalyze(provider, prompt, systemPrompt, selectedAgent?.engine);
     const result = parseModelResult(response.text, context.sources.length, `${selectedAgent?.label ?? providerName} · ${provider.model}`);
-    return { ...result, notice: isLocalProvider(provider) ? "本地模型完成分析；未修改任何数据。" : "已按你的确认使用云端 provider 完成分析；未修改任何数据。" };
+    return { ...result, notice: localDataPath ? "本地模型完成分析；未修改任何数据。" : "已按你的确认使用云端 provider 完成分析；未修改任何数据。" };
   } catch (error) {
     return fallback(context, `本地模型分析失败，已降级为本地规则：${String(error)}`);
   }

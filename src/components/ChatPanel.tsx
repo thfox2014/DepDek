@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ChatBlock, SessionInfo } from "../App";
+import MarkdownText from "./MarkdownText";
+import ToolProcessPanel from "./ToolProcessPanel";
 
 interface Props {
   sessions: SessionInfo[];
@@ -10,31 +12,6 @@ interface Props {
   onSend: (id: string, text: string) => void;
   onAbort: (id: string) => void;
   onClose: (id: string) => void;
-}
-
-const summarize = (v: unknown, max = 120) => {
-  let s: string;
-  try {
-    s = JSON.stringify(v);
-  } catch {
-    s = String(v);
-  }
-  return s.length > max ? s.slice(0, max) + "…" : s;
-};
-
-function ToolBlock({ block }: { block: Extract<ChatBlock, { kind: "tool" }> }) {
-  const status =
-    block.ok === undefined ? "执行中…" : block.ok ? "成功" : "失败";
-  return (
-    <details className={`tool-block ${block.ok === false ? "failed" : ""}`}>
-      <summary>
-        <span className="tool-name">{block.name}</span>
-        <span className="tool-args">{summarize(block.args)}</span>
-        <span className="tool-status">{status}</span>
-      </summary>
-      {block.preview !== undefined && <pre>{block.preview}</pre>}
-    </details>
-  );
 }
 
 export default function ChatPanel({
@@ -66,7 +43,7 @@ export default function ChatPanel({
   if (sessions.length === 0) {
     return (
       <div className="chat-panel empty">
-        <p className="hint">在左侧点击“新建 agent”开始一个会话。</p>
+        <p className="hint">在左侧点击“新增会话”开始一个会话。</p>
       </div>
     );
   }
@@ -94,7 +71,20 @@ export default function ChatPanel({
         ))}
       </div>
       <div className="messages" ref={scrollRef}>
-        {blocks.map((b) => {
+        {(() => {
+          const rendered: ReactNode[] = [];
+          let tools: Extract<ChatBlock, { kind: "tool" }>[] = [];
+          const flushTools = () => {
+            if (tools.length) rendered.push(<ToolProcessPanel key={`tools-${tools[0].id}`} blocks={tools} />);
+            tools = [];
+          };
+          blocks.forEach((b) => {
+            if (b.kind === "tool") {
+              tools.push(b);
+              return;
+            }
+            flushTools();
+            rendered.push((() => {
           switch (b.kind) {
             case "user":
               return (
@@ -105,11 +95,9 @@ export default function ChatPanel({
             case "assistant":
               return (
                 <div key={b.id} className="msg assistant">
-                  {b.text}
+                  <MarkdownText markdown={b.text} />
                 </div>
               );
-            case "tool":
-              return <ToolBlock key={b.id} block={b} />;
             case "error":
               return (
                 <div key={b.id} className="msg error-text">
@@ -123,7 +111,11 @@ export default function ChatPanel({
                 </div>
               );
           }
-        })}
+            })());
+          });
+          flushTools();
+          return rendered;
+        })()}
       </div>
       <div className="composer">
         <textarea

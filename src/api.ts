@@ -11,6 +11,9 @@ export type ProviderConfig =
   | { kind: "anthropic"; api_key: string; model: string }
   | { kind: "openai-compatible"; api_key?: string; model: string; base_url: string };
 
+/** Agent execution engine. `deepseek-harness` is an optional local dsh CLI bridge. */
+export type AgentEngine = "pi" | "deepseek-harness";
+
 export interface AuditEntry {
   ts_ms: number;
   session_id: string;
@@ -29,6 +32,7 @@ export interface SavedAgent {
   system_prompt?: string;
   /** Local, non-executable prompt workspace for this agent. */
   config_dir?: string;
+  engine?: AgentEngine;
 }
 
 export interface Settings {
@@ -39,6 +43,7 @@ export interface Settings {
 }
 
 export type AgentEventType =
+  | "progress"
   | "text_delta"
   | "tool_call_start"
   | "tool_call_end"
@@ -68,6 +73,14 @@ export interface WriteFileResult {
   sha256: string;
 }
 
+export interface CompressResult {
+  source: string;
+  archive: string;
+  files: number;
+  bytes: number;
+  archive_size: number;
+}
+
 export interface ReadBinaryResult {
   data_base64: string;
   size: number;
@@ -94,6 +107,48 @@ export interface ObsidianReadResult {
   content: string;
   size: number;
   sha256: string;
+}
+
+export type MemoryStatus = "candidate" | "confirmed" | "rejected" | "expired" | "tombstoned";
+
+export interface MemoryRecord {
+  id: string;
+  scope: string;
+  kind: string;
+  text: string;
+  status: MemoryStatus;
+  sensitivity: string;
+  confidence: number;
+  source_refs: string[];
+  created_by?: { type: "user" | "agent"; engine?: string; session_id: string };
+  valid_from?: string;
+  valid_until?: string;
+  supersedes?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MemoryQueryInput {
+  query?: string;
+  scopes?: string[];
+  statuses?: MemoryStatus[];
+  sourceDomains?: string[];
+  limit?: number;
+  maxChars?: number;
+}
+
+export interface MemoryQueryResult {
+  items: MemoryRecord[];
+  total: number;
+  index_version: string;
+}
+
+export interface MemoryStats {
+  total: number;
+  by_status: Record<string, number>;
+  by_scope: Record<string, number>;
+  malformed_events: number;
+  index_version: string;
 }
 
 // Mail (contract sections 2.5 and 7).
@@ -284,6 +339,8 @@ export const vaultListDir = (path: string) =>
 export const vaultSearchFiles = (query: string) =>
   invoke<{ matches: SearchMatch[] }>("vault_search_files", { query });
 export const vaultDeleteFile = (path: string) => invoke<void>("vault_delete_file", { path });
+export const vaultCompress = (path: string, archivePath?: string) =>
+  invoke<CompressResult>("vault_compress", { path, archivePath });
 
 export const auditRead = (offset = 0, limit = 100) =>
   invoke<AuditReadResult>("audit_read", { offset, limit });
@@ -292,11 +349,12 @@ export const agentCreateSession = (
   sessionId: string,
   provider: ProviderConfig,
   systemPrompt?: string,
-) => invoke<{ session_id: string }>("agent_create_session", { sessionId, provider, systemPrompt });
+  engine?: AgentEngine,
+) => invoke<{ session_id: string }>("agent_create_session", { sessionId, provider, systemPrompt, engine });
 export const agentSend = (sessionId: string, text: string) =>
   invoke<void>("agent_send", { sessionId, text });
-export const agentAnalyze = (provider: ProviderConfig, text: string, systemPrompt: string) =>
-  invoke<{ text: string }>("agent_analyze", { provider, text, systemPrompt });
+export const agentAnalyze = (provider: ProviderConfig, text: string, systemPrompt: string, engine?: AgentEngine) =>
+  invoke<{ text: string }>("agent_analyze", { provider, text, systemPrompt, engine });
 export const agentAbort = (sessionId: string) => invoke<void>("agent_abort", { sessionId });
 export const agentClose = (sessionId: string) => invoke<void>("agent_close", { sessionId });
 
@@ -307,6 +365,25 @@ export const obsidianGetRoot = () => invoke<string | null>("obsidian_get_root");
 export const obsidianClearRoot = () => invoke<void>("obsidian_clear_root");
 export const obsidianListNotes = (query?: string) => invoke<{ notes: ObsidianNote[] }>("obsidian_list_notes", { query });
 export const obsidianReadNote = (path: string) => invoke<ObsidianReadResult>("obsidian_read_note", { path });
+
+export const memoryQuery = (input: MemoryQueryInput = {}) =>
+  invoke<MemoryQueryResult>("memory_query", input as Record<string, unknown>);
+export const memoryGet = (id: string) => invoke<{ memory: MemoryRecord }>("memory_get", { id });
+export const memoryPropose = (input: {
+  text: string;
+  kind?: string;
+  scope?: string;
+  sourceRefs?: string[];
+  sensitivity?: string;
+  confidence?: number;
+  engine?: string;
+}) => invoke<MemoryRecord>("memory_propose", input);
+export const memoryConfirm = (id: string, text?: string, scope?: string) =>
+  invoke<MemoryRecord>("memory_confirm", { id, text, scope });
+export const memoryReject = (id: string) => invoke<MemoryRecord>("memory_reject", { id });
+export const memoryTombstone = (id: string) => invoke<MemoryRecord>("memory_tombstone", { id });
+export const memoryStats = () => invoke<MemoryStats>("memory_stats");
+export const memoryRebuildIndex = () => invoke<Record<string, unknown>>("memory_rebuild_index");
 
 export const mailFetch = (account?: string, refreshBody = false) =>
   invoke<MailFetchResult>("mail_fetch", { account, refreshBody });

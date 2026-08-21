@@ -112,6 +112,7 @@ describe("SessionManager", () => {
       tool_call_id: "tc1",
       name: "read_file",
       args: { path: "a.txt" },
+      engine: "pi",
     });
 
     const end = notifications.find(isEvent("tool_call_end"));
@@ -120,6 +121,7 @@ describe("SessionManager", () => {
       name: "read_file",
       ok: true,
       result_preview: "file body",
+      engine: "pi",
     });
   });
 

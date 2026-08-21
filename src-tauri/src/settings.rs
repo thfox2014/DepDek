@@ -41,6 +41,9 @@ pub struct SavedAgent {
     /// the one-shot analysis endpoint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config_dir: Option<String>,
+    /// Execution engine: `pi` (default) or the optional DeepSeek Harness bridge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]

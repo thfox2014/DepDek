@@ -5,14 +5,15 @@
 ## 1. 总体架构
 
 ```
-前端 (React)  <--Tauri commands/events-->  Rust 核心  <--stdio JSON-RPC-->  Node sidecar (pi-agent-core)
+前端 (React)  <--Tauri commands/events-->  Rust 核心  <--stdio JSON-RPC-->  Node sidecar (Pi / DeepSeek Harness)
                                               |
                                               +--> Vault 服务（数据文件夹沙箱读写 + 审计日志）
 ```
 
 - Agent 对数据文件夹**没有任何直接 fs 访问**；所有文件操作由 sidecar 通过 `vault/*` RPC 请求 Rust 执行。
 - Rust 是唯一的信任边界：路径校验、大小限制、审计日志全在 Rust 侧。
-- MVP 不提供 shell/bash 工具。
+- MVP 不提供 shell/bash 工具。需要压缩等本地动作时，只能使用 Rust vault
+  提供的受限内置动作，不能把任意命令交给 Agent 执行。
 
 ## 2. Sidecar stdio 协议（Rust ↔ sidecar）
 
@@ -25,9 +26,9 @@
 
 | 方法 | params | result |
 |---|---|---|
-| `agent/create_session` | `{session_id: string, provider: ProviderConfig, system_prompt?: string}` | `{session_id}` |
+| `agent/create_session` | `{session_id: string, provider: ProviderConfig, system_prompt?: string, engine?: "pi"\|"deepseek-harness"}` | `{session_id}` |
 | `agent/send` | `{session_id: string, text: string}` | `{}`（回复经 `agent/event` 流式下发） |
-| `agent/analyze` | `{provider: ProviderConfig, text: string, system_prompt: string}` | `{text: string}`（一次性只读分析；不创建持久会话，不暴露写入/删除/外部调用工具） |
+| `agent/analyze` | `{provider: ProviderConfig, text: string, system_prompt: string, engine?: "pi"\|"deepseek-harness"}` | `{text: string}`（一次性只读分析；不创建持久会话，不暴露写入/删除/外部调用工具） |
 | `agent/abort` | `{session_id: string}` | `{}` |
 | `agent/close_session` | `{session_id: string}` | `{}` |
 | `mail/fetch` | `{account?: string, refresh_body?: boolean}`（账号显示名，缺省收全部；`refresh_body` 用于修复旧缓存的正文占位符） | `{fetched: number, accounts: [{name: string, new_messages: number, error?: string}]}` |
@@ -47,6 +48,13 @@ type ProviderConfig =
   | { kind: "openai"; api_key: string; model: string; base_url?: string }
   | { kind: "anthropic"; api_key: string; model: string }
   | { kind: "openai-compatible"; api_key?: string; model: string; base_url: string }; // 覆盖 Ollama 等本地端点
+
+type AgentEngine = "pi" | "deepseek-harness";
+
+// SavedAgent.engine selects the sidecar runtime. Omitted means `pi` for
+// backwards compatibility. The Harness bridge runs dsh headless in a
+// throw-away read-only directory with local filesystem/shell/web/sub-agent
+// rows disabled; it never receives the DepDek Home path.
 ```
 
 ### 2.2 sidecar → Rust：`agent/event` 通知
@@ -55,11 +63,12 @@ type ProviderConfig =
 
 | type | data |
 |---|---|
-| `text_delta` | `{delta: string}` |
+| `progress` | `{phase: string, message: string, engine?: AgentEngine}`（安全的执行阶段摘要；不包含模型隐藏思维原文） |
+| `text_delta` | `{delta: string, engine?: AgentEngine}` |
 | `tool_call_start` | `{tool_call_id: string, name: string, args: object}` |
 | `tool_call_end` | `{tool_call_id: string, name: string, ok: boolean, result_preview: string}`（preview 截断至 500 字符） |
-| `message_complete` | `{stop_reason: string}` |
-| `error` | `{message: string}` |
+| `message_complete` | `{stop_reason: string, engine?: AgentEngine}` |
+| `error` | `{message: string, engine?: AgentEngine}` |
 
 ### 2.3 sidecar → Rust：`vault/*` 请求
 
@@ -75,8 +84,14 @@ type ProviderConfig =
 | `vault/stat` | `{session_id, path}` | `{kind: "file"\|"dir", size: number, modified_ms: number}` |
 | `vault/read_binary` | `{session_id, path}` | `{data_base64: string, size: number, sha256: string, mime: string}` |
 | `vault/write_binary` | `{session_id, path, data_base64: string}` | `{size: number, sha256: string}` |
+| `vault/compress` | `{session_id, path, archive_path?: string}` | `{source, archive, files, bytes, archive_size}` |
 
 `vault/read_binary` 说明：为前端图片/视频/邮件附件预览与下载提供；MIME 按扩展名推断（未知为 `application/octet-stream`）；上限 64 MiB（超出 -32003）；审计记 `op: "read"`。`vault/write_binary` 供邮件 sidecar 导入和用户显式保存发件附件副本，使用相同的 64 MiB 上限并审计为 `op: "write"`。**两者均不注册为 agent 工具**。
+
+`vault/compress` 是唯一的内置压缩动作：在数据文件夹内生成 `.tar.gz`，跳过符号链接和审计文件，最多处理 10,000 个文件、512 MiB 未压缩内容；不调用 shell，审计为 `op: "write"`。sidecar 将其注册为 `compress` 工具，前端输入 `/compress <相对路径>` 时直接走同一 RPC。
+
+sidecar 另注册 `propose_memory` 工具（必须提供 `source_refs`），它只调用
+`memory/propose` 写入候选，不会直接改变 Agent 上下文；确认动作只能由用户界面执行。
 
 ### 2.4 错误码（Rust 返回）
 
@@ -123,6 +138,53 @@ sidecar 级致命错误（不归属于某个会话）用 `session_id: "system"` 
 - `TodoBus.subscribe(name, hook)` 是 sidecar 内部的回调订阅接口。发布后由总线调用匹配的 hook，业务方不需要轮询或反向调用发布者（“you don't call me, I'll call you”）。
 - 每次入队和更新都会发送 `todo/event` 通知，Rust 转发为 `todo://event`，前端据此刷新队列。
 
+### 2.8 DeepSeek Harness 引擎
+
+- Agent Team 可把 `SavedAgent.engine` 设为 `deepseek-harness`。sidecar 使用本机已安装的 `dsh --profile headless`（可通过 `DEPDEK_DSH_COMMAND` 指定路径）执行每轮文本请求；未设置时仍使用 Pi Agent Core，保证旧配置可继续运行。
+- Harness 运行时使用 Node 子进程的临时工作目录、`DSH_PERMISSION_MODE=read-only` 和 `DSH_TELEMETRY_DISABLED=1`，并通过 patch 禁用 dsh 的本地文件、shell、web、sub-agent、workflow 等能力。它只能接收当前会话文本和有限历史，不会获得 DepDek Home 路径或 Vault RPC。
+- DeepSeek Harness 当前是 developer preview 的 Cordis profile/插件运行时；它的 headless profile 是“一次任务后退出”，因此 DepDek 在 sidecar 内维护有限会话历史，再逐轮调用该 profile。Harness 不可执行或未配置时，前端显示明确错误，不会静默外发数据。
+
+### 2.9 MyInfo / MyData 上下文
+
+- 用户确认的稳定信息存放在 `myinfo/profile.json`；确认后的长期记忆以 JSONL 存放在 `mydata/long_term.jsonl`，均通过 Rust Vault 读写并审计。
+- sidecar 每轮只组装有界的 confirmed 快照，不允许 Agent 自己遍历整个 Home。loopback 本地 provider（例如 Ollama）可默认使用快照；云端 Pi/Harness 默认不注入，必须由上层按当前请求单独取得外发确认。
+- 快照包含来源引用，模型只能把它当作上下文，不能当作可执行指令。候选记忆必须在用户确认后才进入快照。
+
+### 2.10 Agent Team 共享长期记忆
+
+- 记忆事实源为 `<Home>/mydata/memory/events.jsonl`，使用追加事件记录 upsert、状态变化和撤销；索引是可重建派生物。
+- 记忆范围为 `user`、`team`、`agent:<id>`、`session:<id>`。Pi 与 DeepSeek Harness 使用同一查询接口。
+- Agent 只能调用 `memory/propose` 写入 `candidate`；只有用户侧确认调用才能变为 `confirmed`。凭据、token 和 `secret` 敏感级别不得进入记忆。
+- 记忆查询结果必须带 `source_refs`、`scope`、`status`、`confidence` 和 `index_version`，用于上下文裁剪和 UI 来源回溯。
+- 所有 `memory/*` 请求都带 `session_id`，由 Rust Vault 读写并产生审计记录；sidecar 不得直接打开 JSONL 或未来的 SQLite 索引。
+
+| `memory/query` | `{session_id, query?, scopes?, statuses?, source_domains?, limit?, max_chars?}` | `{items: MemoryRecord[], total, index_version}` |
+| `memory/get` | `{session_id, id}` | `{memory: MemoryRecord}` |
+| `memory/propose` | `{session_id, text, kind?, scope?, source_refs?, sensitivity?, confidence?, engine?}` | `MemoryRecord`（固定为 `candidate`） |
+| `memory/confirm` | `{session_id, id, text?, scope?}` | `MemoryRecord`（状态 `confirmed`） |
+| `memory/reject` | `{session_id, id}` | `MemoryRecord`（状态 `rejected`） |
+| `memory/tombstone` | `{session_id, id}` | `MemoryRecord`（状态 `tombstoned`） |
+| `memory/stats` | `{session_id}` | `{total, by_status, by_scope, malformed_events, index_version}` |
+| `memory/rebuild_index` | `{session_id}` | `{rebuilt, items, malformed_events, index_version}` |
+
+```ts
+type MemoryRecord = {
+  id: string;
+  scope: "user" | "team" | `agent:${string}` | `session:${string}`;
+  kind: "fact" | "preference" | "constraint" | "procedure" | "episode" | "summary" | string;
+  text: string;
+  status: "candidate" | "confirmed" | "rejected" | "expired" | "tombstoned";
+  sensitivity: "public" | "private" | "sensitive" | "secret" | string;
+  confidence: number;
+  source_refs: string[];
+  created_by?: { type: "user" | "agent"; engine?: string; session_id: string };
+  valid_from?: string;
+  valid_until?: string;
+  supersedes?: string;
+  created_at: string;
+  updated_at: string;
+};
+
 ## 3. Tauri commands（前端 → Rust）
 
 | command | 参数 | 返回 |
@@ -134,6 +196,7 @@ sidecar 级致命错误（不归属于某个会话）用 `session_id: "system"` 
 | `vault_list_dir` | `{path: string}` | `{entries: [...]}` |
 | `vault_search_files` | `{query: string}` | `{matches: [...]}` |
 | `vault_delete_file` | `{path: string}` | — |
+| `vault_compress` | `{path: string, archivePath?: string}` | `{source, archive, files, bytes, archive_size}` |
 | `vault_read_binary` | `{path: string}` | `{data_base64, size, sha256, mime}` |
 | `vault_write_binary` | `{path: string, dataBase64: string}` | `{size, sha256}`（前端显式保存邮件附件副本） |
 | `obsidian_set_root` | `{path: string}` | `string`（规范化后的只读 Obsidian Vault 路径） |
@@ -142,9 +205,17 @@ sidecar 级致命错误（不归属于某个会话）用 `session_id: "system"` 
 | `obsidian_list_notes` | `{query?: string}` | `{notes: [{path, title, folder, size, modified_ms}]}`（最多 5000 篇 Markdown） |
 | `obsidian_read_note` | `{path: string}` | `{path, content, size, sha256}`（只读 Markdown，单文件上限 10 MiB） |
 | `audit_read` | `{offset?: number, limit?: number}` | `{entries: AuditEntry[], total: number}` |
-| `agent_create_session` | `{session_id: string, provider: ProviderConfig, system_prompt?: string}` | `{session_id}` |
+| `memory_query` | `{query?, scopes?, statuses?, sourceDomains?, limit?, maxChars?}` | `{items: MemoryRecord[], total, index_version}` |
+| `memory_get` | `{id: string}` | `{memory: MemoryRecord}` |
+| `memory_propose` | `{text, kind?, scope?, sourceRefs?, sensitivity?, confidence?, engine?}` | `MemoryRecord`（candidate） |
+| `memory_confirm` | `{id: string, text?, scope?}` | `MemoryRecord`（confirmed） |
+| `memory_reject` | `{id: string}` | `MemoryRecord`（rejected） |
+| `memory_tombstone` | `{id: string}` | `MemoryRecord`（tombstoned） |
+| `memory_stats` | — | `{total, by_status, by_scope, malformed_events, index_version}` |
+| `memory_rebuild_index` | — | `{rebuilt, items, malformed_events, index_version}` |
+| `agent_create_session` | `{session_id: string, provider: ProviderConfig, system_prompt?: string, engine?: AgentEngine}` | `{session_id}` |
 | `agent_send` | `{session_id: string, text: string}` | — |
-| `agent_analyze` | `{provider: ProviderConfig, text: string, systemPrompt: string}` | `{text: string}`（转发 `agent/analyze`） |
+| `agent_analyze` | `{provider: ProviderConfig, text: string, systemPrompt: string, engine?: AgentEngine}` | `{text: string}`（转发 `agent/analyze`） |
 | `agent_abort` | `{session_id: string}` | — |
 | `agent_close` | `{session_id: string}` | — |
 | `settings_get` | — | `Settings` |
@@ -185,6 +256,7 @@ type SavedAgent = {
   provider_name: string;       // 指向 providers 的 key
   system_prompt?: string;
   config_dir?: string;         // 本地 vault 中 agent.md/skill.md/mcp.md 所在目录
+  engine?: AgentEngine;         // 缺省 pi，可选 deepseek-harness
 };
 ```
 

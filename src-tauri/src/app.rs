@@ -14,7 +14,8 @@ use crate::obsidian::{ObsidianListResult, ObsidianReadResult, ObsidianStore};
 use crate::rpc::Sidecar;
 use crate::settings::{ProviderConfig, Settings};
 use crate::vault::{
-    ListDirResult, ReadBinaryResult, ReadFileResult, SearchResult, Vault, WriteFileResult,
+    CompressResult, ListDirResult, ReadBinaryResult, ReadFileResult, SearchResult, Vault,
+    WriteFileResult,
 };
 
 pub struct AppState {
@@ -130,6 +131,18 @@ fn vault_delete_file(state: State<AppState>, path: String) -> Result<(), String>
         .map_err(|e| e.to_command_string())
 }
 
+#[tauri::command]
+fn vault_compress(
+    state: State<AppState>,
+    path: String,
+    archive_path: Option<String>,
+) -> Result<CompressResult, String> {
+    state
+        .vault
+        .compress("user", &path, archive_path.as_deref())
+        .map_err(|e| e.to_command_string())
+}
+
 // ---------------------------------------------------------------------
 // Audit
 // ---------------------------------------------------------------------
@@ -154,6 +167,124 @@ fn audit_read(
 }
 
 // ---------------------------------------------------------------------
+// Shared Agent Team memory. The sidecar transports these calls, while the
+// Rust memory service remains the only component allowed to read/write the
+// append-only JSONL store.
+// ---------------------------------------------------------------------
+
+#[tauri::command]
+async fn memory_query(
+    state: State<'_, AppState>,
+    query: Option<String>,
+    scopes: Option<Vec<String>>,
+    statuses: Option<Vec<String>>,
+    source_domains: Option<Vec<String>>,
+    limit: Option<usize>,
+    max_chars: Option<usize>,
+) -> Result<Value, String> {
+    state
+        .sidecar
+        .request(
+            "memory/query",
+            json!({
+                "session_id": "user",
+                "query": query,
+                "scopes": scopes,
+                "statuses": statuses,
+                "source_domains": source_domains,
+                "limit": limit,
+                "max_chars": max_chars,
+            }),
+        )
+        .await
+}
+
+#[tauri::command]
+async fn memory_get(state: State<'_, AppState>, id: String) -> Result<Value, String> {
+    state
+        .sidecar
+        .request("memory/get", json!({ "session_id": "user", "id": id }))
+        .await
+}
+
+#[tauri::command]
+async fn memory_propose(
+    state: State<'_, AppState>,
+    text: String,
+    kind: Option<String>,
+    scope: Option<String>,
+    source_refs: Option<Vec<String>>,
+    sensitivity: Option<String>,
+    confidence: Option<f64>,
+    engine: Option<String>,
+) -> Result<Value, String> {
+    state
+        .sidecar
+        .request(
+            "memory/propose",
+            json!({
+                "session_id": "user",
+                "text": text,
+                "kind": kind,
+                "scope": scope,
+                "source_refs": source_refs,
+                "sensitivity": sensitivity,
+                "confidence": confidence,
+                "engine": engine,
+            }),
+        )
+        .await
+}
+
+#[tauri::command]
+async fn memory_confirm(
+    state: State<'_, AppState>,
+    id: String,
+    text: Option<String>,
+    scope: Option<String>,
+) -> Result<Value, String> {
+    state
+        .sidecar
+        .request(
+            "memory/confirm",
+            json!({ "session_id": "user", "id": id, "text": text, "scope": scope }),
+        )
+        .await
+}
+
+#[tauri::command]
+async fn memory_reject(state: State<'_, AppState>, id: String) -> Result<Value, String> {
+    state
+        .sidecar
+        .request("memory/reject", json!({ "session_id": "user", "id": id }))
+        .await
+}
+
+#[tauri::command]
+async fn memory_tombstone(state: State<'_, AppState>, id: String) -> Result<Value, String> {
+    state
+        .sidecar
+        .request("memory/tombstone", json!({ "session_id": "user", "id": id }))
+        .await
+}
+
+#[tauri::command]
+async fn memory_stats(state: State<'_, AppState>) -> Result<Value, String> {
+    state
+        .sidecar
+        .request("memory/stats", json!({ "session_id": "user" }))
+        .await
+}
+
+#[tauri::command]
+async fn memory_rebuild_index(state: State<'_, AppState>) -> Result<Value, String> {
+    state
+        .sidecar
+        .request("memory/rebuild_index", json!({ "session_id": "user" }))
+        .await
+}
+
+// ---------------------------------------------------------------------
 // Agent commands: forwarded to the sidecar over stdio JSON-RPC.
 // ---------------------------------------------------------------------
 
@@ -163,10 +294,14 @@ async fn agent_create_session(
     session_id: String,
     provider: ProviderConfig,
     system_prompt: Option<String>,
+    engine: Option<String>,
 ) -> Result<Value, String> {
     let mut params = json!({ "session_id": session_id, "provider": provider });
     if let Some(prompt) = system_prompt {
         params["system_prompt"] = json!(prompt);
+    }
+    if let Some(engine) = engine {
+        params["engine"] = json!(engine);
     }
     state.sidecar.request("agent/create_session", params).await
 }
@@ -179,7 +314,10 @@ async fn agent_send(
 ) -> Result<(), String> {
     state
         .sidecar
-        .request("agent/send", json!({ "session_id": session_id, "text": text }))
+        .request(
+            "agent/send",
+            json!({ "session_id": session_id, "text": text }),
+        )
         .await?;
     Ok(())
 }
@@ -190,6 +328,7 @@ async fn agent_analyze(
     provider: Value,
     text: String,
     system_prompt: Option<String>,
+    engine: Option<String>,
 ) -> Result<Value, String> {
     state
         .sidecar
@@ -199,6 +338,7 @@ async fn agent_analyze(
                 "provider": provider,
                 "text": text,
                 "system_prompt": system_prompt,
+                "engine": engine,
             }),
         )
         .await
@@ -255,10 +395,7 @@ async fn mail_delete(
 }
 
 #[tauri::command]
-async fn mail_list_mailboxes(
-    state: State<'_, AppState>,
-    account: String,
-) -> Result<Value, String> {
+async fn mail_list_mailboxes(state: State<'_, AppState>, account: String) -> Result<Value, String> {
     state
         .sidecar
         .request("mail/list_mailboxes", json!({ "account": account }))
@@ -338,7 +475,10 @@ async fn calendar_push(
 ) -> Result<Value, String> {
     state
         .sidecar
-        .request("calendar/push", json!({ "account": account, "event": event }))
+        .request(
+            "calendar/push",
+            json!({ "account": account, "event": event }),
+        )
         .await
 }
 
@@ -387,7 +527,11 @@ fn settings_set(state: State<AppState>, app: AppHandle, settings: Settings) -> R
 // ---------------------------------------------------------------------
 
 #[tauri::command]
-fn obsidian_set_root(state: State<AppState>, app: AppHandle, path: String) -> Result<String, String> {
+fn obsidian_set_root(
+    state: State<AppState>,
+    app: AppHandle,
+    path: String,
+) -> Result<String, String> {
     let canonical = state.obsidian.set_root(Path::new(&path))?;
     let root = canonical.to_string_lossy().into_owned();
     let mut settings = state.settings.lock().unwrap();
@@ -398,7 +542,10 @@ fn obsidian_set_root(state: State<AppState>, app: AppHandle, path: String) -> Re
 
 #[tauri::command]
 fn obsidian_get_root(state: State<AppState>) -> Option<String> {
-    state.obsidian.root().map(|path| path.to_string_lossy().into_owned())
+    state
+        .obsidian
+        .root()
+        .map(|path| path.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -410,7 +557,10 @@ fn obsidian_clear_root(state: State<AppState>, app: AppHandle) -> Result<(), Str
 }
 
 #[tauri::command]
-fn obsidian_list_notes(state: State<AppState>, query: Option<String>) -> Result<ObsidianListResult, String> {
+fn obsidian_list_notes(
+    state: State<AppState>,
+    query: Option<String>,
+) -> Result<ObsidianListResult, String> {
     state.obsidian.list_notes(query.as_deref())
 }
 
@@ -483,7 +633,16 @@ pub fn run() {
             vault_list_dir,
             vault_search_files,
             vault_delete_file,
+            vault_compress,
             audit_read,
+            memory_query,
+            memory_get,
+            memory_propose,
+            memory_confirm,
+            memory_reject,
+            memory_tombstone,
+            memory_stats,
+            memory_rebuild_index,
             agent_create_session,
             agent_send,
             agent_analyze,

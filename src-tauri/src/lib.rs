@@ -6,6 +6,7 @@
 //! `cargo test --no-default-features`.
 
 pub mod audit;
+pub mod memory;
 pub mod obsidian;
 pub mod rpc;
 pub mod settings;

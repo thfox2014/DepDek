@@ -1,0 +1,48 @@
+.dd-memory-page { min-height: 100%; }
+.dd-memory-shell { display: flex; flex-direction: column; gap: 14px; padding: 20px; border: 1px solid var(--dd-border, #e6e4f4); border-radius: 24px; background: rgba(255,255,255,.82); box-shadow: 0 16px 40px rgba(74, 65, 152, .07); }
+.dd-memory-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.dd-memory-title { display: flex; align-items: center; gap: 12px; color: #38335a; }
+.dd-memory-title > svg { color: #7254e8; }
+.dd-memory-title div { display: flex; flex-direction: column; gap: 3px; }
+.dd-memory-title b { font-size: 18px; }
+.dd-memory-title small, .dd-memory-propose small { color: #9793ad; }
+.dd-memory-refresh, .dd-memory-actions button, .dd-memory-propose-row button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #dfdced; border-radius: 10px; background: #fff; color: #615d78; padding: 8px 12px; cursor: pointer; }
+.dd-memory-refresh:disabled, .dd-memory-actions button:disabled, .dd-memory-propose-row button:disabled { opacity: .55; cursor: not-allowed; }
+.dd-memory-spin { animation: dd-memory-spin 1s linear infinite; }
+@keyframes dd-memory-spin { to { transform: rotate(360deg); } }
+.dd-memory-trust { display: flex; align-items: center; gap: 7px; padding: 10px 12px; border-radius: 12px; background: #effaf6; color: #258e72; font-size: 13px; }
+.dd-memory-stats { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; }
+.dd-memory-stats > div { padding: 13px 15px; border: 1px solid #ece9f8; border-radius: 14px; background: #fbfaff; }
+.dd-memory-stats span, .dd-memory-stats small { display: block; color: #9994b1; font-size: 12px; }
+.dd-memory-stats b { display: block; margin: 4px 0; color: #3b365d; font-size: 24px; }
+.dd-memory-message { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid #f3c5cc; border-radius: 12px; background: #fff4f5; color: #bd5865; }
+.dd-memory-warning { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: #d86874; color: #fff; font-weight: 700; }
+.dd-memory-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 4px 0 0; border-bottom: 1px solid #eceaf6; }
+.dd-memory-tabs { display: flex; gap: 4px; }
+.dd-memory-tabs button { border: 0; border-bottom: 3px solid transparent; background: transparent; color: #89849f; padding: 10px 12px; cursor: pointer; }
+.dd-memory-tabs button.is-active { border-color: #7355e8; color: #5c45c9; font-weight: 700; }
+.dd-memory-tabs em { margin-left: 6px; border-radius: 10px; background: #f0edff; padding: 2px 6px; font-style: normal; font-size: 11px; }
+.dd-memory-toolbar > input, .dd-memory-propose-row input { min-width: 220px; border: 1px solid #e1def0; border-radius: 10px; background: #fff; padding: 9px 11px; color: #45405f; outline: none; }
+.dd-memory-list { display: grid; gap: 10px; max-height: 470px; overflow: auto; padding-right: 3px; }
+.dd-memory-card { padding: 15px; border: 1px solid #e5e0f8; border-radius: 15px; background: #fff; }
+.dd-memory-card--candidate { border-color: #f2dfb6; background: #fffdf7; }
+.dd-memory-card-head, .dd-memory-meta, .dd-memory-propose-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.dd-memory-kind { color: #7158cf; font-size: 13px; font-weight: 700; }
+.dd-memory-status { border-radius: 10px; padding: 3px 8px; font-size: 12px; }
+.dd-memory-status--confirmed { background: #e5f8f0; color: #218d6c; }
+.dd-memory-status--candidate { background: #fff1d7; color: #b27724; }
+.dd-memory-status--rejected, .dd-memory-status--tombstoned { background: #f2f0f6; color: #9290a0; }
+.dd-memory-card p { margin: 10px 0; color: #3f3a59; font-size: 16px; line-height: 1.55; }
+.dd-memory-meta, .dd-memory-sources { color: #9a96ae; font-size: 12px; }
+.dd-memory-sources { margin-top: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dd-memory-actions { display: flex; gap: 8px; margin-top: 12px; }
+.dd-memory-actions .dd-memory-primary, .dd-memory-propose-row .dd-memory-primary { border-color: #7355e8; background: #7355e8; color: #fff; }
+.dd-memory-empty { display: grid; place-items: center; gap: 6px; min-height: 140px; color: #9793ad; text-align: center; }
+.dd-memory-empty b { color: #605b78; }
+.dd-memory-propose { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid #eceaf6; }
+.dd-memory-propose > div:first-child { display: flex; flex-direction: column; gap: 4px; }
+.dd-memory-propose > div:first-child b { display: flex; align-items: center; gap: 7px; color: #4c456d; }
+.dd-memory-propose textarea { min-height: 76px; resize: vertical; border: 1px solid #e1def0; border-radius: 12px; padding: 10px 12px; color: #45405f; font: inherit; }
+.dd-memory-propose-row { justify-content: flex-end; }
+.dd-memory-propose-row input { flex: 1; min-width: 0; }
+@media (max-width: 760px) { .dd-memory-stats { grid-template-columns: repeat(2, minmax(0,1fr)); } .dd-memory-toolbar { align-items: stretch; flex-direction: column; } .dd-memory-toolbar > input { min-width: 0; } }

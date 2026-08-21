@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { ProviderConfig } from "../api";
 import type { SessionInfo } from "../App";
+import { IconPlus } from "./icons";
 
 interface Props {
   sessions: SessionInfo[];
@@ -27,6 +28,8 @@ export default function SessionList({
   const [error, setError] = useState<string | null>(null);
 
   const providerNames = Object.keys(providers);
+  // 当前与 agent 连接的会话（工作台当前选中的会话）。
+  const active = sessions.find((s) => s.id === activeId) ?? null;
 
   const submit = async () => {
     const name = providerName || providerNames[0];
@@ -46,10 +49,33 @@ export default function SessionList({
 
   return (
     <div className="session-list">
-      <div className="panel-title">
-        会话
-        <button className="link" onClick={() => setCreating((v) => !v)}>
-          新建 agent
+      <div className={`session-current ${active ? "session-current--on" : ""}`}>
+        <div className="session-current__head">
+          <span className="session-current__title">当前会话</span>
+          {active ? (
+            <span className="session-current__badge">已连接</span>
+          ) : (
+            <span className="session-current__badge session-current__badge--off">未连接</span>
+          )}
+        </div>
+        {active ? (
+          <>
+            <div className="session-current__label">{active.label}</div>
+            <div className="session-current__meta">
+              {active.providerName}
+              {providers[active.providerName] ? ` · ${providers[active.providerName].model}` : ""}
+              {active.engine === "deepseek-harness" ? " · Harness" : ""}
+            </div>
+          </>
+        ) : (
+          <div className="session-current__empty">尚未连接 agent，请新增会话或点击下方会话。</div>
+        )}
+      </div>
+
+      <div className="session-toolbar">
+        <button className="link session-toolbar__new" onClick={() => setCreating((v) => !v)}>
+          <IconPlus />
+          {creating ? "取消" : "新增会话"}
         </button>
       </div>
       {creating && (

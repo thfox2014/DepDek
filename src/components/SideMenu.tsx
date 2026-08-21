@@ -4,9 +4,9 @@ import type { SessionInfo } from "../App";
 import SessionList from "./SessionList";
 import DataFilesPanel from "./DataFilesPanel";
 import {
+  IconChat,
   IconChevron,
   IconDatabase,
-  IconTeam,
 } from "./icons";
 
 interface Props {
@@ -20,21 +20,21 @@ interface Props {
 }
 
 export default function SideMenu(props: Props) {
-  const [teamOpen, setTeamOpen] = useState(true);
+  const [sessionOpen, setSessionOpen] = useState(true);
   const [dataOpen, setDataOpen] = useState(true);
 
   return (
     <div className="side-menu">
       <div className="side-menu__group">
-        <button className="side-menu__group-header" onClick={() => setTeamOpen((v) => !v)}>
-          <IconTeam />
-          <span>Agent团队</span>
+        <button className="side-menu__group-header" onClick={() => setSessionOpen((v) => !v)}>
+          <IconChat />
+          <span>会话</span>
           <IconChevron
-            className={`side-menu__chevron ${teamOpen ? "side-menu__chevron--open" : ""}`}
+            className={`side-menu__chevron ${sessionOpen ? "side-menu__chevron--open" : ""}`}
           />
         </button>
-        {teamOpen && (
-          <div className="side-menu__group-body side-menu__group-body--team">
+        {sessionOpen && (
+          <div className="side-menu__group-body side-menu__group-body--sessions">
             <SessionList
               sessions={props.sessions}
               activeId={props.activeId}

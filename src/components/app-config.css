@@ -1,0 +1,90 @@
+.dd-app-config { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: auto; padding: 4px 3px 24px; scrollbar-width: thin; scrollbar-color: rgba(115, 92, 232, .28) transparent; }
+.dd-app-config--loading { align-items: center; justify-content: center; gap: 9px; color: var(--dd-ink-3); }
+.dd-app-config__intro { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; padding: 14px 17px; border: 1px solid rgba(115, 92, 232, .18); border-radius: 16px; background: linear-gradient(100deg, rgba(238, 234, 255, .8), rgba(247, 251, 255, .85)); color: var(--dd-accent-deep); }
+.dd-app-config__intro > div { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+.dd-app-config__intro b { color: var(--dd-ink); font-size: 13px; }
+.dd-app-config__intro span { margin-top: 3px; color: var(--dd-ink-3); font-size: 10.5px; }
+.dd-app-config__cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.dd-app-config__card { position: relative; display: flex; min-height: 180px; flex-direction: column; align-items: flex-start; gap: 13px; padding: 19px; border: 1px solid var(--dd-line); border-radius: 18px; background: rgba(255, 255, 255, .82); color: var(--dd-ink); text-align: left; box-shadow: 0 8px 25px rgba(78, 66, 140, .07); cursor: pointer; transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease; }
+.dd-app-config__card:hover { border-color: rgba(115, 92, 232, .42); box-shadow: 0 14px 35px rgba(78, 66, 140, .13); transform: translateY(-2px); }
+.dd-app-config__card > div { min-width: 0; }
+.dd-app-config__card-title { display: flex; align-items: baseline; gap: 8px; }
+.dd-app-config__card-title b { font-size: 16px; }
+.dd-app-config__card-title span { color: var(--dd-ink-3); font-size: 10px; }
+.dd-app-config__card p { min-height: 34px; margin: 8px 0 12px; color: var(--dd-ink-2); font-size: 11px; line-height: 1.6; }
+.dd-app-config__card small { color: var(--dd-accent-deep); font-size: 10px; font-weight: 650; }
+.dd-app-config__card-arrow { position: absolute; right: 17px; bottom: 18px; color: var(--dd-ink-3); }
+.dd-app-config__icon { display: inline-grid; width: 48px; height: 48px; flex: 0 0 48px; place-items: center; border-radius: 15px; }
+.dd-app-config__icon--mail { background: #eeeaff; color: #674fd2; }
+.dd-app-config__icon--calendar { background: #e8f5ef; color: #29966f; }
+.dd-app-config__icon--obsidian { background: #fff1de; color: #c27a29; }
+.dd-app-config__footnote { display: flex; align-items: center; gap: 7px; margin-top: auto; padding: 18px 3px 0; color: var(--dd-ink-3); font-size: 10px; }
+.dd-app-config__breadcrumb { display: flex; align-items: center; gap: 8px; margin: 3px 0 14px; color: var(--dd-ink-3); font-size: 11px; }
+.dd-app-config__breadcrumb button { display: inline-flex; align-items: center; gap: 4px; padding: 5px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--dd-accent-deep); font-size: 11px; cursor: pointer; box-shadow: none; }
+.dd-app-config__breadcrumb button:hover { background: var(--dd-accent-soft); }
+.dd-app-config__detail-head { display: flex; align-items: center; gap: 13px; margin-bottom: 16px; }
+.dd-app-config__detail-head h1 { margin: 3px 0 0; font-size: 25px; line-height: 1.15; }
+.dd-app-config__detail-head p { margin: 6px 0 0; color: var(--dd-ink-3); font-size: 10.5px; }
+.dd-app-config__section { display: flex; min-height: 0; flex-direction: column; gap: 14px; }
+.dd-app-config__section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.dd-app-config__section-head h2 { margin: 0; font-size: 16px; }
+.dd-app-config__section-head p { margin: 5px 0 0; color: var(--dd-ink-3); font-size: 10.5px; }
+.dd-app-config__primary { display: inline-flex; align-items: center; gap: 6px; padding: 8px 13px; border: 0; border-radius: 9px; background: var(--dd-accent); color: #fff; font-size: 11px; font-weight: 650; cursor: pointer; box-shadow: 0 6px 16px rgba(104, 82, 220, .22); }
+.dd-app-config__primary:hover { background: var(--dd-accent-deep); }
+.dd-app-config__primary:disabled { opacity: .55; cursor: wait; }
+.dd-app-config__account-list { display: flex; flex-direction: column; gap: 8px; }
+.dd-app-config__account { display: flex; min-width: 0; align-items: center; gap: 11px; padding: 12px 14px; border: 1px solid var(--dd-line); border-radius: 14px; background: rgba(255, 255, 255, .84); }
+.dd-app-config__account .dd-app-config__icon { width: 36px; height: 36px; flex-basis: 36px; border-radius: 11px; }
+.dd-app-config__account .dd-app-config__icon svg { width: 19px; height: 19px; }
+.dd-app-config__account-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+.dd-app-config__account-copy b { font-size: 12.5px; }
+.dd-app-config__account-copy span, .dd-app-config__account-copy small { overflow: hidden; margin-top: 2px; color: var(--dd-ink-3); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.dd-app-config__status { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; padding: 4px 8px; border-radius: 12px; font-size: 9.5px; font-weight: 650; white-space: nowrap; }
+.dd-app-config__status--ok { background: var(--dd-ok-bg); color: var(--dd-ok); }
+.dd-app-config__icon-button { display: inline-grid; width: 30px; height: 30px; flex: 0 0 30px; place-items: center; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--dd-ink-3); cursor: pointer; box-shadow: none; }
+.dd-app-config__icon-button:hover { background: var(--dd-accent-soft); color: var(--dd-accent-deep); }
+.dd-app-config__icon-button--danger:hover { background: var(--dd-risk-bg); color: var(--dd-risk); }
+.dd-app-config__empty { display: flex; min-height: 135px; flex-direction: column; align-items: center; justify-content: center; gap: 5px; border: 1px dashed var(--dd-line-strong); border-radius: 15px; color: var(--dd-ink-3); }
+.dd-app-config__empty svg { color: var(--dd-accent); }
+.dd-app-config__empty b { color: var(--dd-ink-2); font-size: 12px; }
+.dd-app-config__empty span { font-size: 10px; }
+.dd-app-config__editor { padding: 15px 17px; border: 1px solid rgba(115, 92, 232, .2); border-radius: 16px; background: rgba(251, 250, 255, .92); }
+.dd-app-config__editor > header, .dd-app-config__editor > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.dd-app-config__editor > header { padding-bottom: 12px; border-bottom: 1px solid var(--dd-line); }
+.dd-app-config__editor > header > div { display: flex; flex-direction: column; }
+.dd-app-config__editor > header b { font-size: 13px; }
+.dd-app-config__editor > header small { margin-top: 3px; color: var(--dd-ink-3); font-size: 10px; }
+.dd-app-config__editor > footer { justify-content: flex-end; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--dd-line); }
+.dd-app-config__editor > footer > button:first-child { padding: 7px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--dd-ink-2); font-size: 11px; cursor: pointer; box-shadow: none; }
+.dd-app-config__form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px 13px; padding-top: 14px; }
+.dd-app-config__field { display: flex; min-width: 0; flex-direction: column; gap: 5px; }
+.dd-app-config__field--wide { grid-column: 1 / -1; }
+.dd-app-config__field > span { color: var(--dd-ink-2); font-size: 10px; }
+.dd-app-config__field input, .dd-app-config__field select { width: 100%; min-width: 0; padding: 8px 9px; border: 1px solid var(--dd-line-strong); border-radius: 8px; background: #fff; color: var(--dd-ink); font-size: 11px; }
+.dd-app-config__check { display: inline-flex; align-items: center; gap: 7px; color: var(--dd-ink-2); font-size: 10.5px; }
+.dd-app-config__check input { accent-color: var(--dd-accent); }
+.dd-app-config__error { display: flex; align-items: center; gap: 6px; margin: 11px 0 0; color: var(--dd-risk); font-size: 10.5px; }
+.dd-app-config__obsidian-status { display: flex; align-items: center; gap: 12px; padding: 18px; border: 1px solid var(--dd-line); border-radius: 15px; background: rgba(255, 255, 255, .82); }
+.dd-app-config__obsidian-status--connected { border-color: rgba(39, 154, 113, .24); background: rgba(228, 245, 237, .5); }
+.dd-app-config__obsidian-status > div { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+.dd-app-config__obsidian-status > div b { font-size: 13px; }
+.dd-app-config__obsidian-status > div span { margin-top: 4px; overflow: hidden; color: var(--dd-ink-3); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+.dd-app-config__path { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding: 12px 14px; border-radius: 12px; background: rgba(238, 234, 255, .65); color: var(--dd-accent-deep); }
+.dd-app-config__path > div { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+.dd-app-config__path b { color: var(--dd-ink); font-size: 11px; }
+.dd-app-config__path span { overflow: hidden; margin-top: 2px; color: var(--dd-ink-3); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.dd-app-config__path button { display: inline-flex; align-items: center; gap: 5px; padding: 6px 9px; border: 0; border-radius: 8px; background: rgba(255, 255, 255, .78); color: var(--dd-risk); font-size: 10px; cursor: pointer; box-shadow: none; }
+.dd-app-config__path button:hover { background: var(--dd-risk-bg); }
+
+@media (max-width: 900px) {
+  .dd-app-config__cards { grid-template-columns: 1fr; }
+  .dd-app-config__card { min-height: 130px; }
+}
+
+@media (max-width: 580px) {
+  .dd-app-config__section-head { flex-direction: column; }
+  .dd-app-config__form-grid { grid-template-columns: 1fr; }
+  .dd-app-config__field--wide { grid-column: auto; }
+  .dd-app-config__account { flex-wrap: wrap; }
+  .dd-app-config__account .dd-app-config__status { margin-left: 47px; }
+}

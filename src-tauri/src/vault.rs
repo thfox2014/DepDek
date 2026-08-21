@@ -10,8 +10,11 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use tar::Builder as TarBuilder;
 use thiserror::Error;
 
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -25,6 +28,10 @@ pub const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 pub const MAX_BINARY_FILE_SIZE: u64 = 64 * 1024 * 1024;
 /// Maximum matches returned by `search_files` (contract section 2.3).
 pub const MAX_SEARCH_MATCHES: usize = 50;
+/// Total uncompressed input cap for the built-in archive action.
+pub const MAX_COMPRESS_BYTES: u64 = 512 * 1024 * 1024;
+/// File count cap for the built-in archive action.
+pub const MAX_COMPRESS_FILES: usize = 10_000;
 /// Snippet length cap for search results.
 const MAX_SNIPPET_CHARS: usize = 200;
 
@@ -171,6 +178,15 @@ pub struct StatResult {
     pub modified_ms: u64,
 }
 
+#[derive(Debug, Serialize)]
+pub struct CompressResult {
+    pub source: String,
+    pub archive: String,
+    pub files: usize,
+    pub bytes: u64,
+    pub archive_size: u64,
+}
+
 /// Hex-encoded SHA-256 of `bytes`.
 pub fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -196,9 +212,7 @@ fn normalize(rel: &str) -> Result<String, VaultError> {
             Component::CurDir => {}
             Component::ParentDir => {
                 if parts.pop().is_none() {
-                    return Err(VaultError::Escape(format!(
-                        "`..` climbs above root: {rel}"
-                    )));
+                    return Err(VaultError::Escape(format!("`..` climbs above root: {rel}")));
                 }
             }
             Component::Normal(seg) => {
@@ -341,10 +355,7 @@ impl Vault {
                             .expect("candidate is below root")
                             .to_os_string(),
                     );
-                    ancestor = ancestor
-                        .parent()
-                        .expect("root always exists")
-                        .to_path_buf();
+                    ancestor = ancestor.parent().expect("root always exists").to_path_buf();
                 }
                 Err(e) => return Err(e.into()),
             }
@@ -508,6 +519,34 @@ impl Vault {
         result
     }
 
+    /// Create a gzip-compressed tar archive inside the vault. This is a
+    /// deliberate built-in action rather than shell execution: source paths
+    /// are sandboxed, symlinks are skipped, and the resulting archive is
+    /// recorded as a normal vault write.
+    pub fn compress(
+        &self,
+        session_id: &str,
+        source_rel: &str,
+        archive_rel: Option<&str>,
+    ) -> Result<CompressResult, VaultError> {
+        let fallback_path = archive_rel
+            .and_then(|path| normalize(path).ok())
+            .or_else(|| normalize(source_rel).ok())
+            .unwrap_or_else(|| source_rel.to_string());
+        let result = self.compress_inner(source_rel, archive_rel);
+        let audit_path = result
+            .as_ref()
+            .map(|value| value.archive.clone())
+            .unwrap_or(fallback_path);
+        self.record_audit(
+            session_id,
+            Op::Write,
+            &audit_path,
+            result.as_ref().map(|r| (None, Some(r.archive_size))),
+        );
+        result
+    }
+
     // ------------------------------------------------------------------
     // Inner implementations (no auditing).
     // ------------------------------------------------------------------
@@ -616,7 +655,11 @@ impl Vault {
             } else {
                 continue;
             };
-            let size = if kind == EntryKind::Dir { 0 } else { meta.len() };
+            let size = if kind == EntryKind::Dir {
+                0
+            } else {
+                meta.len()
+            };
             entries.push(DirEntryInfo { name, kind, size });
         }
         entries.sort_by(|a, b| a.name.cmp(&b.name));
@@ -664,6 +707,184 @@ impl Vault {
             modified_ms,
         })
     }
+
+    fn compress_inner(
+        &self,
+        source_rel: &str,
+        archive_rel: Option<&str>,
+    ) -> Result<CompressResult, VaultError> {
+        let (source_path, source_norm) = self.resolve_existing(source_rel)?;
+        let source_meta = fs::symlink_metadata(&source_path)?;
+        if !source_meta.is_file() && !source_meta.is_dir() {
+            return Err(
+                io::Error::new(io::ErrorKind::InvalidInput, "not a file or directory").into(),
+            );
+        }
+
+        let (archive_path, archive_norm) = if let Some(path) = archive_rel {
+            self.resolve_for_write(path)?
+        } else {
+            let parent = if source_norm.is_empty() {
+                source_path.as_path()
+            } else {
+                source_path.parent().ok_or_else(|| {
+                    VaultError::InvalidParams("source has no parent directory".to_string())
+                })?
+            };
+            let base = if source_norm.is_empty() {
+                "depdek-home".to_string()
+            } else {
+                source_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("archive")
+                    .to_string()
+            };
+            let archive_name = format!("{base}.tar.gz");
+            let archive_candidate = parent.join(&archive_name);
+            let relative = archive_candidate
+                .strip_prefix(self.root_pair()?.root)
+                .map_err(|_| VaultError::Escape(archive_name.clone()))?
+                .to_string_lossy()
+                .into_owned();
+            let (resolved, normalized) = self.resolve_for_write(&relative)?;
+            (resolved, normalized)
+        };
+
+        if archive_path == source_path {
+            return Err(VaultError::InvalidParams(
+                "archive path must differ from the source".to_string(),
+            ));
+        }
+        if source_meta.is_dir() && archive_path.starts_with(&source_path) {
+            // An archive inside its source is safe only when explicitly
+            // skipped during traversal; keep the restriction clear to users.
+            if archive_rel.is_some() {
+                return Err(VaultError::InvalidParams(
+                    "archive path cannot be inside the source directory".to_string(),
+                ));
+            }
+        }
+        if let Some(parent) = archive_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let temp_path = archive_path.with_extension("tar.gz.part");
+        let mut files = 0usize;
+        let mut bytes = 0u64;
+        let build_result = (|| -> Result<(), VaultError> {
+            let output = fs::File::create(&temp_path)?;
+            let encoder = GzEncoder::new(output, Compression::default());
+            let mut builder = TarBuilder::new(encoder);
+            let archive_base = if source_meta.is_dir() && !source_norm.is_empty() {
+                source_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(PathBuf::from)
+            } else if source_meta.is_file() {
+                source_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(PathBuf::from)
+            } else {
+                None
+            };
+            append_archive_entries(
+                &mut builder,
+                &source_path,
+                archive_base.as_deref(),
+                &archive_path,
+                &temp_path,
+                &mut files,
+                &mut bytes,
+            )?;
+            let encoder = builder.into_inner()?;
+            encoder.finish()?;
+            Ok(())
+        })();
+        if let Err(error) = build_result {
+            let _ = fs::remove_file(&temp_path);
+            return Err(error);
+        }
+        if archive_path.exists() {
+            fs::remove_file(&archive_path)?;
+        }
+        fs::rename(&temp_path, &archive_path)?;
+        let archive_size = fs::metadata(&archive_path)?.len();
+        Ok(CompressResult {
+            source: if source_norm.is_empty() {
+                ".".to_string()
+            } else {
+                source_norm
+            },
+            archive: archive_norm,
+            files,
+            bytes,
+            archive_size,
+        })
+    }
+}
+
+fn append_archive_entries(
+    builder: &mut TarBuilder<GzEncoder<fs::File>>,
+    path: &Path,
+    name: Option<&Path>,
+    archive_path: &Path,
+    temp_path: &Path,
+    files: &mut usize,
+    bytes: &mut u64,
+) -> Result<(), VaultError> {
+    let file_type = fs::symlink_metadata(path)?.file_type();
+    if file_type.is_symlink() {
+        return Ok(());
+    }
+    if file_type.is_file() {
+        if path == archive_path
+            || path == temp_path
+            || path.file_name().is_some_and(|n| n == AUDIT_FILE_NAME)
+        {
+            return Ok(());
+        }
+        let size = fs::metadata(path)?.len();
+        if *files >= MAX_COMPRESS_FILES || bytes.saturating_add(size) > MAX_COMPRESS_BYTES {
+            return Err(VaultError::TooLarge);
+        }
+        let archive_name = name.unwrap_or_else(|| Path::new("file"));
+        builder.append_path_with_name(path, archive_name)?;
+        *files += 1;
+        *bytes += size;
+        return Ok(());
+    }
+    if !file_type.is_dir() {
+        return Ok(());
+    }
+    if let Some(dir_name) = name {
+        if dir_name.file_name().is_some_and(|n| n == AUDIT_FILE_NAME) {
+            return Ok(());
+        }
+        builder.append_dir(dir_name, path)?;
+    }
+    let mut entries = fs::read_dir(path)?.flatten().collect::<Vec<_>>();
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        if entry.file_name() == AUDIT_FILE_NAME {
+            continue;
+        }
+        let child_name = match name {
+            Some(parent) => parent.join(entry.file_name()),
+            None => PathBuf::from(entry.file_name()),
+        };
+        append_archive_entries(
+            builder,
+            &entry.path(),
+            Some(&child_name),
+            archive_path,
+            temp_path,
+            files,
+            bytes,
+        )?;
+    }
+    Ok(())
 }
 
 /// Recursive content search. Never follows symlinks (a symlinked directory
@@ -776,6 +997,34 @@ mod tests {
     }
 
     #[test]
+    fn compress_creates_archive_inside_vault_and_audits_write() {
+        let (_dir, v) = setup();
+        v.write_file("user", "docs/a.txt", "hello").unwrap();
+        v.write_file("user", "docs/nested/b.txt", "world").unwrap();
+
+        let result = v.compress("user", "docs", None).unwrap();
+        assert_eq!(result.source, "docs");
+        assert_eq!(result.archive, "docs.tar.gz");
+        assert_eq!(result.files, 2);
+        assert!(result.archive_size > 0);
+        assert!(v.root().unwrap().join("docs.tar.gz").is_file());
+        let entries = v.audit().read(0, 20).0;
+        assert!(entries
+            .iter()
+            .any(|entry| entry.op == Op::Write && entry.path == "docs.tar.gz" && entry.ok));
+    }
+
+    #[test]
+    fn compress_rejects_archive_inside_source() {
+        let (_dir, v) = setup();
+        v.write_file("user", "docs/a.txt", "hello").unwrap();
+        let err = v
+            .compress("user", "docs", Some("docs/archive.tar.gz"))
+            .unwrap_err();
+        assert!(matches!(err, VaultError::InvalidParams(_)));
+    }
+
+    #[test]
     fn dotdot_escape_rejected() {
         let (_dir, v) = setup();
         for p in ["../evil.txt", "a/../../evil.txt", ".."] {
@@ -882,7 +1131,8 @@ mod tests {
     #[test]
     fn search_finds_matches_with_lines() {
         let (_dir, v) = setup();
-        v.write_file("user", "a.txt", "foo\nbar\nfoo again").unwrap();
+        v.write_file("user", "a.txt", "foo\nbar\nfoo again")
+            .unwrap();
         v.write_file("user", "sub/b.txt", "nothing\nfoo").unwrap();
 
         let res = v.search_files("user", "foo").unwrap();
@@ -988,7 +1238,10 @@ mod tests {
         std::fs::write(v.root().unwrap().join("clip.MP4"), b"\x00").unwrap();
         assert_eq!(v.read_binary("user", "clip.MP4").unwrap().mime, "video/mp4");
         std::fs::write(v.root().unwrap().join("doc.pdf"), b"%PDF").unwrap();
-        assert_eq!(v.read_binary("user", "doc.pdf").unwrap().mime, "application/pdf");
+        assert_eq!(
+            v.read_binary("user", "doc.pdf").unwrap().mime,
+            "application/pdf"
+        );
 
         // Unknown extension falls back to octet-stream.
         std::fs::write(v.root().unwrap().join("data.xyz"), [0u8, 1, 2]).unwrap();

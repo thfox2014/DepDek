@@ -13,6 +13,7 @@ export interface SessionInfo {
   id: string;
   label: string;
   providerName: string;
+  engine?: api.AgentEngine;
 }
 
 // Chat history is modelled as an ordered list of blocks per session.
@@ -30,6 +31,30 @@ export type ChatBlock =
     }
   | { id: number; kind: "error"; message: string }
   | { id: number; kind: "status"; text: string };
+
+export interface ConversationRecord {
+  id: string;
+  title: string;
+  createdAt: number;
+  blocks: ChatBlock[];
+}
+
+const CONVERSATION_HISTORY_STORAGE_KEY = "depdek.agent-conversation-history.v1";
+
+function loadConversationHistory(): Record<string, ConversationRecord[]> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(CONVERSATION_HISTORY_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, ConversationRecord[]>;
+    return Object.fromEntries(Object.entries(parsed).map(([agentId, records]) => [
+      agentId,
+      Array.isArray(records) ? records.filter((record) => record && typeof record.id === "string" && Array.isArray(record.blocks)).slice(-30) : [],
+    ]));
+  } catch {
+    return {};
+  }
+}
 
 // Omit does not distribute over unions, so distribute it manually.
 type ChatBlockInput = ChatBlock extends infer B
@@ -49,10 +74,19 @@ export default function App() {
   const [view, setView] = useState<"home" | "office" | "workbench">("home");
   const [showDock, setShowDock] = useState(true);
   const [chats, setChats] = useState<Record<string, ChatBlock[]>>({});
+  const [conversationHistory, setConversationHistory] = useState<Record<string, ConversationRecord[]>>(loadConversationHistory);
   const [running, setRunning] = useState<Record<string, boolean>>({});
   const blockId = useRef(1);
 
   const nextId = () => blockId.current++;
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CONVERSATION_HISTORY_STORAGE_KEY, JSON.stringify(conversationHistory));
+    } catch {
+      // A full browser quota must not block the live Agent session.
+    }
+  }, [conversationHistory]);
 
   const pushBlock = (sid: string, block: ChatBlockInput) => {
     setChats((prev) => ({
@@ -92,8 +126,8 @@ export default function App() {
           const provider = s.providers[a.provider_name];
           if (!provider) continue;
           try {
-            await api.agentCreateSession(a.id, provider, a.system_prompt);
-            restored.push({ id: a.id, label: a.label, providerName: a.provider_name });
+            await api.agentCreateSession(a.id, provider, a.system_prompt, a.engine);
+            restored.push({ id: a.id, label: a.label, providerName: a.provider_name, engine: a.engine });
           } catch {
             // Sidecar unavailable; skip this session.
           }
@@ -113,11 +147,25 @@ export default function App() {
     if (!("__TAURI_INTERNALS__" in window)) return;
     let disposed = false;
     let unlisten: (() => void) | undefined;
+    const markHarnessEvent = (sid: string) => {
+      setChats((prev) => {
+        const blocks = prev[sid] ?? [];
+        if (blocks.some((block) => block.kind === "status" && block.text.includes("DeepSeek Harness"))) return prev;
+        return {
+          ...prev,
+          [sid]: [...blocks, { id: nextId(), kind: "status", text: "引擎已确认：DeepSeek Harness · dsh --profile headless" }],
+        };
+      });
+    };
     api
       .onAgentEvent((ev) => {
         const sid = ev.session_id;
         switch (ev.type) {
+          case "progress":
+            pushBlock(sid, { kind: "status", text: String(ev.data.message ?? "正在处理…") });
+            break;
           case "text_delta": {
+            if (ev.data.engine === "deepseek-harness") markHarnessEvent(sid);
             const delta = String(ev.data.delta ?? "");
             setChats((prev) => {
               const blocks = prev[sid] ?? [];
@@ -160,8 +208,8 @@ export default function App() {
             break;
           }
           case "message_complete":
+            if (ev.data.engine === "deepseek-harness") markHarnessEvent(sid);
             setRunning((r) => ({ ...r, [sid]: false }));
-            pushBlock(sid, { kind: "status", text: `完成（${String(ev.data.stop_reason ?? "")}）` });
             break;
           case "error":
             setRunning((r) => ({ ...r, [sid]: false }));
@@ -197,7 +245,7 @@ export default function App() {
     }
   };
 
-  const createSession = async (label: string, providerName: string, requestedId?: string, openWorkbench = true) => {
+  const createSession = async (label: string, providerName: string, requestedId?: string, openWorkbench = true, requestedEngine?: api.AgentEngine) => {
     const provider = settings.providers[providerName];
     if (!provider) throw new Error(`provider "${providerName}" 不存在`);
     const id = requestedId?.trim() || `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -207,16 +255,17 @@ export default function App() {
       if (openWorkbench) setView("workbench");
       return;
     }
-    await api.agentCreateSession(id, provider, existing?.system_prompt);
-    setSessions((prev) => prev.some((session) => session.id === id) ? prev : [...prev, { id, label: label || id, providerName }]);
+    const engine = requestedEngine ?? existing?.engine;
+    await api.agentCreateSession(id, provider, existing?.system_prompt, engine);
+    setSessions((prev) => prev.some((session) => session.id === id) ? prev : [...prev, { id, label: label || id, providerName, engine }]);
     setActiveId(id);
     if (openWorkbench) setView("workbench");
     // Persist the agent config so it is restored on next launch.
     const next: api.Settings = {
       ...settings,
       agents: existing
-        ? (settings.agents ?? []).map((agent) => agent.id === id ? { ...agent, label: label || agent.label, provider_name: providerName } : agent)
-        : [...(settings.agents ?? []), { id, label: label || id, provider_name: providerName, ...(id === "tanvis" ? { config_dir: "agents/tanvis" } : {}) }],
+        ? (settings.agents ?? []).map((agent) => agent.id === id ? { ...agent, label: label || agent.label, provider_name: providerName, ...(engine ? { engine } : {}) } : agent)
+        : [...(settings.agents ?? []), { id, label: label || id, provider_name: providerName, ...(engine ? { engine } : {}), ...(id === "tanvis" ? { config_dir: "agents/tanvis" } : {}) }],
     };
     await api.settingsSet(next).catch(() => {});
     setSettings(next);
@@ -225,6 +274,18 @@ export default function App() {
   const enterWorkbench = (sid: string) => {
     setActiveId(sid);
     setView("workbench");
+  };
+
+  const startNewConversation = async (sid: string) => {
+    const session = sessions.find((item) => item.id === sid);
+    const agent = settings.agents?.find((item) => item.id === sid);
+    const provider = agent ? settings.providers[agent.provider_name] : session ? settings.providers[session.providerName] : undefined;
+    if (!session || !provider) throw new Error("当前 Agent 配置不完整，无法新建会话");
+    setRunning((current) => ({ ...current, [sid]: false }));
+    setChats((current) => ({ ...current, [sid]: [] }));
+    try { await api.agentAbort(sid); } catch { /* 当前没有运行中的请求也可以继续新建。 */ }
+    try { await api.agentClose(sid); } catch { /* sidecar 重启后可能已经没有旧会话。 */ }
+    await api.agentCreateSession(sid, provider, agent?.system_prompt, agent?.engine ?? session.engine);
   };
 
   const closeSession = async (sid: string) => {
@@ -253,6 +314,35 @@ export default function App() {
     if (!text.trim()) return;
     pushBlock(sid, { kind: "user", text });
     setRunning((r) => ({ ...r, [sid]: true }));
+    const compressMatch = text.trim().match(/^\/compress(?:\s+(.+))?$/i);
+    if (compressMatch) {
+      const path = (compressMatch[1] ?? ".").trim().replace(/^['"]|['"]$/g, "") || ".";
+      const toolCallId = `builtin-compress-${Date.now()}`;
+      pushBlock(sid, { kind: "tool", toolCallId, name: "compress", args: { path } });
+      try {
+        const result = await api.vaultCompress(path);
+        setChats((prev) => ({
+          ...prev,
+          [sid]: (prev[sid] ?? []).map((block) =>
+            block.kind === "tool" && block.toolCallId === toolCallId
+              ? { ...block, ok: true, preview: `已生成 ${result.archive}（${result.files} 个文件，${result.bytes} 字节）` }
+              : block,
+          ),
+        }));
+      } catch (e) {
+        setChats((prev) => ({
+          ...prev,
+          [sid]: (prev[sid] ?? []).map((block) =>
+            block.kind === "tool" && block.toolCallId === toolCallId
+              ? { ...block, ok: false, preview: String(e) }
+              : block,
+          ),
+        }));
+      } finally {
+        setRunning((r) => ({ ...r, [sid]: false }));
+      }
+      return;
+    }
     try {
       await api.agentSend(sid, text);
     } catch (e) {
@@ -281,10 +371,10 @@ export default function App() {
       const provider = agent ? next.providers[agent.provider_name] : undefined;
       if (!agent || !provider) continue;
       const previous = settings.agents?.find((item) => item.id === session.id);
-      if (previous?.provider_name === agent.provider_name && previous?.system_prompt === agent.system_prompt) continue;
+      if (previous?.provider_name === agent.provider_name && previous?.system_prompt === agent.system_prompt && previous?.engine === agent.engine) continue;
       try {
         await api.agentClose(session.id);
-        await api.agentCreateSession(session.id, provider, agent.system_prompt);
+        await api.agentCreateSession(session.id, provider, agent.system_prompt, agent.engine);
       } catch {
         // The session can be recreated on the next launch if the sidecar is
         // temporarily unavailable; settings remain saved in the meantime.
@@ -310,6 +400,9 @@ export default function App() {
           root={root}
           providerCount={Object.keys(settings.providers).length}
           sessionCount={sessions.length}
+          providers={settings.providers}
+          settings={settings}
+          conversationHistory={conversationHistory}
           sessions={sessions}
           activeAgentId={activeId}
           chats={chats}
@@ -317,7 +410,12 @@ export default function App() {
           onSelectAgent={setActiveId}
           onSendAgent={send}
           onAbortAgent={abort}
-          onOpenAgentTeam={() => setView("office")}
+          onNewConversation={startNewConversation}
+          onConversationHistoryChange={setConversationHistory}
+          onEnterAgent={enterWorkbench}
+          onCloseAgent={closeSession}
+          onCreateAgent={createSession}
+          onSaveAgentSettings={saveSettings}
           onOpenSettings={() => setShowSettings(true)}
           onPickRoot={pickRoot}
         />
@@ -351,10 +449,15 @@ export default function App() {
           chats={chats}
           providers={settings.providers}
           settings={settings}
+          conversationHistory={conversationHistory}
           onEnter={enterWorkbench}
           onCreate={createSession}
           onSaveSettings={saveSettings}
           onOpenSettings={() => setShowSettings(true)}
+          onSend={send}
+          onAbort={abort}
+          onNewConversation={startNewConversation}
+          onConversationHistoryChange={setConversationHistory}
         />
           ) : (
         <div className={`main${showDock ? "" : " main--dock-hidden"}`}>
