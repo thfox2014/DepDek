@@ -11,6 +11,7 @@ pub mod obsidian;
 pub mod rpc;
 pub mod settings;
 pub mod vault;
+pub mod voice;
 
 #[cfg(feature = "tauri-app")]
 mod app;

@@ -4,6 +4,8 @@
 > 日期：2026-08-09
 > 依据：`DepDek 2.0 Concept.md`、`DepDek 2.0 PRD.md`
 
+> **文档关系（2026-09-24）：** 本板是旧版个人工作台 IA 参考。AgentOS 的日常入口改为语音/文字 Shell 和右侧工作面板；完整产品定义见 [agentos-product-definition.md](agentos-product-definition.md)。
+
 ## Board 0：产品命题
 
 ### 标题

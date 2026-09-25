@@ -2,6 +2,8 @@
 //! (contract sections 3 and 4). Only compiled with the `tauri-app` feature.
 
 use std::path::Path;
+use std::process::{Command, Stdio};
+use std::io::Write;
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
@@ -65,6 +67,67 @@ fn vault_set_root(state: State<AppState>, app: AppHandle, path: String) -> Resul
 #[tauri::command]
 fn vault_get_root(state: State<AppState>) -> Option<String> {
     state.vault.root().map(|p| p.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn vault_init_home(state: State<AppState>, app: AppHandle) -> Result<String, String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let path = home.join("DepDek-Home");
+    std::fs::create_dir_all(&path).map_err(|e| format!("创建 DepDek Home 失败：{e}"))?;
+    let canonical = state.vault.set_root(&path).map_err(|e| e.to_command_string())?;
+    let root = canonical.to_string_lossy().into_owned();
+    let mut settings = state.settings.lock().unwrap();
+    settings.last_root = Some(root.clone());
+    persist_settings(&app, &settings)?;
+    Ok(root)
+}
+
+#[tauri::command]
+async fn voice_transcribe(app: AppHandle, audio_base64: String) -> Result<String, String> {
+    let audio = crate::voice::decode_pcm_wav(&audio_base64)?;
+    let resources = app.path().resource_dir().map_err(|e| e.to_string())?;
+    let script = resources.join("transcribe.py");
+    let model = resources.join("vosk-model-small-cn-0.22");
+    if !script.is_file() || !model.is_dir() {
+        return Err("离线中文语音组件未安装".into());
+    }
+    tokio::task::spawn_blocking(move || {
+        let mut child = Command::new("/opt/depdek/venv/bin/python")
+            .arg(script)
+            .arg(model)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("启动本地语音识别失败：{e}"))?;
+        child
+            .stdin
+            .take()
+            .ok_or_else(|| "语音识别输入不可用".to_string())?
+            .write_all(&audio)
+            .map_err(|e| format!("提交录音失败：{e}"))?;
+        let output = child
+            .wait_with_output()
+            .map_err(|e| format!("语音识别失败：{e}"))?;
+        if !output.status.success() {
+            let detail = String::from_utf8_lossy(&output.stderr);
+            let detail: String = detail.chars().take(240).collect();
+            return Err(if detail.is_empty() {
+                "本地语音识别失败，请检查离线模型".to_string()
+            } else {
+                format!("本地语音识别失败：{detail}")
+            });
+        }
+        let transcript = String::from_utf8(output.stdout)
+            .map_err(|_| "语音识别返回了无效文本".to_string())?;
+        let transcript = transcript.trim();
+        if transcript.chars().count() > 4_096 {
+            return Err("识别文本超过长度限制".into());
+        }
+        Ok(transcript.to_string())
+    })
+    .await
+    .map_err(|e| format!("语音任务失败：{e}"))?
 }
 
 #[tauri::command]
@@ -626,6 +689,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             vault_set_root,
             vault_get_root,
+            vault_init_home,
+            voice_transcribe,
             vault_read_file,
             vault_read_binary,
             vault_write_file,

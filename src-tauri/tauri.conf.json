@@ -13,8 +13,10 @@
     "windows": [
       {
         "title": "DepDek",
-        "width": 1280,
-        "height": 800
+        "width": 1440,
+        "height": 900,
+        "maximized": true,
+        "decorations": false
       }
     ],
     "security": {
@@ -27,7 +29,9 @@
     "icon": ["icons/icon.png"],
     "resources": {
       "resources/node": "node",
-      "../sidecar/dist/sidecar.mjs": "sidecar.mjs"
+      "../sidecar/dist/sidecar.mjs": "sidecar.mjs",
+      "resources/transcribe.py": "transcribe.py",
+      "resources/vosk-model-small-cn-0.22": "vosk-model-small-cn-0.22"
     },
     "macOS": {
       "signingIdentity": "-"

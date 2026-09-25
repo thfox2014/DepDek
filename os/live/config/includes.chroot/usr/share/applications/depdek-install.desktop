@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Install DepDek AI-OS
+Comment=Install DepDek AI-OS to this computer
+Exec=pkexec calamares
+Icon=system-software-install
+Terminal=false
+Categories=System;
+StartupNotify=true

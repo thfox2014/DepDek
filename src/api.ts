@@ -326,6 +326,8 @@ export interface AuditReadResult {
 
 export const vaultSetRoot = (path: string) => invoke<string>("vault_set_root", { path });
 export const vaultGetRoot = () => invoke<string | null>("vault_get_root");
+export const vaultInitHome = () => invoke<string>("vault_init_home");
+export const voiceTranscribe = (audioBase64: string) => invoke<string>("voice_transcribe", { audioBase64 });
 export const vaultReadFile = (path: string) =>
   invoke<ReadFileResult>("vault_read_file", { path });
 export const vaultReadBinary = (path: string) =>

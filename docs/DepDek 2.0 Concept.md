@@ -5,6 +5,8 @@
 > 产品阶段：V0.2 之后的目标形态
 > 核心承诺：我的数据在本地，我的 Agent 为我工作，我对每次外部行动拥有最终决定权。
 
+> **文档关系（2026-09-24）：** 本文继续定义个人数据主权、个人场景与数据产品原则。产品总形态已升级为 [DepDek AgentOS](agentos-product-definition.md)：设备 OS、NAS 基础服务、Agent Shell、CLI 与可视化应用的层级和交互以该文档为准；本文旧版导航/聊天界面安排不再作为 AgentOS Shell 规格。
+
 ## 1. 重新定义 DepDek
 
 DepDek 不是传统个人工作台，也不是以 Chat 为中心的 Agent 客户端。

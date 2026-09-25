@@ -5,6 +5,8 @@
 > 依据：`DepDek 2.0 Concept.md`
 > 目标版本范围：V0.3—V0.6
 
+> **文档关系（2026-09-24）：** 本 PRD 保留个人数据接入、对象、授权与 Agent 需求作为业务需求参考。新的设备 OS、语音优先 Shell、统一 CLI/命令总线和产品开发阶段以 [DepDek AgentOS 产品定义](agentos-product-definition.md) 为准；工程实现接口仍以 `contract.md` 为准。
+
 ## 1. 背景
 
 当前 DepDek 已具备桌面工作台、文件浏览、邮箱、日历、待办、统一任务框、Agent Team、Copilot、Vault/RPC 和本地优先的技术基础。

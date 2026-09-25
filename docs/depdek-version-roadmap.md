@@ -6,6 +6,8 @@
 >
 > 规划原则：每个版本都必须形成一个可运行、可回退、可验证的本地优先闭环；跨 Rust Core、sidecar、React 的接口以 `docs/contract.md` 为唯一标准。
 
+> **产品关系（2026-09-24）：** 本文记录现有 V0.x 工程基线与历史拆分。后续 AgentOS 设备、Shell、NAS 保留服务和命令平台的产品目标顺序见 [AgentOS 产品定义](agentos-product-definition.md)，具体接口仍需先更新 `contract.md`。
+
 ## 1. 当前基线：V0.1
 
 V0.1 已完成 DepDek 品牌壳、Today/Home 工作台、领域导航、Deep Work、Vault/RPC、设置与 Provider 原型。邮件能力仍是旧的 Deep Work 入口和兼容性 IMAP bridge，数据模型尚未升级为 Canonical Record。

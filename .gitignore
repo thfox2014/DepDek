@@ -2,5 +2,8 @@ node_modules/
 dist/
 target/
 src-tauri/resources/node
+os/artifacts/
+os/.cache/
+__pycache__/
 *.log
 .DS_Store

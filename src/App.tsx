@@ -8,6 +8,7 @@ import ChatPanel from "./components/ChatPanel";
 import AuditViewer from "./components/AuditViewer";
 import SettingsPanel from "./components/SettingsPanel";
 import DepDekHome from "./components/DepDekHome";
+import DepDekAiOsShell from "./components/DepDekAiOsShell";
 
 export interface SessionInfo {
   id: string;
@@ -40,6 +41,7 @@ export interface ConversationRecord {
 }
 
 const CONVERSATION_HISTORY_STORAGE_KEY = "depdek.agent-conversation-history.v1";
+const agentOsMode = import.meta.env.VITE_DEPDEK_OS === "1";
 
 function loadConversationHistory(): Record<string, ConversationRecord[]> {
   if (typeof window === "undefined") return {};
@@ -134,8 +136,11 @@ export default function App() {
         }
         setSessions(restored);
         // The Rust side auto-restores settings.last_root on startup.
-        const r = await api.vaultGetRoot().catch(() => null);
+        let r = await api.vaultGetRoot().catch(() => null);
+        if (agentOsMode && !r) r = await api.vaultInitHome();
         setRoot(r);
+      } catch (error) {
+        setRootError(String(error));
       } finally {
         setBooted(true);
       }
@@ -387,6 +392,9 @@ export default function App() {
     return <div className="boot">加载中…</div>;
   }
   if (!root) {
+    if (agentOsMode) {
+      return <div className="os-boot-failure"><div><b>DepDek Home 尚未准备好</b><p>{rootError ?? "正在初始化个人数据空间…"}</p><button className="primary" onClick={() => void api.vaultInitHome().then(setRoot).catch((error) => setRootError(String(error)))}>重试</button></div></div>;
+    }
     return (
       <div className="folder-picker-page">
         <FolderPicker onPick={pickRoot} error={rootError} />
@@ -395,7 +403,20 @@ export default function App() {
   }
   return (
     <div className="app">
-      {view === "home" ? (
+      {agentOsMode ? (
+        <DepDekAiOsShell
+          root={root}
+          settings={settings}
+          sessions={sessions}
+          activeAgentId={activeId}
+          chats={chats}
+          running={running}
+          onSend={send}
+          onAbort={abort}
+          onCreateAgent={createSession}
+          onSaveSettings={saveSettings}
+        />
+      ) : view === "home" ? (
         <DepDekHome
           root={root}
           providerCount={Object.keys(settings.providers).length}

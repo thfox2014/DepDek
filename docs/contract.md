@@ -191,6 +191,8 @@ type MemoryRecord = {
 |---|---|---|
 | `vault_set_root` | `{path: string}` | `string`（规范化后的根路径） |
 | `vault_get_root` | — | `string \| null` |
+| `vault_init_home` | — | `string`（创建并设置当前用户 `~/DepDek-Home`；目录操作由 Rust 执行） |
+| `voice_transcribe` | `{audioBase64: string}` | `string`（本地 Vosk 中文识别文本；不保存录音、不联网） |
 | `vault_read_file` | `{path: string}` | `{content, size, sha256}` |
 | `vault_write_file` | `{path: string, content: string}` | `{size, sha256}` |
 | `vault_list_dir` | `{path: string}` | `{entries: [...]}` |
@@ -230,6 +232,8 @@ type MemoryRecord = {
 | `todo_list` | — | `{version: 1, updatedAt: string, items: TodoItem[]}` |
 | `todo_enqueue` | `{input: TodoEnqueueInput}` | `{item: TodoItem, duplicate?: boolean}` |
 | `todo_update` | `{input: TodoUpdateInput}` | `{item: TodoItem}` |
+
+`voice_transcribe` 仅接收前端生成的 16 kHz、单声道、16-bit PCM WAV，录音最多 30 秒。Rust 校验 WAV 头和大小后将内存中的数据经 stdin 交给系统预装的本地 Vosk 运行时，UI 必须由用户点击麦克风后才能录音，识别结果先回填输入框供用户检查；识别不自动发送给模型。此接口不访问 Vault，也不开放文件或命令执行能力。
 
 ```ts
 type AuditEntry = {

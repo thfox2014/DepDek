@@ -1,0 +1,11 @@
+.git
+node_modules
+sidecar/node_modules
+dist
+src-tauri/target
+os/artifacts
+design-audit
+design-qa
+*.png
+*.log
+**/__pycache__

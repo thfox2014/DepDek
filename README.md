@@ -26,6 +26,12 @@ Node sidecar (sidecar/)  ──► pi-agent-core / pi-ai：多 agent 会话、�
 | `sidecar/` | Node sidecar：rpc.ts、tools.ts（vault 工具）、providers.ts、sessions.ts（pi-agent-core 会话管理） |
 | `src/` | React 前端：FolderPicker / FileTree / SessionList / ChatPanel / AuditViewer / SettingsPanel |
 | `docs/contract.md` | 三方接口契约 |
+| `docs/workbench-ontology-design.md` | 企业与个人工作台本体设计：数据接入清洗、业务对象、关联解析、来源与治理（提案） |
+| `docs/agentos-product-definition.md` | DepDek AgentOS 产品定义：Debian NAS appliance、语音优先 Agent Shell、共享业务命令与系统路线 |
+
+企业与个人统一数据层的后续方案见 [工作台本体与业务关联设计](docs/workbench-ontology-design.md)。该文档是架构提案，运行时接口仍以 `docs/contract.md` 为准。
+
+DepDek 后续产品方向、设备 OS 形态和 Shell 交互以 [AgentOS 产品定义](docs/agentos-product-definition.md) 为准；现有 V0.x 文档保留其兼容与实现历史。
 
 ## 环境准备（Linux / Ubuntu 24.04）
 
