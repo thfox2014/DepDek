@@ -25,7 +25,9 @@ Node sidecar (sidecar/)  ──► pi-agent-core / pi-ai：多 agent 会话、�
 | `src-tauri/` | Rust 核心：vault.rs（沙箱）、audit.rs（审计）、rpc.rs（sidecar 通信）、app.rs（Tauri commands） |
 | `sidecar/` | Node sidecar：rpc.ts、tools.ts（vault 工具）、providers.ts、sessions.ts（pi-agent-core 会话管理） |
 | `src/` | React 前端：FolderPicker / FileTree / SessionList / ChatPanel / AuditViewer / SettingsPanel |
+| `webdesk/` | 远程 Web 管理控制台（独立 Rust 服务 + 内嵌 React 桌面）：系统性能监控、每应用资源占用、审计 |
 | `docs/contract.md` | 三方接口契约 |
+| `docs/webdesk-design.md` | Webdesk 设计：架构、HTTP API、安全模型、指标归并规则、部署与路线图 |
 | `docs/workbench-ontology-design.md` | 企业与个人工作台本体设计：数据接入清洗、业务对象、关联解析、来源与治理（提案） |
 | `docs/agentos-product-definition.md` | DepDek AgentOS 产品定义：Debian NAS appliance、语音优先 Agent Shell、共享业务命令与系统路线 |
 
@@ -96,6 +98,27 @@ npm run version:bump -- patch --note "修复…" --note "新增…"
 
 版本号同时会注入前端（`__APP_VERSION__`，见 `vite.config.ts`），显示在 AI-OS 主页面顶栏与
 右侧上下文面板、以及 DepDekHome 侧栏底部。发布流程：`version:bump` → 提交 → `git tag v<版本>`。
+`webdesk/Cargo.toml`、`webdesk/Cargo.lock`、`webdesk/web/package.json` 也由同一脚本同步。
+
+## Webdesk 远程管理
+
+[`webdesk/`](webdesk/) 是**独立的 Rust 服务**（axum + sysinfo），把前端用 `rust-embed` 编进二进制，
+局域网内任何设备打开浏览器即可管理这台 appliance。桌面第一屏就是**系统性能监控小组件**：
+CPU / 内存环形仪表、CPU 趋势、每核占用、网络与磁盘速率，以及**每个应用程序**（按 systemd cgroup →
+命令启发 → 可执行文件归并）占用的 CPU / 内存 / IO；另含概览、性能监控、进程与占用、存储与网络、
+审计与关于五个应用。
+
+它与桌面端**不共享进程**、不读写 DepDek Home 数据目录，也不参与 `docs/contract.md` 的三方契约；agent
+依旧只有 `vault/*` 五个文件工具。设计、HTTP API、安全模型与路线图见
+[Webdesk 设计](docs/webdesk-design.md)，使用与部署见 [`webdesk/README.md`](webdesk/README.md)。
+
+```bash
+npm --prefix webdesk/web install && npm --prefix webdesk/web run build   # 前端 → webdesk/web/dist
+cd webdesk && cargo build --release                                      # 前端被编进二进制
+./target/release/depdek-webdesk hash-password                            # 生成 Argon2id 密码哈希
+./target/release/depdek-webdesk serve --config webdesk.example.toml      # 默认 http://0.0.0.0:8787
+cd webdesk && cargo test && bash scripts/e2e.sh                          # 30 单测 + 26 项端到端断言
+```
 
 ## 打包
 

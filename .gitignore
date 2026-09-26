@@ -6,6 +6,8 @@ src-tauri/resources/vosk-model-small-cn-0.22/*
 !src-tauri/resources/vosk-model-small-cn-0.22/.gitkeep
 os/artifacts/
 os/.cache/
+webdesk/.run/
+webdesk/.run-shot/
 __pycache__/
 *.log
 .DS_Store

@@ -1,0 +1,34 @@
+# DepDek webdesk 配置样例
+#
+#   depdek-webdesk hash-password          # 生成 [auth] password_hash
+#   depdek-webdesk check-config --config /etc/depdek/webdesk.toml
+#   depdek-webdesk serve --config /etc/depdek/webdesk.toml
+
+# 监听地址。局域网可达用 0.0.0.0:8787；只想本机访问（配合 SSH 隧道）用 127.0.0.1:8787。
+bind = "0.0.0.0:8787"
+
+# 数据目录（审计日志等）。默认 $XDG_DATA_HOME/depdek-webdesk，systemd 部署建议 /var/lib/depdek-webdesk。
+# data_dir = "/var/lib/depdek-webdesk"
+
+# 开发用：从磁盘读取前端，而不是用编进二进制的内嵌副本。
+# web_root = "/home/tanhong/DepDek/webdesk/web/dist"
+
+# 可选 TLS：当前版本请用 nginx/caddy 终止 TLS 后反代到 bind 地址。
+# tls_cert = "/etc/depdek/tls/webdesk.crt"
+# tls_key  = "/etc/depdek/tls/webdesk.key"
+
+[auth]
+# 必填：depdek-webdesk hash-password 的输出（注意单引号，避免 $ 被 shell 展开）。
+password_hash = ''
+# 会话绝对有效期（秒），默认 12 小时。
+session_ttl_secs = 43200
+# 空闲超时（秒），默认 2 小时。
+idle_timeout_secs = 7200
+# 同一来源地址连续失败多少次后开始封禁（默认 5，首次封禁 60s，之后指数退避到 15 分钟）。
+max_failures = 5
+
+[metrics]
+# 采样间隔（毫秒，不得小于 500）。桌面小组件的实时性主要由它决定。
+interval_ms = 2000
+# 保留的采样点数（默认 300 ≈ 10 分钟）。越大内存占用越高，前端可查询窗口也越大。
+history = 300

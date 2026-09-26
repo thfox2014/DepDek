@@ -1,0 +1,40 @@
+[Unit]
+Description=DepDek Webdesk - remote web management console
+Documentation=file:/usr/share/doc/depdek/webdesk-design.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 只读采集 /proc、/sys，写自己的数据目录；不需要 root。
+ExecStart=/usr/local/bin/depdek-webdesk serve --config /etc/depdek/webdesk.toml
+Restart=on-failure
+RestartSec=3
+
+# 运行身份与权限收窄
+DynamicUser=yes
+StateDirectory=depdek-webdesk
+Environment=DEPDEK_WEBDESK_DATA_DIR=/var/lib/depdek-webdesk
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+
+# 日志（/api/audit 读的是 StateDirectory 里的 webdesk-audit.jsonl）
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=depdek-webdesk
+
+[Install]
+WantedBy=multi-user.target

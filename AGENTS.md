@@ -13,6 +13,7 @@ Agent Workbench：Tauri 2 跨平台多 agent 工作台。Rust 核心（信任边
 - `sidecar/src/` — agent 运行时。**禁止**给 agent 注册直接 fs/bash 工具；文件工具只能转发 `vault/*` RPC。stdout 只走协议行，日志一律 stderr。
 - `sidecar/src/mail.ts` — IMAP 收邮件（imapflow + mailparser）。账号配置在 vault `mail/accounts.json`（契约 §7），邮件经 `vault/*` RPC 落盘到 `mail/`，审计 session_id 记 `"mail"`。
 - `src/` — React 前端。Tauri 2 参数传 camelCase（invoke 自动映射 Rust snake_case）。
+- `webdesk/` — 独立 Rust 远程管理服务（axum + sysinfo + 内嵌 React SPA）。**不共享桌面进程、不读写 DepDek Home 数据目录、不修改 `docs/contract.md`**；只读 `/proc`、`/sys` 与自己的 `data_dir`，不提供 shell，写操作必须校验 CSRF 并写审计。设计见 `docs/webdesk-design.md`。
 
 ## 常用命令
 
@@ -26,6 +27,11 @@ npm --prefix sidecar install && npm --prefix sidecar run build && npm --prefix s
 # 前端
 npm install && npm run build
 
+# webdesk 远程管理服务（独立 crate，单测 + 端到端）
+cd webdesk && cargo test && cargo build --release
+npm --prefix webdesk/web install && npm --prefix webdesk/web run build   # 前端 → webdesk/web/dist（被 rust-embed 编进二进制）
+bash webdesk/scripts/e2e.sh                                            # 真实 HTTP + /proc 的 26 项断言
+
 # 完整桌面开发（需 webkit2gtk-4.1-dev 等系统库）
 npm run tauri dev
 ```
@@ -33,8 +39,8 @@ npm run tauri dev
 ## 版本号
 
 `VERSION`（仓库根）是唯一来源，由 `scripts/version.mjs` 同步到 `package.json`、`sidecar/package.json`、
-`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`。改动版本必须用脚本，
-不要手改单个 manifest：
+`webdesk/web/package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` + `Cargo.lock`、
+`webdesk/Cargo.toml` + `Cargo.lock`。改动版本必须用脚本，不要手改单个 manifest：
 
 ```bash
 npm run version:check                 # 校验一致性（npm run build 已内置）

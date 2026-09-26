@@ -30,10 +30,14 @@ const paths = {
   tauriConf: join(repoRoot, "src-tauri", "tauri.conf.json"),
   cargoToml: join(repoRoot, "src-tauri", "Cargo.toml"),
   cargoLock: join(repoRoot, "src-tauri", "Cargo.lock"),
+  webdeskCargoToml: join(repoRoot, "webdesk", "Cargo.toml"),
+  webdeskCargoLock: join(repoRoot, "webdesk", "Cargo.lock"),
+  webdeskWebPackage: join(repoRoot, "webdesk", "web", "package.json"),
 };
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/;
 const CARGO_PACKAGE_NAME = "agent-workbench";
+const WEBDESK_CARGO_PACKAGE_NAME = "depdek-webdesk";
 
 function fail(message) {
   console.error(`✗ ${message}`);
@@ -65,20 +69,53 @@ function collectManifests() {
   const rootPackage = JSON.parse(readText(paths.rootPackage));
   const sidecarPackage = JSON.parse(readText(paths.sidecarPackage));
   const tauriConf = JSON.parse(readText(paths.tauriConf));
-  const cargoToml = readText(paths.cargoToml);
-  const cargoMatch = cargoToml.match(/^version\s*=\s*"([^"]+)"/m);
-  if (!cargoMatch) fail("src-tauri/Cargo.toml 中找不到 [package] version");
-  const cargoLock = readText(paths.cargoLock);
-  const lockMatch = cargoLock.match(new RegExp(`\\[\\[package\\]\\]\\nname = "${CARGO_PACKAGE_NAME}"\\nversion = "([^"]+)"`));
-  if (!lockMatch) fail(`src-tauri/Cargo.lock 中找不到 ${CARGO_PACKAGE_NAME} 的版本条目`);
+  const webdeskWebPackage = JSON.parse(readText(paths.webdeskWebPackage));
 
   return [
     { label: "package.json", current: rootPackage.version },
     { label: "sidecar/package.json", current: sidecarPackage.version },
+    { label: "webdesk/web/package.json", current: webdeskWebPackage.version },
     { label: "src-tauri/tauri.conf.json", current: tauriConf.version },
-    { label: "src-tauri/Cargo.toml", current: cargoMatch[1] },
-    { label: "src-tauri/Cargo.lock", current: lockMatch[1] },
+    { label: "src-tauri/Cargo.toml", current: cargoTomlVersion(paths.cargoToml, "src-tauri/Cargo.toml") },
+    { label: "src-tauri/Cargo.lock", current: cargoLockVersion(paths.cargoLock, CARGO_PACKAGE_NAME) },
+    { label: "webdesk/Cargo.toml", current: cargoTomlVersion(paths.webdeskCargoToml, "webdesk/Cargo.toml") },
+    { label: "webdesk/Cargo.lock", current: cargoLockVersion(paths.webdeskCargoLock, WEBDESK_CARGO_PACKAGE_NAME) },
   ];
+}
+
+/** `version = "x.y.z"` inside a Cargo.toml `[package]` section. */
+function cargoTomlVersion(path, label) {
+  const match = readText(path).match(/^version\s*=\s*"([^"]+)"/m);
+  if (!match) fail(`${label} 中找不到 [package] version`);
+  return match[1];
+}
+
+/** The locked version of one crate in a Cargo.lock. */
+function cargoLockVersion(path, packageName) {
+  const match = readText(path).match(
+    new RegExp(`\\[\\[package\\]\\]\\nname = "${packageName}"\\nversion = "([^"]+)"`),
+  );
+  if (!match) fail(`${path.slice(repoRoot.length + 1)} 中找不到 ${packageName} 的版本条目`);
+  return match[1];
+}
+
+/** Rewrite the `[package] version` line of a Cargo.toml in place. */
+function writeCargoTomlVersion(path, version, dryRun) {
+  const text = readText(path);
+  writeText(path, text.replace(/^version\s*=\s*"[^"]+"/m, `version = "${version}"`), dryRun);
+}
+
+/** Rewrite one crate entry's version inside a Cargo.lock. */
+function writeCargoLockVersion(path, packageName, version, dryRun) {
+  const text = readText(path);
+  writeText(
+    path,
+    text.replace(
+      new RegExp(`(\\[\\[package\\]\\]\\nname = "${packageName}"\\nversion = )"[^"]+"`),
+      `$1"${version}"`,
+    ),
+    dryRun,
+  );
 }
 
 /**
@@ -101,19 +138,12 @@ function writeVersion(version, dryRun) {
   writeJsonVersion(paths.rootPackage, version, dryRun);
   writeJsonVersion(paths.sidecarPackage, version, dryRun);
   writeJsonVersion(paths.tauriConf, version, dryRun);
+  writeJsonVersion(paths.webdeskWebPackage, version, dryRun);
 
-  const cargoToml = readText(paths.cargoToml);
-  writeText(paths.cargoToml, cargoToml.replace(/^version\s*=\s*"[^"]+"/m, `version = "${version}"`), dryRun);
-
-  const cargoLock = readText(paths.cargoLock);
-  writeText(
-    paths.cargoLock,
-    cargoLock.replace(
-      new RegExp(`(\\[\\[package\\]\\]\\nname = "${CARGO_PACKAGE_NAME}"\\nversion = )"[^"]+"`),
-      `$1"${version}"`,
-    ),
-    dryRun,
-  );
+  writeCargoTomlVersion(paths.cargoToml, version, dryRun);
+  writeCargoLockVersion(paths.cargoLock, CARGO_PACKAGE_NAME, version, dryRun);
+  writeCargoTomlVersion(paths.webdeskCargoToml, version, dryRun);
+  writeCargoLockVersion(paths.webdeskCargoLock, WEBDESK_CARGO_PACKAGE_NAME, version, dryRun);
 }
 
 function commandCheck() {
@@ -125,7 +155,7 @@ function commandCheck() {
     console.error("  修复：npm run version:sync");
     process.exit(1);
   }
-  console.log(`✓ 版本一致：${version}（VERSION 与 4 个 manifest + Cargo.lock）`);
+  console.log(`✓ 版本一致：${version}（VERSION 与 7 个 manifest + 2 个 Cargo.lock）`);
 }
 
 function commandSync() {
