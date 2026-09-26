@@ -30,9 +30,22 @@ npm install && npm run build
 npm run tauri dev
 ```
 
+## 版本号
+
+`VERSION`（仓库根）是唯一来源，由 `scripts/version.mjs` 同步到 `package.json`、`sidecar/package.json`、
+`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`。改动版本必须用脚本，
+不要手改单个 manifest：
+
+```bash
+npm run version:check                 # 校验一致性（npm run build 已内置）
+npm run version:bump -- minor --note "本次变更"
+```
+
 ## 约定
 
 - Rust：错误码遵循契约 2.4 节（`VaultError::code()`）；command 错误字符串格式 `E32xxx message`。
 - TypeScript：strict 模式；sidecar 为 NodeNext ESM。
 - 测试纪律：改 vault 安全逻辑必须补逃逸/越界用例；改 sidecar 协议必须补 rpc 层测试。
+- UI：AI-OS（`VITE_DEPDEK_OS=1`）主页面是 `DepDekAiOsShell`，需与桌面端 `DepDekHome` 互相可达；
+  两个页面都必须显示 `APP_VERSION`（`src/version.ts`）。
 - 环境：node 在 `~/.local/node/bin`，cargo 在 `~/.cargo/bin`。

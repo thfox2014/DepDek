@@ -113,3 +113,15 @@
 - 构建验证：`npm run build` 与 `git diff --check` 均通过。
 
 final result: passed
+
+## 增量验证 · AI-OS 主页面（v0.2.0）
+
+- 截图：`design-qa/aios-main-2026-09-27/01-aios-shell-workbench-entry.png`（语音主页面）、
+  `02-depdekhome-from-aios.png`（点击后进入 DepDekHome）；视口 1440 × 900 CSS px。
+- 语音 Shell 顶栏新增「打开 DepDek 工作台」按钮，右侧版本徽标显示 `v0.2.0`；右侧上下文面板把
+  「模型与 Agent」单列出来，直接显示已配置的 provider 名称 / model / 服务类型与 Agent 标签 / 引擎。
+- 连接卡片只在「一个 provider 都没有」时自动展开；已有配置时页面直接读取，不需要再次配置。
+- 点击按钮后进入桌面端同款 `DepDekHome`（今天页），侧栏底部出现「AI Shell 语音入口」可返回，
+  并显示 `DepDek v0.2.0`。
+- 验证方式：`VITE_DEPDEK_OS=1 npm run build` 产物 + 无头 Firefox 浏览器预览；点击通过
+  `.os-home-button` 触发，`found=true`。

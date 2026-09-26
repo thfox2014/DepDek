@@ -120,6 +120,7 @@
 .dd-sidebar-foot p { display: flex; align-items: center; gap: 7px; margin: 6px 8px 0; color: var(--dd-ink-2); font-size: 10.5px; }
 .dd-sidebar-foot p span { width: 7px; height: 7px; border-radius: 50%; background: var(--dd-ok); box-shadow: 0 0 7px rgba(39, 154, 113, 0.55); }
 .dd-sidebar-foot > small { overflow: hidden; margin: 0 8px; color: var(--dd-ink-3); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.dd-sidebar-foot > small.dd-sidebar-version { letter-spacing: .05em; opacity: .9; }
 
 .dd-main { display: flex; min-width: 0; min-height: 0; flex: 1; flex-direction: column; gap: 14px; }
 .dd-topbar {

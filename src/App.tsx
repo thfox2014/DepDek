@@ -74,6 +74,9 @@ export default function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [view, setView] = useState<"home" | "office" | "workbench">("home");
+  // In AI-OS mode the voice shell is the entry point; DepDekHome (the desktop
+  // main page) is one button away. On macOS/Windows the shell is not used.
+  const [osView, setOsView] = useState<"shell" | "home">("shell");
   const [showDock, setShowDock] = useState(true);
   const [chats, setChats] = useState<Record<string, ChatBlock[]>>({});
   const [conversationHistory, setConversationHistory] = useState<Record<string, ConversationRecord[]>>(loadConversationHistory);
@@ -403,7 +406,7 @@ export default function App() {
   }
   return (
     <div className="app">
-      {agentOsMode ? (
+      {agentOsMode && osView === "shell" ? (
         <DepDekAiOsShell
           root={root}
           settings={settings}
@@ -415,6 +418,10 @@ export default function App() {
           onAbort={abort}
           onCreateAgent={createSession}
           onSaveSettings={saveSettings}
+          onOpenHome={() => {
+            setView("home");
+            setOsView("home");
+          }}
         />
       ) : view === "home" ? (
         <DepDekHome
@@ -439,6 +446,7 @@ export default function App() {
           onSaveAgentSettings={saveSettings}
           onOpenSettings={() => setShowSettings(true)}
           onPickRoot={pickRoot}
+          onOpenShell={agentOsMode ? () => { setView("home"); setOsView("shell"); } : undefined}
         />
       ) : (
         <>

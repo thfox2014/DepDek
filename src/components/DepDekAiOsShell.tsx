@@ -1,7 +1,8 @@
-import { ArrowUp, Check, CircleNotch, Database, Gear, Microphone, ShieldCheck, Sparkle, Stop, X } from "@phosphor-icons/react";
+import { ArrowUp, Check, CircleNotch, Database, Gear, Microphone, Robot, ShieldCheck, Sparkle, SquaresFour, Stop, X } from "@phosphor-icons/react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { ChatBlock, SessionInfo } from "../App";
 import * as api from "../api";
+import { APP_VERSION } from "../version";
 
 type Props = {
   root: string;
@@ -14,6 +15,8 @@ type Props = {
   onAbort: (sessionId: string) => Promise<void>;
   onCreateAgent: (label: string, providerName: string, id?: string, openWorkbench?: boolean) => Promise<void>;
   onSaveSettings: (settings: api.Settings) => Promise<void>;
+  /** Jump to the full DepDekHome workbench (the desktop/Mac main page). */
+  onOpenHome: () => void;
 };
 
 const AGENT_ID = "depdek-os-assistant";
@@ -54,7 +57,7 @@ function providerFields(provider?: api.ProviderConfig) {
   return { endpoint: "https://api.anthropic.com", model: provider.model, apiKey: provider.api_key };
 }
 
-export default function DepDekAiOsShell({ root, settings, sessions, activeAgentId, chats, running, onSend, onAbort, onCreateAgent, onSaveSettings }: Props) {
+export default function DepDekAiOsShell({ root, settings, sessions, activeAgentId, chats, running, onSend, onAbort, onCreateAgent, onSaveSettings, onOpenHome }: Props) {
   const [draft, setDraft] = useState("");
   const [endpoint, setEndpoint] = useState("");
   const [model, setModel] = useState("");
@@ -62,7 +65,7 @@ export default function DepDekAiOsShell({ root, settings, sessions, activeAgentI
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const [voiceError, setVoiceError] = useState("");
-  const [settingsOpen, setSettingsOpen] = useState(!Object.keys(settings.providers).length);
+  const [settingsOpen, setSettingsOpen] = useState(() => Object.keys(settings.providers).length === 0);
   const [saving, setSaving] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const audioRef = useRef<AudioContext | null>(null);
@@ -72,10 +75,22 @@ export default function DepDekAiOsShell({ root, settings, sessions, activeAgentI
   const recordingRef = useRef(false);
   const timeoutRef = useRef<number | undefined>(undefined);
 
-  const providerName = Object.keys(settings.providers)[0] ?? PROVIDER_NAME;
+  // The shell reads whatever the user already configured in DepDek (模型与
+  // Provider / Agent Team) instead of demanding setup on this page: prefer the
+  // agent that belongs to the shell, otherwise the first saved agent, and use
+  // the provider that agent points at, otherwise the first configured provider.
+  const configuredAgents = settings.agents ?? [];
+  const shellAgent = configuredAgents.find((agent) => agent.id === AGENT_ID) ?? configuredAgents[0] ?? null;
+  const providerName = (shellAgent && settings.providers[shellAgent.provider_name] ? shellAgent.provider_name : undefined)
+    ?? Object.keys(settings.providers)[0]
+    ?? PROVIDER_NAME;
   const currentProvider = settings.providers[providerName];
-  const sessionId = sessions.find((session) => session.id === AGENT_ID)?.id ?? AGENT_ID;
-  const activeSessionId = activeAgentId === AGENT_ID ? AGENT_ID : sessionId;
+  const hasProvider = Boolean(currentProvider);
+  const agentId = shellAgent?.id ?? AGENT_ID;
+  const agentLabel = shellAgent?.label ?? "DepDek AI";
+  const engineLabel = (shellAgent?.engine ?? "pi") === "deepseek-harness" ? "DeepSeek Harness" : "pi-agent-core";
+  const sessionId = sessions.find((session) => session.id === agentId)?.id ?? agentId;
+  const activeSessionId = activeAgentId === agentId ? agentId : sessionId;
   const currentSession = sessions.find((session) => session.id === activeSessionId);
   const isRunning = Boolean(running[activeSessionId]);
   const blocks = chats[activeSessionId] ?? [];
@@ -114,9 +129,11 @@ export default function DepDekAiOsShell({ root, settings, sessions, activeAgentI
         model: model.trim(),
         ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
       };
+      // Reuse the provider key the shell resolved from the saved configuration;
+      // only a first-time setup creates the default "DepDek 模型" entry.
       await onSaveSettings({
         ...settings,
-        providers: { ...settings.providers, [PROVIDER_NAME]: provider },
+        providers: { ...settings.providers, [providerName]: provider },
       });
       setSettingsOpen(false);
       return provider;
@@ -130,7 +147,7 @@ export default function DepDekAiOsShell({ root, settings, sessions, activeAgentI
 
   const sendDraft = async () => {
     const text = draft.trim();
-    if (!text || isRunning || !settings.providers[PROVIDER_NAME] && !currentProvider) return;
+    if (!text || isRunning) return;
     if (!("__TAURI_INTERNALS__" in window)) {
       setVoiceError("浏览器页面仅用于界面预览；请在 DepDek AI-OS 桌面端发送消息。");
       return;
@@ -138,25 +155,26 @@ export default function DepDekAiOsShell({ root, settings, sessions, activeAgentI
     setDraft("");
     setVoiceError("");
     try {
-      let provider = settings.providers[PROVIDER_NAME] ?? currentProvider;
+      let provider = settings.providers[providerName];
       if (!provider) {
         const updatedProvider = await saveProvider();
         if (!updatedProvider) return;
         provider = updatedProvider;
       }
       if (!provider) return;
+      // Keep the saved agent intact and only make sure it points at the
+      // provider the shell is really using.
       const agents = settings.agents ?? [];
-      const saved = agents.find((agent) => agent.id === AGENT_ID);
+      const saved = agents.find((agent) => agent.id === agentId);
       const next: api.Settings = {
         ...settings,
-        providers: { ...settings.providers, [PROVIDER_NAME]: provider },
         agents: saved
-          ? agents.map((agent) => agent.id === AGENT_ID ? { ...agent, label: "DepDek AI", provider_name: PROVIDER_NAME } : agent)
-          : [...agents, { id: AGENT_ID, label: "DepDek AI", provider_name: PROVIDER_NAME }],
+          ? agents.map((agent) => agent.id === agentId ? { ...agent, provider_name: providerName } : agent)
+          : [...agents, { id: agentId, label: agentLabel, provider_name: providerName }],
       };
       await onSaveSettings(next);
-      if (!currentSession) await onCreateAgent("DepDek AI", PROVIDER_NAME, AGENT_ID, false);
-      await onSend(AGENT_ID, text);
+      if (!currentSession) await onCreateAgent(agentLabel, providerName, agentId, false);
+      await onSend(agentId, text);
     } catch (error) {
       setDraft(text);
       setVoiceError(String(error));
@@ -242,7 +260,9 @@ export default function DepDekAiOsShell({ root, settings, sessions, activeAgentI
       <header className="os-topbar">
         <div className="os-brand-mark"><Sparkle size={18} weight="fill" /></div>
         <div className="os-brand-name">DepDek <span>AI-OS</span></div>
-        <div className="os-topbar-center"><span className="os-live-dot" /> 本地工作台已就绪</div>
+        <div className="os-topbar-center"><span className="os-live-dot" />{hasProvider ? <>已连接 <b>{currentProvider?.model}</b></> : "本地工作台已就绪 · 尚未连接模型"}</div>
+        <button className="os-home-button" onClick={onOpenHome} title="打开 DepDek 工作台（DepDekHome）"><SquaresFour size={16} weight="bold" /><span>打开 DepDek 工作台</span></button>
+        <span className="os-version-chip" title={`DepDek v${APP_VERSION}`}>v{APP_VERSION}</span>
         <button className="os-settings-button" onClick={() => setSettingsOpen((open) => !open)} aria-label="模型连接设置"><Gear size={19} /></button>
       </header>
 
@@ -261,7 +281,7 @@ export default function DepDekAiOsShell({ root, settings, sessions, activeAgentI
             <div className="os-greeting"><span>DEPDek · PERSONAL WORKSPACE</span><h1>你好，<em>今天想完成什么？</em></h1><p>用自然语言描述目标，DepDek 会和你一起拆解下一步。</p></div>
 
             {settingsOpen && <section className="os-connect-card">
-              <div className="os-connect-heading"><div><b>连接你的 AI</b><span>支持 Ollama 等 OpenAI 兼容接口</span></div><button className="os-icon-button" onClick={() => setSettingsOpen(false)} aria-label="关闭连接设置"><X size={17} /></button></div>
+              <div className="os-connect-heading"><div><b>连接你的 AI</b><span>仅首次需要填写；之后主页面直接读取已保存的模型与 Agent 配置</span></div><button className="os-icon-button" onClick={() => setSettingsOpen(false)} aria-label="关闭连接设置"><X size={17} /></button></div>
               <div className="os-connect-fields">
                 <label>服务地址<input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder="http://127.0.0.1:11434/v1" /></label>
                 <label>模型<input value={model} onChange={(event) => setModel(event.target.value)} placeholder="qwen3:8b" /></label>
@@ -312,10 +332,13 @@ export default function DepDekAiOsShell({ root, settings, sessions, activeAgentI
           <div className="os-context-card os-home-card"><div className="os-context-icon"><Database size={17} /></div><div><b>DepDek Home</b><small>个人数据空间</small></div><i /></div>
           <div className="os-context-path" title={root}>{root}</div>
           <div className="os-context-rule" />
+          <div className="os-context-heading">模型与 Agent <span>已读取配置</span></div>
+          <div className="os-security-row"><Sparkle size={17} /><div><b>{currentProvider?.model ?? "尚未连接模型"}</b><small>{currentProvider ? `${providerName} · ${currentProvider.kind === "openai-compatible" ? (currentProvider.base_url.includes("127.0.0.1") ? "本地模型服务" : "OpenAI 兼容服务") : currentProvider.kind === "openai" ? "OpenAI 服务" : "Anthropic 服务"}` : "点击右上角设置完成首次连接"}</small></div></div>
+          <div className="os-security-row"><Robot size={17} /><div><b>{agentLabel}</b><small>{shellAgent ? `${engineLabel} · 来自 Agent Team 配置` : "尚未保存 Agent，将使用默认配置"}</small></div></div>
+          <div className="os-context-rule" />
           <div className="os-context-heading">安全状态</div>
           <div className="os-security-row"><ShieldCheck size={17} /><div><b>本机边界</b><small>录音与文件保留在本机</small></div></div>
-          <div className="os-security-row"><Sparkle size={17} /><div><b>{currentProvider?.model ?? "尚未连接模型"}</b><small>{currentProvider?.kind === "openai-compatible" && currentProvider.base_url.includes("127.0.0.1") ? "本地模型服务" : currentProvider ? "已配置模型服务" : "点击设置开始配置"}</small></div></div>
-          <div className="os-context-bottom"><span className="os-live-dot" /> Agent Shell <small>预览版</small></div>
+          <div className="os-context-bottom"><span className="os-live-dot" /> Agent Shell <small>v{APP_VERSION}</small></div>
         </aside>
       </div>
     </main>

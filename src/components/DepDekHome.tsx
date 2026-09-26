@@ -35,6 +35,7 @@ import type { TaskRecord, TaskReporter, TaskStartInput, TaskUpdate } from "../ta
 import { enqueueTodo, listTodos, subscribeTodoChanges, updateTodo } from "../todoStore";
 import type { TodoItem } from "../todoTypes";
 import logo from "../assets/depdek-logo.png";
+import { APP_VERSION } from "../version";
 import CalendarView, { makePreviewEvents } from "./CalendarView";
 import DataFilesPanel from "./DataFilesPanel";
 import InboxView from "./InboxView";
@@ -86,6 +87,8 @@ interface Props {
   onEnterAgent: (id: string) => void;
   /** 关闭某个会话。 */
   onCloseAgent: (id: string) => void;
+  /** AI-OS 模式下返回语音 Shell 入口；桌面端不传。 */
+  onOpenShell?: () => void;
 }
 
 interface NavItem {
@@ -750,7 +753,7 @@ function Copilot({
   );
 }
 
-export default function DepDekHome({ root, providerCount, sessionCount, providers, settings, conversationHistory, onOpenSettings, onPickRoot, onCreateAgent, onSaveAgentSettings, sessions, activeAgentId, chats, running, onSelectAgent, onSendAgent, onAbortAgent, onNewConversation, onConversationHistoryChange, onEnterAgent, onCloseAgent }: Props) {
+export default function DepDekHome({ root, providerCount, sessionCount, providers, settings, conversationHistory, onOpenSettings, onPickRoot, onCreateAgent, onSaveAgentSettings, sessions, activeAgentId, chats, running, onSelectAgent, onSendAgent, onAbortAgent, onNewConversation, onConversationHistoryChange, onEnterAgent, onCloseAgent, onOpenShell }: Props) {
   const [activeView, setActiveView] = useState<ViewName>("today");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
@@ -912,7 +915,8 @@ export default function DepDekHome({ root, providerCount, sessionCount, provider
             <button className={activeView === "agentteam" ? "dd-sidebar-foot__active" : ""} onClick={openAgentTeam}><Robot size={16} />Agent Team <span>{sessionCount}</span></button>
             <button onClick={onOpenSettings}><GearSix size={16} />模型与 Provider <span>{providerCount}</span></button>
             <button onClick={onPickRoot}><HardDrives size={16} />更换 Home</button>
-            <p><span />Home 已连接 · Rust Vault</p><small title={root}>{root}</small>
+            {onOpenShell && <button onClick={onOpenShell}><SquaresFour size={16} />AI Shell 语音入口</button>}
+            <p><span />Home 已连接 · Rust Vault</p><small title={root}>{root}</small><small className="dd-sidebar-version">DepDek v{APP_VERSION}</small>
           </div>
         </aside>
         <button className="dd-sidebar-toggle" onClick={() => setSidebarCollapsed((current) => !current)} aria-label={sidebarCollapsed ? "展开侧栏" : "收拢侧栏"} title={sidebarCollapsed ? "展开侧栏" : "收拢侧栏"}>{sidebarCollapsed ? <CaretRight size={13} weight="bold" /> : <CaretLeft size={13} weight="bold" />}</button>

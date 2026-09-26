@@ -2,8 +2,11 @@ node_modules/
 dist/
 target/
 src-tauri/resources/node
+src-tauri/resources/vosk-model-small-cn-0.22/*
+!src-tauri/resources/vosk-model-small-cn-0.22/.gitkeep
 os/artifacts/
 os/.cache/
 __pycache__/
 *.log
 .DS_Store
+.tools/

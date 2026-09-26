@@ -33,6 +33,18 @@ Node sidecar (sidecar/)  ──► pi-agent-core / pi-ai：多 agent 会话、�
 
 DepDek 后续产品方向、设备 OS 形态和 Shell 交互以 [AgentOS 产品定义](docs/agentos-product-definition.md) 为准；现有 V0.x 文档保留其兼容与实现历史。
 
+### AI-OS 主页面（`VITE_DEPDEK_OS=1`）
+
+Linux appliance 构建以语音 Shell（`DepDekAiOsShell`）为主页面，并做了两件事保证「开箱即用」：
+
+1. **直接读取已配置的模型与 Agent**：优先取 `settings.agents` 中该 Shell 对应的 Agent，否则取第一个已保存 Agent，
+   再用它指向的 provider；不存在时回退到第一个 provider。只有「一个 provider 都没有」时才自动展开连接卡片，
+   保存也写回现有 provider key，不再另建 `DepDek 模型` 副本或覆盖用户 Agent 配置。
+2. **一键进入完整工作台**：顶栏「打开 DepDek 工作台」跳转到 Mac/桌面端同款 `DepDekHome`（今天页、日历、待办、
+   收件箱、Agent Team、模型与 Provider 等）；在 `DepDekHome` 侧栏底部用「AI Shell 语音入口」回到语音主页面。
+
+顶栏与右侧上下文面板都显示版本号（见[版本管理](#版本管理)）。
+
 ## 环境准备（Linux / Ubuntu 24.04）
 
 ```bash
@@ -62,8 +74,28 @@ npm run tauri dev           # 启动开发窗口（需已安装 webkit 系统依
 ```bash
 cd src-tauri && cargo test --no-default-features   # Rust：vault 安全 + 审计 + RPC 集成（无需 webkit）
 cd sidecar && npm test                             # sidecar：36 个测试（rpc/tools/events/sessions）
-npm run build                                      # 前端：tsc 类型检查 + vite 构建
+npm run build                                      # 前端：版本校验 + tsc 类型检查 + vite 构建
 ```
+
+## 版本管理
+
+仓库根的 [`VERSION`](VERSION) 是唯一来源，四个 manifest（`package.json`、`sidecar/package.json`、
+`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`）与 `src-tauri/Cargo.lock` 由
+[`scripts/version.mjs`](scripts/version.mjs) 统一写入；`npm run build` 会先跑 `version:check`，
+版本不一致时直接构建失败。
+
+```bash
+npm run version:check                        # 校验 VERSION 与所有 manifest 一致（CI 可用）
+npm run version:sync                         # 以 VERSION 为准，强制回写所有 manifest
+npm run version:bump -- patch                # 0.2.0 -> 0.2.1，并追加 CHANGELOG 条目
+npm run version:bump -- minor                # 0.2.1 -> 0.3.0
+npm run version:bump -- major                # 0.3.0 -> 1.0.0
+npm run version:bump -- 1.2.0                # 指定版本
+npm run version:bump -- patch --note "修复…" --note "新增…"
+```
+
+版本号同时会注入前端（`__APP_VERSION__`，见 `vite.config.ts`），显示在 AI-OS 主页面顶栏与
+右侧上下文面板、以及 DepDekHome 侧栏底部。发布流程：`version:bump` → 提交 → `git tag v<版本>`。
 
 ## 打包
 
