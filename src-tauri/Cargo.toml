@@ -36,6 +36,7 @@ tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 thiserror = "2"
 time = "0.3"
+sysinfo = "0.39.6"
 tauri = { version = "2", optional = true , features = [] }
 tauri-plugin-dialog = { version = "2", optional = true }
 tauri-plugin-store = { version = "2", optional = true }

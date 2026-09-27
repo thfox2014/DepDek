@@ -2090,3 +2090,11 @@ textarea:focus {
   font-size: 11px;
   border-radius: 6px;
 }
+
+.office__agent-skills { display: flex; flex-wrap: wrap; gap: 9px; margin: 15px 0; padding: 12px; border: 1px solid var(--border, #e4e1f0); border-radius: 12px; }
+.office__agent-skills legend { padding: 0 7px; color: var(--text-dim, #858197); font-size: 11px; }
+.office__agent-skills > label { display: flex; min-width: 210px; flex: 1 1 210px; align-items: flex-start; gap: 8px; padding: 9px 10px; border-radius: 9px; background: rgba(244,242,252,.76); cursor: pointer; }
+.office__agent-skills input { margin: 3px 0 0; accent-color: #735ce8; }
+.office__agent-skills b, .office__agent-skills small { display: block; }
+.office__agent-skills b { color: var(--text, #37354a); font-size: 12px; }
+.office__agent-skills small { margin-top: 3px; color: var(--text-dim, #8f8c9f); font-size: 10px; line-height: 1.4; }

@@ -26,7 +26,7 @@
 
 | 方法 | params | result |
 |---|---|---|
-| `agent/create_session` | `{session_id: string, provider: ProviderConfig, system_prompt?: string, engine?: "pi"\|"deepseek-harness"}` | `{session_id}` |
+| `agent/create_session` | `{session_id: string, provider: ProviderConfig, system_prompt?: string, engine?: "pi"\|"deepseek-harness", enabled_skills?: AgentSkill[]}` | `{session_id}` |
 | `agent/send` | `{session_id: string, text: string}` | `{}`（回复经 `agent/event` 流式下发） |
 | `agent/analyze` | `{provider: ProviderConfig, text: string, system_prompt: string, engine?: "pi"\|"deepseek-harness"}` | `{text: string}`（一次性只读分析；不创建持久会话，不暴露写入/删除/外部调用工具） |
 | `agent/abort` | `{session_id: string}` | `{}` |
@@ -67,7 +67,7 @@ type AgentEngine = "pi" | "deepseek-harness";
 | `text_delta` | `{delta: string, engine?: AgentEngine}` |
 | `tool_call_start` | `{tool_call_id: string, name: string, args: object}` |
 | `tool_call_end` | `{tool_call_id: string, name: string, ok: boolean, result_preview: string}`（preview 截断至 500 字符） |
-| `message_complete` | `{stop_reason: string, engine?: AgentEngine}` |
+| `message_complete` | `{stop_reason: string, engine?: AgentEngine, usage?: {input: number, output: number, total: number}}`（仅在引擎返回真实 usage 时提供） |
 | `error` | `{message: string, engine?: AgentEngine}` |
 
 ### 2.3 sidecar → Rust：`vault/*` 请求
@@ -192,6 +192,7 @@ type MemoryRecord = {
 | `vault_set_root` | `{path: string}` | `string`（规范化后的根路径） |
 | `vault_get_root` | — | `string \| null` |
 | `vault_init_home` | — | `string`（创建并设置当前用户 `~/DepDek-Home`；目录操作由 Rust 执行） |
+| `storage_summary` | — | `{sampled_at_ms, volumes: [{name, file_system, mount_point, kind, removable, total_bytes, available_bytes, used_bytes, used_pct}]}`（本机挂载卷只读容量信息；不遍历文件、不执行磁盘写入） |
 | `voice_transcribe` | `{audioBase64: string}` | `string`（本地 Vosk 中文识别文本；不保存录音、不联网） |
 | `vault_read_file` | `{path: string}` | `{content, size, sha256}` |
 | `vault_write_file` | `{path: string, content: string}` | `{size, sha256}` |
@@ -215,7 +216,7 @@ type MemoryRecord = {
 | `memory_tombstone` | `{id: string}` | `MemoryRecord`（tombstoned） |
 | `memory_stats` | — | `{total, by_status, by_scope, malformed_events, index_version}` |
 | `memory_rebuild_index` | — | `{rebuilt, items, malformed_events, index_version}` |
-| `agent_create_session` | `{session_id: string, provider: ProviderConfig, system_prompt?: string, engine?: AgentEngine}` | `{session_id}` |
+| `agent_create_session` | `{session_id: string, provider: ProviderConfig, system_prompt?: string, engine?: AgentEngine, enabled_skills?: AgentSkill[]}` | `{session_id}` |
 | `agent_send` | `{session_id: string, text: string}` | — |
 | `agent_analyze` | `{provider: ProviderConfig, text: string, systemPrompt: string, engine?: AgentEngine}` | `{text: string}`（转发 `agent/analyze`） |
 | `agent_abort` | `{session_id: string}` | — |
@@ -261,8 +262,13 @@ type SavedAgent = {
   system_prompt?: string;
   config_dir?: string;         // 本地 vault 中 agent.md/skill.md/mcp.md 所在目录
   engine?: AgentEngine;         // 缺省 pi，可选 deepseek-harness
+  enabled_skills?: AgentSkill[]; // 由 sidecar 按能力组筛选 Vault 工具；缺省值用于旧配置兼容
 };
+
+type AgentSkill = "documents" | "photos" | "music" | "videos" | "mail" | "memory";
 ```
+
+`enabled_skills` is enforced by the sidecar as an allow-list over built-in tools: `documents` grants read/list/search/write/compress; `photos`, `music`, and `videos` grant `search_media`/`open_media` restricted to that media kind; `mail` grants configured IMAP fetch; `memory` grants source-backed memory proposals. An explicit empty array grants no tools. Omitted values are interpreted as legacy configuration for backward compatibility. Media bytes are read only through `vault/read_binary`; the UI playback read is separately audited by Rust. The current MCP editor stores explanatory `mcp.md` text only and does not launch arbitrary MCP servers.
 
 所有 vault_* commands 与 sidecar 走**同一个 Vault 服务**，同样写审计日志（session_id="user"）。command 错误以字符串 message 返回（Tauri `Result<T, String>`），message 中包含错误码文本，如 `E32001 path escapes root`。
 

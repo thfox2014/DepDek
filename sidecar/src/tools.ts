@@ -95,8 +95,100 @@ const MAIL_CONFIG_NOTE =
   "then write that file with the write_file tool (create or update the accounts array).";
 
 /** Create the vault tools plus fetch_mail bound to a session id (contract 2.3, 2.5). */
-export function createVaultTools(client: VaultClient, sessionId: string): AgentTool<any>[] {
+const DOCUMENT_TOOLS = new Set(["read_file", "write_file", "list_files", "search_files", "compress"]);
+const MEDIA_TOOLS = new Set(["search_media", "open_media"]);
+const MAIL_TOOLS = new Set(["fetch_mail"]);
+const MEMORY_TOOLS = new Set(["propose_memory"]);
+
+const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "ico"]);
+const AUDIO_EXTENSIONS = new Set(["mp3", "wav", "flac", "ogg"]);
+const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "mkv", "webm", "avi", "m4v"]);
+
+function extensionOf(path: string): string {
+  return path.split("/").pop()?.split(".").pop()?.toLowerCase() ?? "";
+}
+
+function mediaKind(path: string): "photos" | "music" | "videos" | undefined {
+  const ext = extensionOf(path);
+  if (IMAGE_EXTENSIONS.has(ext)) return "photos";
+  if (AUDIO_EXTENSIONS.has(ext)) return "music";
+  if (VIDEO_EXTENSIONS.has(ext)) return "videos";
+  return undefined;
+}
+
+function mediaTools(client: VaultClient, sessionId: string, allowedKinds?: ReadonlySet<string>): AgentTool<any>[] {
   return [
+    {
+      name: "search_media",
+      label: "search_media",
+      description: `Search local image, audio or video files in the user's data folder by type/name through the audited DepDek Vault. Does not inspect file contents.\n\n${SANDBOX_NOTE}`,
+      parameters: Type.Object({
+        kind: Type.Union([Type.Literal("photos"), Type.Literal("music"), Type.Literal("videos")]),
+        query: Type.Optional(Type.String()),
+        limit: Type.Optional(Type.Number({ minimum: 1, maximum: 100 })),
+      }, { additionalProperties: false }),
+      execute: async (_toolCallId: string, rawArgs: unknown): Promise<AgentToolResult<any>> => {
+        const args = rawArgs as { kind: "photos" | "music" | "videos"; query?: string; limit?: number };
+        if (allowedKinds && !allowedKinds.has(args.kind)) {
+          return { content: [{ type: "text", text: `该 Agent 未启用 ${args.kind} 媒体技能。` }], details: { blocked: true } };
+        }
+        const query = (args.query ?? "").trim().toLocaleLowerCase();
+        const limit = Math.max(1, Math.min(100, Math.floor(args.limit ?? 50)));
+        const found: Array<{ path: string; size: number }> = [];
+        const pending = [{ path: ".", depth: 0 }];
+        let visited = 0;
+        while (pending.length && found.length < limit && visited < 1200) {
+          const current = pending.shift()!;
+          visited++;
+          let entries: Array<{ name: string; kind: string; size: number }>;
+          try {
+            const listed = await client.request<{ entries: Array<{ name: string; kind: string; size: number }> }>("vault/list_dir", { session_id: sessionId, path: current.path });
+            entries = listed.entries;
+          } catch { continue; }
+          for (const entry of entries) {
+            const path = normalizedPath(current.path === "." ? entry.name : `${current.path}/${entry.name}`);
+            if (isProtectedContextPath(path)) continue;
+            if (entry.kind === "dir") {
+              if (current.depth < 8) pending.push({ path, depth: current.depth + 1 });
+              continue;
+            }
+            if (mediaKind(path) !== args.kind || (query && !entry.name.toLocaleLowerCase().includes(query))) continue;
+            found.push({ path, size: entry.size });
+            if (found.length >= limit) break;
+          }
+        }
+        const text = found.length ? found.map((entry) => `${entry.path} (${entry.size} B)`).join("\n") : "没有找到匹配的媒体文件。";
+        return { content: [{ type: "text", text }], details: { items: found, truncated: pending.length > 0 } };
+      },
+    },
+    {
+      name: "open_media",
+      label: "open_media",
+      description: `Open a local image/audio/video file in the DepDek media player. Only the selected file is read through the audited Vault; it is not uploaded by this tool.\n\n${SANDBOX_NOTE}`,
+      parameters: Type.Object({ path: pathParam }, { additionalProperties: false }),
+      execute: async (_toolCallId: string, rawArgs: unknown): Promise<AgentToolResult<any>> => {
+        const { path } = rawArgs as { path: string };
+        const kind = mediaKind(path);
+        if (!kind) return { content: [{ type: "text", text: "只支持打开图片、音频和视频文件。" }], details: { blocked: true } };
+        if (allowedKinds && !allowedKinds.has(kind)) {
+          return { content: [{ type: "text", text: `该 Agent 未启用 ${kind} 媒体技能。` }], details: { blocked: true } };
+        }
+        // Read through Rust first so the same sandbox, size cap and audit policy apply.
+        const file = await client.request<{ size: number; mime: string }>("vault/read_binary", { session_id: sessionId, path });
+        return {
+          content: [{ type: "text", text: `已请求 DepDek 播放器打开 ${path}（${file.mime}，${file.size} B）。` }],
+          details: { path, mime: file.mime, size: file.size, media_kind: kind },
+        };
+      },
+    },
+  ];
+}
+
+export function createVaultTools(client: VaultClient, sessionId: string, enabledSkills?: string[]): AgentTool<any>[] {
+  const allowedMediaKinds = enabledSkills === undefined
+    ? undefined
+    : new Set(enabledSkills.filter((skill) => skill === "photos" || skill === "music" || skill === "videos"));
+  const all = [
     vaultTool(client, sessionId, {
       name: "read_file",
       description: "Read a UTF-8 text file from the user's data folder.",
@@ -229,7 +321,17 @@ export function createVaultTools(client: VaultClient, sessionId: string): AgentT
         };
       },
     },
+    ...mediaTools(client, sessionId, allowedMediaKinds),
   ];
+  if (enabledSkills === undefined) return all;
+  const enabled = new Set<string>();
+  for (const skill of enabledSkills) {
+    if (skill === "documents") DOCUMENT_TOOLS.forEach((tool) => enabled.add(tool));
+    if (skill === "photos" || skill === "music" || skill === "videos") MEDIA_TOOLS.forEach((tool) => enabled.add(tool));
+    if (skill === "mail") MAIL_TOOLS.forEach((tool) => enabled.add(tool));
+    if (skill === "memory") MEMORY_TOOLS.forEach((tool) => enabled.add(tool));
+  }
+  return all.filter((tool) => enabled.has(tool.name));
 }
 
 /** Read-only subset used by structured analysis runs. No mutation or network tools are exposed. */

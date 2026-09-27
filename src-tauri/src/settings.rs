@@ -44,6 +44,9 @@ pub struct SavedAgent {
     /// Execution engine: `pi` (default) or the optional DeepSeek Harness bridge.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine: Option<String>,
+    /// Capability groups enabled for this agent; an explicit empty list disables all tools.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled_skills: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -56,4 +59,26 @@ pub struct Settings {
     pub providers: HashMap<String, ProviderConfig>,
     /// Saved agent session configurations, restored on next launch.
     pub agents: Vec<SavedAgent>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Settings;
+
+    #[test]
+    fn saved_agent_skills_are_backward_compatible_and_preserve_explicit_empty() {
+        let old = serde_json::json!({
+            "providers": {},
+            "agents": [{ "id": "old", "label": "Old", "provider_name": "p" }]
+        });
+        let loaded: Settings = serde_json::from_value(old).unwrap();
+        assert_eq!(loaded.agents[0].enabled_skills, None);
+
+        let explicit_none = serde_json::json!({
+            "providers": {},
+            "agents": [{ "id": "isolated", "label": "Isolated", "provider_name": "p", "enabled_skills": [] }]
+        });
+        let loaded: Settings = serde_json::from_value(explicit_none).unwrap();
+        assert_eq!(loaded.agents[0].enabled_skills, Some(Vec::new()));
+    }
 }

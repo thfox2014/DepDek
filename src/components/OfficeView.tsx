@@ -14,7 +14,7 @@ interface Props {
   settings: api.Settings;
   conversationHistory: Record<string, ConversationRecord[]>;
   onEnter: (id: string) => void;
-  onCreate: (label: string, providerName: string, agentId?: string, openWorkbench?: boolean, engine?: api.AgentEngine) => Promise<void>;
+  onCreate: (label: string, providerName: string, agentId?: string, openWorkbench?: boolean, engine?: api.AgentEngine, skills?: api.AgentSkill[]) => Promise<void>;
   onSaveSettings: (settings: api.Settings) => Promise<void>;
   onOpenSettings: () => void;
   onSend: (id: string, text: string) => Promise<void>;
@@ -231,7 +231,7 @@ function AgentConfigPanel({
   providers: Record<string, ProviderConfig>;
   agentId: string;
   onSelectAgent: (id: string) => void;
-  onCreate: (label: string, providerName: string, agentId?: string, openWorkbench?: boolean, engine?: api.AgentEngine) => Promise<void>;
+  onCreate: (label: string, providerName: string, agentId?: string, openWorkbench?: boolean, engine?: api.AgentEngine, skills?: api.AgentSkill[]) => Promise<void>;
   onSaveSettings: (settings: api.Settings) => Promise<void>;
   onOpenSettings: () => void;
   onEnterSession?: () => void;
@@ -249,6 +249,7 @@ function AgentConfigPanel({
   const providerNames = Object.keys(providers);
   const [providerName, setProviderName] = useState(agent?.provider_name || providerNames[0] || "");
   const [engine, setEngine] = useState<api.AgentEngine>(agent?.engine ?? "pi");
+  const [enabledSkills, setEnabledSkills] = useState<api.AgentSkill[]>(agent?.enabled_skills ?? ["documents", "photos", "music", "videos"]);
   const usesLocalProvider = Boolean(providerName && providers[providerName] && isLocalProvider(providers[providerName]));
   const root = agentPath(agent?.config_dir, agentLabel.toLowerCase() === "tanvis" ? "tanvis" : agentId);
   const browserPreview = typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
@@ -257,10 +258,11 @@ function AgentConfigPanel({
     setProviderName(agent?.provider_name || providerNames[0] || "");
     setSystemPrompt(agent?.system_prompt ?? "");
     setEngine(agent?.engine ?? "pi");
+    setEnabledSkills(agent?.enabled_skills ?? ["documents", "photos", "music", "videos"]);
     setActiveTab("agent.md");
     setNotice(null);
     setError(null);
-  }, [agent?.id, agent?.provider_name, agent?.system_prompt, agent?.engine, providerNames.join("\u0000")]);
+  }, [agent?.id, agent?.provider_name, agent?.system_prompt, agent?.engine, agent?.enabled_skills, providerNames.join("\u0000")]);
 
   useEffect(() => {
     let active = true;
@@ -289,7 +291,7 @@ function AgentConfigPanel({
     }
     setError(null);
     try {
-      await onCreate(agentLabel, providerName, agentId, false, engine);
+      await onCreate(agentLabel, providerName, agentId, false, engine, enabledSkills);
       setNotice(`${agentLabel} 已加入 Agent Team`);
     } catch (reason) {
       setError(String(reason));
@@ -305,8 +307,8 @@ function AgentConfigPanel({
         for (const name of AGENT_FILES) await api.vaultWriteFile(`${root}/${name}`, files[name]);
       }
       const nextAgents = agent
-        ? (settings.agents ?? []).map((item) => item.id === agent.id ? { ...item, provider_name: providerName, config_dir: root, system_prompt: systemPrompt.trim() || undefined, engine } : item)
-        : [...(settings.agents ?? []), { id: agentId, label: agentLabel, provider_name: providerName, config_dir: root, system_prompt: systemPrompt.trim() || undefined, engine }];
+        ? (settings.agents ?? []).map((item) => item.id === agent.id ? { ...item, provider_name: providerName, config_dir: root, system_prompt: systemPrompt.trim() || undefined, engine, enabled_skills: enabledSkills } : item)
+        : [...(settings.agents ?? []), { id: agentId, label: agentLabel, provider_name: providerName, config_dir: root, system_prompt: systemPrompt.trim() || undefined, engine, enabled_skills: enabledSkills }];
       await onSaveSettings({ ...settings, agents: nextAgents });
       setNotice(browserPreview ? "预览模式已保存本地编辑状态" : `已保存 ${agentLabel} 配置到 Home/${root}`);
     } catch (reason) {
@@ -320,7 +322,7 @@ function AgentConfigPanel({
     <section className="office__tanvis" aria-label={`${agentLabel} Agent 配置`}>
       <div className="office__tanvis-head">
         <div><div className="office__eyebrow"><GearSix size={15} />{agentLabel} 配置</div><h2>{agentLabel === "Tanvis" ? "本地数据分析 Agent" : "Agent 工作配置"}</h2><p>{agentLabel === "Tanvis" ? "单封邮件的“AI 分析”会调用 Tanvis；只读本地内容并返回建议。" : "配置这个 Agent 的角色、技能和连接说明，保存后立即生效。"}</p></div>
-        <div className="office__tanvis-head-actions"><div className="office__tanvis-state"><ShieldCheck size={15} />MCP 仅作说明，不授予本次分析工具权限</div>{onEnterSession && <button type="button" className="office__session-enter" onClick={onEnterSession}><ChatCircleText size={15} />进入会话</button>}</div>
+        <div className="office__tanvis-head-actions"><div className="office__tanvis-state"><ShieldCheck size={15} />内置工具受技能范围限制；mcp.md 是说明文件，外部 MCP 尚未连接</div>{onEnterSession && <button type="button" className="office__session-enter" onClick={onEnterSession}><ChatCircleText size={15} />进入会话</button>}</div>
       </div>
       <div className="office__tanvis-toolbar">
         <label className="office__agent-switcher">当前 Agent<select aria-label="选择要配置的 Agent" value={agentId} onChange={(event) => onSelectAgent(event.target.value)}>{(settings.agents ?? []).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}{!(settings.agents ?? []).some((item) => item.id === agentId) && <option value={agentId}>{agentLabel}</option>}</select></label>
@@ -334,6 +336,14 @@ function AgentConfigPanel({
       <div className="office__tanvis-tabs" role="tablist" aria-label={`${agentLabel} 配置文件`}>
         {AGENT_CONFIG_TABS.map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} className={activeTab === tab.id ? "office__tanvis-tab office__tanvis-tab--active" : "office__tanvis-tab"} onClick={() => setActiveTab(tab.id)}><FileText size={14} />{tab.label}{tab.optional && <small>可选</small>}</button>)}
       </div>
+      <fieldset className="office__agent-skills"><legend>可调用的内置技能</legend>{([
+        ["documents", "管理文档", "读取、搜索、写入、压缩本地文档"],
+        ["photos", "管理照片", "按类型和名称搜索图片，在本机查看"],
+        ["music", "播放音乐", "搜索音频文件并在内置播放器播放"],
+        ["videos", "播放视频", "搜索视频文件并在内置播放器播放"],
+        ["mail", "收取邮件", "通过已配置的 IMAP 账号拉取到本地 Vault"],
+        ["memory", "共享记忆", "提出带来源的候选记忆，仍需用户确认"],
+      ] as const).map(([id, label, detail]) => <label key={id}><input type="checkbox" checked={enabledSkills.includes(id)} onChange={(event) => setEnabledSkills((current) => event.target.checked ? [...new Set([...current, id])] : current.filter((item) => item !== id))} /><span><b>{label}</b><small>{detail}</small></span></label>)}</fieldset>
       <div className="office__tanvis-editor">
         {activeTab === "system_prompt" ? <label><span><FileText size={15} />system_prompt（可选）</span><textarea value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} spellCheck={false} disabled={loading} placeholder={`补充 ${agentLabel} 的角色约束`} /></label> : <label><span><FileText size={15} />{activeTab}</span><textarea value={files[activeTab]} onChange={(event) => updateFile(activeTab, event.target.value)} spellCheck={false} disabled={loading} /></label>}
       </div>

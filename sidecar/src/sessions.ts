@@ -53,6 +53,7 @@ export class SessionManager {
     provider: ProviderConfig,
     systemPrompt?: string,
     engine: "pi" | typeof HARNESS_ENGINE = "pi",
+    enabledSkills?: string[],
   ): { session_id: string } {
     if (this.sessions.has(sessionId)) {
       throw new RpcError(ERR_SESSION_EXISTS, `session already exists: ${sessionId}`);
@@ -78,6 +79,7 @@ export class SessionManager {
       apiKey: resolved.apiKey,
       systemPrompt,
       provider,
+      enabledSkills,
     });
   }
 
@@ -89,7 +91,7 @@ export class SessionManager {
   createSessionWithModel(
     sessionId: string,
     model: Model<any>,
-    options: { apiKey?: string; systemPrompt?: string; provider?: ProviderConfig } = {},
+    options: { apiKey?: string; systemPrompt?: string; provider?: ProviderConfig; enabledSkills?: string[] } = {},
   ): { session_id: string } {
     if (this.sessions.has(sessionId)) {
       throw new RpcError(ERR_SESSION_EXISTS, `session already exists: ${sessionId}`);
@@ -101,7 +103,7 @@ export class SessionManager {
       },
       getApiKey: () => options.apiKey,
     });
-    agent.state.tools = createVaultTools(this.vault, sessionId);
+    agent.state.tools = createVaultTools(this.vault, sessionId, options.enabledSkills);
     const unsubscribe = agent.subscribe((event) => {
       for (const notification of convertAgentEvent(event, "pi")) {
         this.sink.notify("agent/event", {

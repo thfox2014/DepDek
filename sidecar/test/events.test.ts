@@ -93,6 +93,17 @@ describe("convertAgentEvent", () => {
     ]);
   });
 
+  it("reports actual token usage aggregated across the completed Agent turn", () => {
+    const usage = (input: number, output: number, totalTokens: number) => ({
+      input, output, cacheRead: 0, cacheWrite: 0, totalTokens,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    });
+    const first = { ...fauxAssistantMessage("tool", { stopReason: "toolUse" }), usage: usage(8, 2, 10) };
+    const final = { ...fauxAssistantMessage("done", { stopReason: "stop" }), usage: usage(12, 5, 17) };
+    const notifications = convertAgentEvent({ type: "agent_end", messages: [first, final] });
+    expect(notifications[1]).toMatchObject({ type: "message_complete", data: { usage: { input: 20, output: 7, total: 27 } } });
+  });
+
   it("ignores unrelated events", () => {
     expect(convertAgentEvent({ type: "agent_start" })).toEqual([{ type: "progress", data: { phase: "started", message: "Pi Agent Core 已启动", engine: "pi" } }]);
     expect(convertAgentEvent({ type: "turn_start" })).toEqual([{ type: "progress", data: { phase: "thinking", message: "Pi 正在分析当前上下文", engine: "pi" } }]);

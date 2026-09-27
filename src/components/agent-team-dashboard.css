@@ -1,0 +1,85 @@
+.agent-team-page { width: 100%; min-height: 100%; overflow: auto; padding: clamp(20px, 3vw, 40px); color: #29283b; background: radial-gradient(ellipse at 88% 0%, rgba(232, 228, 255, .62), transparent 34%), #f7f8fc; }
+.agent-team-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; max-width: 1480px; margin: 0 auto 25px; }
+.agent-team-kicker { display: flex; align-items: center; gap: 8px; color: #6d56df; font-size: 11px; font-weight: 800; letter-spacing: 1.6px; }
+.agent-team-title h1 { margin: 12px 0 7px; font-size: clamp(25px, 3vw, 36px); letter-spacing: -.8px; }
+.agent-team-title p { margin: 0; color: #86849a; font-size: 14px; }
+.agent-team-actions { display: flex; gap: 10px; }
+.agent-team-actions button, .agent-team-section-head > button, .agent-team-integrations > button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 0 14px; border: 1px solid #e4e1f3; border-radius: 12px; background: #fff; color: #4a4860; cursor: pointer; font-size: 13px; font-weight: 650; }
+.agent-team-actions .agent-team-primary { border-color: #6c55e0; background: #6c55e0; color: white; box-shadow: 0 7px 18px #6c55e033; }
+.agent-team-overview { display: grid; grid-template-columns: repeat(3, minmax(110px, .72fr)) minmax(250px, 1.7fr); gap: 1px; max-width: 1480px; margin: 0 auto 28px; overflow: hidden; border: 1px solid #e7e5f2; border-radius: 17px; background: #e7e5f2; box-shadow: 0 8px 24px #3228790a; }
+.agent-team-overview > div { min-height: 103px; padding: 17px 20px; background: rgba(255,255,255,.92); }
+.agent-team-overview > div > span { display: block; color: #8e8ba2; font-size: 12px; }
+.agent-team-overview > div > b { display: inline-block; margin-top: 7px; font-size: 25px; line-height: 1; }
+.agent-team-overview > div > small { display: block; margin-top: 5px; color: #aaa7b8; font-size: 11px; }
+.agent-team-overview .agent-team-safety { display: flex; align-items: center; gap: 12px; color: #269a70; }
+.agent-team-safety span b { display: block; color: #347e67; font-size: 13px; }
+.agent-team-safety span small { display: block; margin-top: 5px; color: #8c9f9a; font-size: 11px; line-height: 1.6; }
+.agent-team-notice { display: flex; align-items: center; gap: 12px; max-width: 1480px; margin: -10px auto 25px; padding: 12px 15px; border: 1px solid #f1dfbb; border-radius: 12px; background: #fffaf0; color: #90621c; font-size: 12px; }
+.agent-team-notice span { min-width: 0; flex: 1; color: #a18f6a; }
+.agent-team-notice button { display: flex; align-items: center; gap: 5px; border: 0; background: transparent; color: #7957d9; cursor: pointer; font-weight: 700; }
+.agent-team-section-head { display: flex; align-items: flex-end; justify-content: space-between; max-width: 1480px; margin: 0 auto 14px; }
+.agent-team-section-head h2 { margin: 0 0 5px; font-size: 19px; }
+.agent-team-section-head span { color: #9693a9; font-size: 12px; }
+.agent-team-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: 15px; max-width: 1480px; margin: 0 auto; }
+.agent-team-card { display: flex; min-height: 270px; flex-direction: column; padding: 18px; border: 1px solid #e7e4f2; border-radius: 17px; background: rgba(255,255,255,.94); box-shadow: 0 8px 22px #39306c0a; transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+.agent-team-card:hover { transform: translateY(-2px); border-color: #d9d1ff; box-shadow: 0 13px 28px #463a8014; }
+.agent-team-card-head { display: flex; align-items: center; gap: 12px; }
+.agent-team-avatar { display: grid; width: 46px; height: 46px; flex: 0 0 46px; place-items: center; border-radius: 14px; background: #eeeaff; color: #6d56df; }
+.agent-team-avatar--1 { background: #eaf3ff; color: #5086cf; }
+.agent-team-avatar--2 { background: #e9f7f1; color: #329571; }
+.agent-team-avatar--3 { background: #fff1e6; color: #ca7c38; }
+.agent-team-avatar--4 { background: #fceaf0; color: #cb678c; }
+.agent-team-card-identity { min-width: 0; flex: 1; }
+.agent-team-card-identity h3 { margin: 0 0 5px; font-size: 16px; }
+.agent-team-card-identity span { display: block; overflow: hidden; color: #9a97aa; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.agent-team-card-config { display: grid; width: 32px; height: 32px; place-items: center; border: 0; border-radius: 9px; background: transparent; color: #9995ac; cursor: pointer; }
+.agent-team-card-config:hover { background: #f2efff; color: #6d56df; }
+.agent-team-skill-list { display: flex; min-height: 55px; align-content: flex-start; flex-wrap: wrap; gap: 7px; margin: 18px 0 14px; }
+.agent-team-skill-list > span { display: inline-flex; align-items: center; gap: 5px; height: 25px; padding: 0 8px; border: 1px solid #ece9f7; border-radius: 8px; background: #faf9ff; color: #6657b3; font-size: 11px; }
+.agent-team-skill-list .agent-team-no-skill { border-style: dashed; background: #fff; color: #aaa7b7; }
+.agent-team-card-stats { display: grid; grid-template-columns: repeat(3, 1fr); padding: 12px 0; border-top: 1px solid #f0eef6; border-bottom: 1px solid #f0eef6; }
+.agent-team-card-stats > div { min-width: 0; }
+.agent-team-card-stats > div + div { padding-left: 10px; border-left: 1px solid #efedf5; }
+.agent-team-card-stats b { display: block; overflow: hidden; color: #39374d; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.agent-team-card-stats small { display: block; margin-top: 4px; color: #aaa7b8; font-size: 10px; }
+.agent-team-capability-note { margin: 9px 0 0; color: #bd812f; font-size: 10px; line-height: 1.5; }
+.agent-team-card footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 14px; }
+.agent-team-status { display: flex; align-items: center; gap: 7px; color: #49997b; font-size: 11px; }
+.agent-team-status i { width: 7px; height: 7px; border-radius: 50%; background: #34aa7b; box-shadow: 0 0 0 3px #e7f6ef; }
+.agent-team-status--busy i { animation: agent-pulse 1.25s ease-in-out infinite; }
+.agent-team-status--off { color: #b28a51; }
+.agent-team-status--off i { background: #d7a95d; box-shadow: 0 0 0 3px #fff4e2; }
+.agent-team-card footer button { display: flex; align-items: center; gap: 6px; padding: 8px 11px; border: 0; border-radius: 9px; background: #eeeaff; color: #6650d2; cursor: pointer; font-size: 12px; font-weight: 700; }
+.agent-team-integrations { display: flex; align-items: center; justify-content: space-between; gap: 20px; max-width: 1480px; margin: 23px auto 5px; padding: 15px 18px; border: 1px solid #e6e3f1; border-radius: 15px; background: #fff; }
+.agent-team-integrations > div { display: flex; align-items: center; gap: 12px; }
+.agent-team-integration-icon { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 12px; background: #f0edff; color: #725be1; }
+.agent-team-integrations b { font-size: 13px; }
+.agent-team-integrations p { margin: 4px 0 0; color: #9693a7; font-size: 11px; line-height: 1.5; }
+.agent-team-integrations > button { flex: 0 0 auto; }
+.agent-team-modal-backdrop { position: fixed; z-index: 40; inset: 0; display: grid; place-items: center; padding: 20px; background: #17152875; backdrop-filter: blur(5px); }
+.agent-team-modal { width: min(470px, 100%); padding: 22px; border: 1px solid #e7e3f4; border-radius: 18px; background: #fff; box-shadow: 0 24px 70px #17152840; }
+.agent-team-modal header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; }
+.agent-team-modal header b { display: block; font-size: 18px; }
+.agent-team-modal header small { display: block; margin-top: 5px; color: #9390a4; font-size: 11px; }
+.agent-team-modal header button { border: 0; background: transparent; color: #89869b; cursor: pointer; font-size: 22px; }
+.agent-team-modal label { display: block; margin-top: 13px; color: #57546d; font-size: 12px; font-weight: 650; }
+.agent-team-modal input, .agent-team-modal select { display: block; width: 100%; margin-top: 7px; padding: 11px 12px; border: 1px solid #e1deed; border-radius: 10px; outline: 0; background: #fff; color: #3e3b52; font: inherit; font-size: 13px; }
+.agent-team-modal input:focus, .agent-team-modal select:focus { border-color: #8874f0; box-shadow: 0 0 0 3px #8874f022; }
+.agent-team-modal > p { color: #9692a5; font-size: 11px; line-height: 1.6; }
+.agent-team-modal-skills { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 14px 0; padding: 10px; border: 1px solid #ebe8f4; border-radius: 11px; }
+.agent-team-modal-skills legend { padding: 0 6px; color: #8f8ba1; font-size: 11px; }
+.agent-team-modal-skills label { display: flex; min-width: 0; align-items: flex-start; gap: 7px; margin: 0; padding: 8px; border-radius: 8px; background: #f8f7fc; cursor: pointer; }
+.agent-team-modal-skills input { width: auto; margin: 3px 0 0; accent-color: #6c55e0; }
+.agent-team-modal-skills b, .agent-team-modal-skills small { display: block; }
+.agent-team-modal-skills b { color: #4a465f; font-size: 11px; }
+.agent-team-modal-skills small { margin-top: 3px; color: #9b97ab; font-size: 9px; line-height: 1.4; }
+.agent-team-inline-error { max-width: 1480px; margin: 0 auto 12px; padding: 10px 12px; border: 1px solid #f2c5cb; border-radius: 10px; background: #fff2f4; color: #b9485b; font-size: 12px; }
+.agent-team-modal footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.agent-team-modal footer button { padding: 9px 13px; border: 1px solid #e6e3ef; border-radius: 9px; background: white; color: #625f76; cursor: pointer; }
+.agent-team-modal footer button:last-child { border-color: #6c55e0; background: #6c55e0; color: white; }
+.agent-team-modal footer button:disabled { opacity: .5; cursor: not-allowed; }
+@keyframes agent-pulse { 50% { opacity: .4; box-shadow: 0 0 0 5px #34aa7b22; } }
+@media (max-width: 800px) { .agent-team-page { padding: 18px; } .agent-team-header { align-items: flex-start; flex-direction: column; } .agent-team-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); } .agent-team-overview > div:nth-child(3), .agent-team-overview .agent-team-safety { grid-column: 1 / -1; } }
+@media (max-width: 800px) { .agent-team-notice { align-items: flex-start; flex-wrap: wrap; } .agent-team-notice b { flex: 0 0 100%; } .agent-team-notice span { flex-basis: 60%; } .agent-team-notice button { margin-left: auto; } }
+@media (max-width: 520px) { .agent-team-actions { width: 100%; } .agent-team-actions button { flex: 1; } .agent-team-integrations { align-items: flex-start; flex-direction: column; } .agent-team-integrations > button { align-self: flex-end; } .agent-team-modal-skills { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { .agent-team-card, .agent-team-status--busy i { transition: none; animation: none; } }

@@ -16,8 +16,49 @@ describe("vault tools", () => {
   it("creates the vault tools without fs/bash access", () => {
     const tools = createVaultTools(mockClient({}), "sess-1");
     expect(tools.map((t) => t.name).sort()).toEqual(
-      ["compress", "delete_file", "fetch_mail", "list_files", "propose_memory", "read_file", "search_files", "write_file"].sort(),
+      ["compress", "delete_file", "fetch_mail", "list_files", "open_media", "propose_memory", "read_file", "search_files", "search_media", "write_file"].sort(),
     );
+  });
+
+  it("filters tools to the selected skill groups", () => {
+    const docs = createVaultTools(mockClient({}), "sess-1", ["documents"]);
+    expect(docs.map((tool) => tool.name).sort()).toEqual(["compress", "list_files", "read_file", "search_files", "write_file"]);
+    const media = createVaultTools(mockClient({}), "sess-1", ["videos"]);
+    expect(media.map((tool) => tool.name).sort()).toEqual(["open_media", "search_media"]);
+    expect(createVaultTools(mockClient({}), "sess-1", []).map((tool) => tool.name)).toEqual([]);
+  });
+
+  it("searches media through audited vault directory listings", async () => {
+    const client: VaultClient = { request: vi.fn(async (method: string) => {
+      if (method === "vault/list_dir") return { entries: [
+        { name: "holiday.jpg", kind: "file", size: 100 },
+        { name: "concert.mp4", kind: "file", size: 200 },
+      ] };
+      throw new Error("unexpected RPC");
+    }) };
+    const result = await toolByName(client, "search_media").execute("tc1", { kind: "photos", query: "holiday" });
+    expect(client.request).toHaveBeenCalledWith("vault/list_dir", { session_id: "sess-1", path: "." });
+    expect(result.content[0].text).toBe("holiday.jpg (100 B)");
+  });
+
+  it("validates and reads media through the audited binary vault route", async () => {
+    const client = mockClient({ size: 2048, mime: "video/mp4" });
+    const result = await toolByName(client, "open_media").execute("tc1", { path: "Videos/demo.mp4" });
+    expect(client.request).toHaveBeenCalledWith("vault/read_binary", { session_id: "sess-1", path: "Videos/demo.mp4" });
+    expect(result.details).toMatchObject({ path: "Videos/demo.mp4", media_kind: "videos", size: 2048 });
+    expect(result.content[0].text).toContain("DepDek 播放器");
+  });
+
+  it("does not let one media skill read another media category", async () => {
+    const photos = createVaultTools(mockClient({ size: 2048, mime: "video/mp4" }), "sess-1", ["photos"]);
+    const openMedia = photos.find((tool) => tool.name === "open_media");
+    const searchMedia = photos.find((tool) => tool.name === "search_media");
+    expect(openMedia).toBeDefined();
+    expect(searchMedia).toBeDefined();
+    const openResult = await openMedia!.execute("tc1", { path: "Videos/demo.mp4" });
+    expect(openResult.details).toMatchObject({ blocked: true });
+    const searchResult = await searchMedia!.execute("tc2", { kind: "videos" });
+    expect(searchResult.details).toMatchObject({ blocked: true });
   });
 
   it("tells the agent about the sandbox in every vault tool description", () => {

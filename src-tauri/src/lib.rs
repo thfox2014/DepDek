@@ -10,6 +10,7 @@ pub mod memory;
 pub mod obsidian;
 pub mod rpc;
 pub mod settings;
+pub mod storage;
 pub mod vault;
 pub mod voice;
 

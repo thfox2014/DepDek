@@ -1,0 +1,14 @@
+.dd-media-backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(25, 23, 40, .72); backdrop-filter: blur(7px); }
+.dd-media-viewer { display: flex; width: min(1040px, 100%); height: min(760px, 92vh); flex-direction: column; overflow: hidden; border: 1px solid rgba(255,255,255,.2); border-radius: 18px; background: #14131b; color: #f8f7fc; box-shadow: 0 30px 90px rgba(0,0,0,.38); }
+.dd-media-viewer > header { display: flex; min-height: 64px; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px 12px 20px; border-bottom: 1px solid rgba(255,255,255,.1); }
+.dd-media-viewer > header div { min-width: 0; }
+.dd-media-viewer > header b { display: block; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.dd-media-viewer > header small { display: block; margin-top: 4px; color: #aaa7b7; font-size: 10px; }
+.dd-media-viewer > header button { display: grid; width: 34px; height: 34px; flex: 0 0 34px; place-items: center; border: 1px solid rgba(255,255,255,.15); border-radius: 10px; background: rgba(255,255,255,.06); color: #fff; cursor: pointer; }
+.dd-media-stage { display: grid; min-height: 0; flex: 1; place-items: center; overflow: auto; padding: 18px; }
+.dd-media-image { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
+.dd-media-video { display: block; width: 100%; max-height: 100%; background: #050505; }
+.dd-media-audio { width: min(680px, 100%); }
+.dd-media-loading, .dd-media-error { padding: 16px 20px; border-radius: 12px; background: rgba(255,255,255,.08); color: #ddd9ee; font-size: 13px; }
+.dd-media-error { color: #ffc3cb; }
+@media (max-width: 600px) { .dd-media-backdrop { padding: 8px; } .dd-media-viewer { height: 96vh; border-radius: 12px; } }

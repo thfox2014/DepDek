@@ -7,7 +7,7 @@
 #
 #   bash webdesk/scripts/screenshot.sh [OUTPUT_DIR]
 #
-# Produces: desktop.png (系统性能监控桌面) and performance.png (性能监控应用).
+# Produces: desktop.png (桌面 + 可拖动性能小窗) and performance.png (性能监控应用).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -43,8 +43,8 @@ cat > "$dist/__shot_performance.html" <<'HTML'
     const timer = setInterval(() => {
       tries += 1;
       try {
-        const items = [...frame.contentDocument.querySelectorAll(".launcher__item")];
-        if (items.length > 1) { items[1].click(); clearInterval(timer); }   // 0 概览, 1 性能监控
+        const items = [...frame.contentDocument.querySelectorAll(".desktop__shortcuts .desktop-icon")];
+        if (items.length > 1) { items[1].click(); clearInterval(timer); }   // 桌面图标 1 = 性能监控
         else if (tries > 120) clearInterval(timer);
       } catch (error) { clearInterval(timer); }
     }, 150);

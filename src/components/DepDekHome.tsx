@@ -45,8 +45,10 @@ import ApplicationConfigView from "./ApplicationConfigView";
 import MarkdownText from "./MarkdownText";
 import ToolProcessPanel from "./ToolProcessPanel";
 import OfficeView from "./OfficeView";
+import AgentTeamDashboard from "./AgentTeamDashboard";
 import MemoryPanel from "./MemoryPanel";
 import SessionsView from "./SessionsView";
+import StorageManager from "./StorageManager";
 import "./depdek-home.css";
 
 type ViewName =
@@ -57,8 +59,10 @@ type ViewName =
   | "inbox"
   | "knowledge"
   | "files"
+  | "storage"
   | "automation"
   | "agentteam"
+  | "agent-config"
   | "connections"
   | "memory"
   | "privacy";
@@ -67,12 +71,13 @@ interface Props {
   root: string;
   providerCount: number;
   sessionCount: number;
+  agentMetrics: Record<string, import("../App").AgentMetrics>;
   providers: Record<string, api.ProviderConfig>;
   settings: api.Settings;
   conversationHistory: Record<string, ConversationRecord[]>;
   onOpenSettings: () => void;
   onPickRoot: () => void;
-  onCreateAgent: (label: string, providerName: string, agentId?: string, openWorkbench?: boolean, engine?: api.AgentEngine) => Promise<void>;
+  onCreateAgent: (label: string, providerName: string, agentId?: string, openWorkbench?: boolean, engine?: api.AgentEngine, skills?: api.AgentSkill[]) => Promise<void>;
   onSaveAgentSettings: (settings: api.Settings) => Promise<void>;
   sessions: SessionInfo[];
   activeAgentId: string | null;
@@ -100,8 +105,9 @@ interface NavItem {
 }
 
 const WORK_NAV: NavItem[] = [
-  { key: "sessions", label: "会话", icon: ChatCircleText },
+  { key: "agentteam", label: "Agent Team", icon: Robot },
   { key: "today", label: "今天", icon: SquaresFour },
+  { key: "sessions", label: "会话记录", icon: ChatCircleText },
   { key: "todo", label: "待办", icon: CheckSquare },
   { key: "inbox", label: "Mail", icon: EnvelopeSimple },
   { key: "knowledge", label: "知识库", icon: Books },
@@ -110,6 +116,7 @@ const WORK_NAV: NavItem[] = [
 
 const DATA_NAV: NavItem[] = [
   { key: "files", label: "文件", icon: Folder },
+  { key: "storage", label: "存储空间", icon: HardDrives },
   { key: "automation", label: "自动化", icon: Robot },
 ];
 
@@ -127,8 +134,10 @@ const VIEW_TITLES: Record<ViewName, string> = {
   inbox: "Mail",
   knowledge: "知识库",
   files: "文件",
+  storage: "存储空间",
   automation: "自动化",
   agentteam: "Agent Team",
+  "agent-config": "Agent 配置",
   connections: "应用配置",
   memory: "记忆",
   privacy: "数据与隐私",
@@ -455,12 +464,13 @@ function TodayView({ notify, refreshKey, sessions, activeAgentId, chats, running
   </div>;
 }
 
-const VIEW_COPY: Record<Exclude<ViewName, "today" | "agentteam" | "sessions">, { eyebrow: string; title: string; lead: string; cards: Array<[string, string, string]> }> = {
+const VIEW_COPY: Record<Exclude<ViewName, "today" | "agentteam" | "agent-config" | "sessions">, { eyebrow: string; title: string; lead: string; cards: Array<[string, string, string]> }> = {
   calendar: { eyebrow: "CALENDAR / 时间主权", title: "日历", lead: "先看见时间，再让模型提出建议；外部写回由你逐次确认。", cards: [["本周时间分配", "深度工作 11h · 会议 8h", "本地聚合"], ["冲突与建议", "周四 15:00 有一处重叠", "等待确认"], ["连接状态", "外部连接 10 分钟前同步", "来源可追溯"]] },
   todo: { eyebrow: "TASKS / 个人承诺", title: "待办", lead: "从邮件、日历和文档发现承诺，先确认，再进入执行系统。", cards: [["今天", "4 项 · 已完成 2 项", "本地记录"], ["待确认抽取", "2 项来自邮件", "模型推断"], ["等待中", "3 项等待他人", "建议跟进"]] },
   inbox: { eyebrow: "INBOX / 从信息到行动", title: "收件箱", lead: "统一处理邮件、行动项、草稿和需要你做决定的内容。", cards: [["需要回复", "3 封邮件", "IMAP 本地副本"], ["行动项", "2 项待你确认", "来源可回溯"], ["待发送草稿", "1 封高风险行动", "逐次审批"]] },
   knowledge: { eyebrow: "KNOWLEDGE / 可追溯的理解", title: "知识", lead: "跨来源检索你的文档、笔记和记录；事实、推断与建议严格分开。", cards: [["本地索引", "12,482 条记录", "SQLite FTS"], ["最近知识", "Q3 预算口径备忘", "来自本地文件"], ["语义检索", "可关闭且不影响全文搜索", "本地模型"]] },
   files: { eyebrow: "FILES / 开放的数据家园", title: "文件", lead: "现有 Vault 继续作为本地文件信任边界，并逐步迁移到 Personal Data Home。", cards: [["当前 Home", "已连接本地目录", "Rust Vault"], ["对象与记录", "Home v2 待实现", "不伪装为已接通"], ["可验证导出", "JSONL / Markdown / ICS", "开放格式"]] },
+  storage: { eyebrow: "STORAGE / 本机容量", title: "存储空间", lead: "查看本机挂载卷容量，并定位 DepDek Home 所在卷；首版只读，不扫描文件内容或修改磁盘。", cards: [["挂载卷", "读取中", "本机系统信息"], ["DepDek Home", "定位所在卷", "路径仅用于匹配挂载点"], ["空间健康", "容量告警", "按卷分别评估"]] },
   automation: { eyebrow: "AUTOMATION / 有边界的代理", title: "自动化", lead: "低风险任务可以自动执行；越接近外部世界，审批越明确。", cards: [["运行中", "3 条本地整理规则", "无需联网"], ["等待审批", "发送邮件给 Alice", "高风险"], ["失败队列", "日历权限即将到期", "需处理"]] },
   connections: { eyebrow: "APP CONFIG / 应用配置", title: "应用配置", lead: "统一管理 Mail、Obsidian 和日历等应用连接；每个应用都可以单独配置和断开。", cards: [["Mail", "支持多个邮箱账号", "IMAP 本地副本"], ["Obsidian", "连接本地 Vault", "只读展示 Markdown"], ["日历", "支持多个日历", "按账户筛选与同步"]] },
   memory: { eyebrow: "MEMORY / 你定义你自己", title: "记忆", lead: "模型推断先进入待确认；每条记忆都有来源、置信度、有效期和使用记录。", cards: [["待确认", "2 条候选记忆", "模型推断"], ["已确认", "9 条长期记忆", "用户治理"], ["本月删除", "5 条", "删除立即生效"]] },
@@ -485,12 +495,14 @@ function FilesView({ root }: { root: string }) {
   );
 }
 
-function DomainView({ name, root, providerCount, sessionCount, openAgentTeam, notify, onStartTask, onUpdateTask, onInboxCountChange, onOpenAppConfig, sessions, activeAgentId, running, chats, providers, settings, conversationHistory, onSendAgent, onAbortAgent, onEnterAgent, onCloseAgent, onCreateAgent, onSaveAgentSettings, onOpenSettings, onNewConversation, onConversationHistoryChange }: {
+function DomainView({ name, root, providerCount, sessionCount, agentMetrics, openAgentTeam, onConfigureAgent, notify, onStartTask, onUpdateTask, onInboxCountChange, onOpenAppConfig, sessions, activeAgentId, running, chats, providers, settings, conversationHistory, onSendAgent, onAbortAgent, onEnterAgent, onCloseAgent, onCreateAgent, onSaveAgentSettings, onOpenSettings, onNewConversation, onConversationHistoryChange }: {
   name: Exclude<ViewName, "today">;
   root: string;
   providerCount: number;
   sessionCount: number;
+  agentMetrics: Record<string, import("../App").AgentMetrics>;
   openAgentTeam: () => void;
+  onConfigureAgent: () => void;
   notify: (message: string) => void;
   onInboxCountChange: (previewCount?: number) => void;
   onOpenAppConfig: () => void;
@@ -505,7 +517,7 @@ function DomainView({ name, root, providerCount, sessionCount, openAgentTeam, no
   conversationHistory: Record<string, ConversationRecord[]>;
   onEnterAgent: (id: string) => void;
   onCloseAgent: (id: string) => void;
-  onCreateAgent: (label: string, providerName: string, agentId?: string, openWorkbench?: boolean, engine?: api.AgentEngine) => Promise<void>;
+  onCreateAgent: (label: string, providerName: string, agentId?: string, openWorkbench?: boolean, engine?: api.AgentEngine, skills?: api.AgentSkill[]) => Promise<void>;
   onSaveAgentSettings: (settings: api.Settings) => Promise<void>;
   onOpenSettings: () => void;
   onNewConversation: (id: string) => Promise<void>;
@@ -516,10 +528,12 @@ function DomainView({ name, root, providerCount, sessionCount, openAgentTeam, no
   if (name === "calendar") return <CalendarView onStartTask={onStartTask} onUpdateTask={onUpdateTask} onOpenAppConfig={onOpenAppConfig} />;
   if (name === "todo") return <TodoBoard notify={notify} />;
   if (name === "files") return <FilesView root={root} />;
+  if (name === "storage") return <StorageManager root={root} />;
   if (name === "knowledge") return <ObsidianPanel onOpenAppConfig={onOpenAppConfig} />;
   if (name === "connections") return <ApplicationConfigView onNotify={notify} />;
   if (name === "memory") return <MemoryPanel />;
-  if (name === "agentteam") return <OfficeView embedded sessions={sessions} running={running} chats={chats} providers={providers} settings={settings} conversationHistory={conversationHistory} onEnter={onEnterAgent} onCreate={onCreateAgent} onSaveSettings={onSaveAgentSettings} onOpenSettings={onOpenSettings} onSend={onSendAgent} onAbort={onAbortAgent} onNewConversation={onNewConversation} onConversationHistoryChange={onConversationHistoryChange} />;
+  if (name === "agentteam") return <AgentTeamDashboard agents={settings.agents ?? []} sessions={sessions} metrics={agentMetrics} providers={providers} running={running} onEnter={onEnterAgent} onConfigure={onConfigureAgent} onCreate={onCreateAgent} onOpenSettings={onOpenSettings} />;
+  if (name === "agent-config") return <OfficeView embedded sessions={sessions} running={running} chats={chats} providers={providers} settings={settings} conversationHistory={conversationHistory} onEnter={onEnterAgent} onCreate={onCreateAgent} onSaveSettings={onSaveAgentSettings} onOpenSettings={onOpenSettings} onSend={onSendAgent} onAbort={onAbortAgent} onNewConversation={onNewConversation} onConversationHistoryChange={onConversationHistoryChange} />;
   const view = VIEW_COPY[name];
   return (
     <>
@@ -753,8 +767,8 @@ function Copilot({
   );
 }
 
-export default function DepDekHome({ root, providerCount, sessionCount, providers, settings, conversationHistory, onOpenSettings, onPickRoot, onCreateAgent, onSaveAgentSettings, sessions, activeAgentId, chats, running, onSelectAgent, onSendAgent, onAbortAgent, onNewConversation, onConversationHistoryChange, onEnterAgent, onCloseAgent, onOpenShell }: Props) {
-  const [activeView, setActiveView] = useState<ViewName>("today");
+export default function DepDekHome({ root, providerCount, sessionCount, agentMetrics, providers, settings, conversationHistory, onOpenSettings, onPickRoot, onCreateAgent, onSaveAgentSettings, sessions, activeAgentId, chats, running, onSelectAgent, onSendAgent, onAbortAgent, onNewConversation, onConversationHistoryChange, onEnterAgent, onCloseAgent, onOpenShell }: Props) {
+  const [activeView, setActiveView] = useState<ViewName>("agentteam");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -912,7 +926,7 @@ export default function DepDekHome({ root, providerCount, sessionCount, provider
           <div className="dd-brand"><img src={logo} alt="DepDek 图标" /><div><b>DepDek</b></div></div>
           <nav>{navGroup("工作台", WORK_NAV)}{navGroup("数据领域", DATA_NAV)}{navGroup("系统", SYSTEM_NAV)}</nav>
           <div className="dd-sidebar-foot">
-            <button className={activeView === "agentteam" ? "dd-sidebar-foot__active" : ""} onClick={openAgentTeam}><Robot size={16} />Agent Team <span>{sessionCount}</span></button>
+            <button className={activeView === "sessions" ? "dd-sidebar-foot__active" : ""} onClick={() => setActiveView("sessions")}><ChatCircleText size={16} />会话记录 <span>{sessionCount}</span></button>
             <button onClick={onOpenSettings}><GearSix size={16} />模型与 Provider <span>{providerCount}</span></button>
             <button onClick={onPickRoot}><HardDrives size={16} />更换 Home</button>
             {onOpenShell && <button onClick={onOpenShell}><SquaresFour size={16} />AI Shell 语音入口</button>}
@@ -934,7 +948,7 @@ export default function DepDekHome({ root, providerCount, sessionCount, provider
         </header>}
 
         <main className={`dd-workbench ${activeView === "inbox" ? "dd-workbench--inbox" : ""} ${activeView === "today" ? "dd-workbench--today" : ""}`}>
-          {activeView === "today" ? <TodayView notify={notify} refreshKey={refreshKey} sessions={sessions} activeAgentId={activeAgentId} chats={chats} running={running} onSelectAgent={onSelectAgent} onSendAgent={onSendAgent} onAbortAgent={onAbortAgent} onOpenAgentTeam={openAgentTeam} /> : <DomainView name={activeView} root={root} providerCount={providerCount} sessionCount={sessionCount} openAgentTeam={openAgentTeam} notify={notify} onStartTask={startTask} onUpdateTask={updateTask} onInboxCountChange={refreshInboxCount} onOpenAppConfig={() => setActiveView("connections")} sessions={sessions} activeAgentId={activeAgentId} running={running} chats={chats} providers={providers} settings={settings} conversationHistory={conversationHistory} onSendAgent={onSendAgent} onAbortAgent={onAbortAgent} onEnterAgent={onEnterAgent} onCloseAgent={onCloseAgent} onCreateAgent={onCreateAgent} onSaveAgentSettings={onSaveAgentSettings} onOpenSettings={onOpenSettings} onNewConversation={onNewConversation} onConversationHistoryChange={onConversationHistoryChange} />}
+          {activeView === "today" ? <TodayView notify={notify} refreshKey={refreshKey} sessions={sessions} activeAgentId={activeAgentId} chats={chats} running={running} onSelectAgent={onSelectAgent} onSendAgent={onSendAgent} onAbortAgent={onAbortAgent} onOpenAgentTeam={openAgentTeam} /> : <DomainView name={activeView} root={root} providerCount={providerCount} sessionCount={sessionCount} agentMetrics={agentMetrics} openAgentTeam={openAgentTeam} onConfigureAgent={() => setActiveView("agent-config")} notify={notify} onStartTask={startTask} onUpdateTask={updateTask} onInboxCountChange={refreshInboxCount} onOpenAppConfig={() => setActiveView("connections")} sessions={sessions} activeAgentId={activeAgentId} running={running} chats={chats} providers={providers} settings={settings} conversationHistory={conversationHistory} onSendAgent={onSendAgent} onAbortAgent={onAbortAgent} onEnterAgent={onEnterAgent} onCloseAgent={onCloseAgent} onCreateAgent={onCreateAgent} onSaveAgentSettings={onSaveAgentSettings} onOpenSettings={onOpenSettings} onNewConversation={onNewConversation} onConversationHistoryChange={onConversationHistoryChange} />}
         </main>
       </div>
 

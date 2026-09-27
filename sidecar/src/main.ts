@@ -25,7 +25,7 @@ const sessions = new SessionManager(peer, peer);
 registerMemoryHandlers(peer);
 
 peer.register("agent/create_session", (params) =>
-  sessions.createSession(params.session_id, params.provider as ProviderConfig, params.system_prompt, params.engine),
+  sessions.createSession(params.session_id, params.provider as ProviderConfig, params.system_prompt, params.engine, params.enabled_skills),
 );
 peer.register("agent/send", (params) => sessions.send(params.session_id, params.text));
 peer.register("agent/analyze", (params) => sessions.runOnce(

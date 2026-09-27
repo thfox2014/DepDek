@@ -9,6 +9,7 @@ import AuditViewer from "./components/AuditViewer";
 import SettingsPanel from "./components/SettingsPanel";
 import DepDekHome from "./components/DepDekHome";
 import DepDekAiOsShell from "./components/DepDekAiOsShell";
+import MediaViewer from "./components/MediaViewer";
 
 export interface SessionInfo {
   id: string;
@@ -40,8 +41,43 @@ export interface ConversationRecord {
   blocks: ChatBlock[];
 }
 
+export interface AgentMetrics {
+  completedRuns: number;
+  reportedTokens: number;
+  tokenUsageKnown: boolean;
+}
+
 const CONVERSATION_HISTORY_STORAGE_KEY = "depdek.agent-conversation-history.v1";
+const AGENT_METRICS_STORAGE_KEY = "depdek.agent-metrics.v1";
 const agentOsMode = import.meta.env.VITE_DEPDEK_OS === "1";
+
+const INITIAL_PROVIDER_NAME = "DeepSeek";
+const ALL_DEFAULT_SKILLS: api.AgentSkill[] = ["documents", "photos", "music", "videos", "mail", "memory"];
+const INITIAL_DEEPSEEK_PROVIDER: api.ProviderConfig = {
+  kind: "openai-compatible",
+  model: "deepseek-flash",
+  base_url: "https://api.deepseek.com",
+};
+
+const INITIAL_AGENTS: api.SavedAgent[] = [
+  { id: "tanvis", label: "Tanvis", provider_name: INITIAL_PROVIDER_NAME, config_dir: "agents/tanvis", enabled_skills: ["documents", "photos", "music", "videos", "mail", "memory"] },
+  { id: "doc-manager", label: "文档管家", provider_name: INITIAL_PROVIDER_NAME, config_dir: "agents/doc-manager", enabled_skills: ["documents", "memory"] },
+  { id: "photo-manager", label: "照片管家", provider_name: INITIAL_PROVIDER_NAME, config_dir: "agents/photo-manager", enabled_skills: ["photos", "memory"] },
+  { id: "music-player", label: "音乐助手", provider_name: INITIAL_PROVIDER_NAME, config_dir: "agents/music-player", enabled_skills: ["music", "videos", "memory"] },
+  { id: "video-player", label: "视频助手", provider_name: INITIAL_PROVIDER_NAME, config_dir: "agents/video-player", enabled_skills: ["videos", "music", "memory"] },
+];
+
+function loadAgentMetrics(): Record<string, AgentMetrics> {
+  try {
+    const raw = window.localStorage.getItem(AGENT_METRICS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) as Record<string, AgentMetrics> : {};
+    return Object.fromEntries(Object.entries(parsed).map(([id, item]) => [id, {
+      completedRuns: Math.max(0, Number(item.completedRuns) || 0),
+      reportedTokens: Math.max(0, Number(item.reportedTokens) || 0),
+      tokenUsageKnown: Boolean(item.tokenUsageKnown),
+    }]));
+  } catch { return {}; }
+}
 
 function loadConversationHistory(): Record<string, ConversationRecord[]> {
   if (typeof window === "undefined") return {};
@@ -81,6 +117,10 @@ export default function App() {
   const [chats, setChats] = useState<Record<string, ChatBlock[]>>({});
   const [conversationHistory, setConversationHistory] = useState<Record<string, ConversationRecord[]>>(loadConversationHistory);
   const [running, setRunning] = useState<Record<string, boolean>>({});
+  const [agentMetrics, setAgentMetrics] = useState<Record<string, AgentMetrics>>(loadAgentMetrics);
+  const [mediaFile, setMediaFile] = useState<{ path: string; mime: string; dataUrl: string } | null>(null);
+  const [mediaLoading, setMediaLoading] = useState<string | null>(null);
+  const [mediaError, setMediaError] = useState<string | null>(null);
   const blockId = useRef(1);
 
   const nextId = () => blockId.current++;
@@ -92,6 +132,11 @@ export default function App() {
       // A full browser quota must not block the live Agent session.
     }
   }, [conversationHistory]);
+
+  useEffect(() => {
+    try { window.localStorage.setItem(AGENT_METRICS_STORAGE_KEY, JSON.stringify(agentMetrics)); }
+    catch { /* Metrics are helpful, but must never block the live session. */ }
+  }, [agentMetrics]);
 
   const pushBlock = (sid: string, block: ChatBlockInput) => {
     setChats((prev) => ({
@@ -111,27 +156,31 @@ export default function App() {
         // Browser-only UX preview: Tauri commands are unavailable in Vite,
         // so provide a clearly local sample Home for visual/product QA.
         if (!("__TAURI_INTERNALS__" in window)) {
-          setSettings({
-            providers: {
-              "Local Qwen": {
-                kind: "openai-compatible",
-                model: "qwen3:8b",
-                base_url: "http://127.0.0.1:11434/v1",
-              },
-            },
-          });
+          setSettings({ providers: { [INITIAL_PROVIDER_NAME]: INITIAL_DEEPSEEK_PROVIDER }, agents: INITIAL_AGENTS });
           setRoot("~/DepDek-Home · 浏览器 UX 预览");
           return;
         }
-        const s = await api.settingsGet().catch(() => ({ providers: {} }) as api.Settings);
-        setSettings(s);
+        const loaded = await api.settingsGet().catch(() => ({ providers: {} }) as api.Settings);
+        const existingDeepSeekName = Object.entries(loaded.providers).find(([name, config]) =>
+          name.toLocaleLowerCase().includes("deepseek") || (config.kind === "openai-compatible" && config.base_url.toLocaleLowerCase().includes("deepseek")),
+        )?.[0];
+        const providerName = existingDeepSeekName ?? INITIAL_PROVIDER_NAME;
+        const needsProvider = !existingDeepSeekName;
+        const hasLegacyAgents = Boolean(loaded.agents?.length && loaded.agents.some((agent) => !agent.enabled_skills));
+        const nextSettings: api.Settings = {
+          ...loaded,
+          providers: needsProvider ? { ...loaded.providers, [INITIAL_PROVIDER_NAME]: INITIAL_DEEPSEEK_PROVIDER } : loaded.providers,
+          agents: loaded.agents?.length ? loaded.agents.map((agent) => ({ ...agent, enabled_skills: agent.enabled_skills ?? ALL_DEFAULT_SKILLS })) : INITIAL_AGENTS.map((agent) => ({ ...agent, provider_name: providerName })),
+        };
+        if (needsProvider || !loaded.agents?.length || hasLegacyAgents) await api.settingsSet(nextSettings).catch(() => {});
+        setSettings(nextSettings);
         // Recreate saved agent sessions (same config, fresh conversation).
         const restored: SessionInfo[] = [];
-        for (const a of s.agents ?? []) {
-          const provider = s.providers[a.provider_name];
+        for (const a of nextSettings.agents ?? []) {
+          const provider = nextSettings.providers[a.provider_name];
           if (!provider) continue;
           try {
-            await api.agentCreateSession(a.id, provider, a.system_prompt, a.engine);
+            await api.agentCreateSession(a.id, provider, a.system_prompt, a.engine, a.enabled_skills);
             restored.push({ id: a.id, label: a.label, providerName: a.provider_name, engine: a.engine });
           } catch {
             // Sidecar unavailable; skip this session.
@@ -198,6 +247,17 @@ export default function App() {
               name: String(ev.data.name ?? ""),
               args: ev.data.args,
             });
+            if (String(ev.data.name ?? "") === "open_media") {
+              const path = String((ev.data.args as { path?: unknown } | undefined)?.path ?? "");
+              if (path) {
+                setMediaError(null);
+                setMediaLoading(path);
+                void api.vaultReadBinary(path).then((file) => {
+                  setMediaFile({ path, mime: file.mime, dataUrl: "data:" + file.mime + ";base64," + file.data_base64 });
+                  setMediaError(null);
+                }).catch((error) => setMediaError(String(error))).finally(() => setMediaLoading(null));
+              }
+            }
             break;
           case "tool_call_end": {
             const toolCallId = String(ev.data.tool_call_id ?? "");
@@ -218,6 +278,18 @@ export default function App() {
           case "message_complete":
             if (ev.data.engine === "deepseek-harness") markHarnessEvent(sid);
             setRunning((r) => ({ ...r, [sid]: false }));
+            setAgentMetrics((current) => {
+              const previous = current[sid] ?? { completedRuns: 0, reportedTokens: 0, tokenUsageKnown: false };
+              const usage = ev.data.usage as { total?: unknown } | undefined;
+              const total = Number(usage?.total);
+              const hasUsage = Number.isFinite(total) && total >= 0;
+              const completed = ev.data.stop_reason !== "aborted";
+              return { ...current, [sid]: {
+                completedRuns: previous.completedRuns + (completed ? 1 : 0),
+                reportedTokens: previous.reportedTokens + (hasUsage ? total : 0),
+                tokenUsageKnown: previous.tokenUsageKnown || hasUsage,
+              } };
+            });
             break;
           case "error":
             setRunning((r) => ({ ...r, [sid]: false }));
@@ -253,7 +325,7 @@ export default function App() {
     }
   };
 
-  const createSession = async (label: string, providerName: string, requestedId?: string, openWorkbench = true, requestedEngine?: api.AgentEngine) => {
+  const createSession = async (label: string, providerName: string, requestedId?: string, openWorkbench = true, requestedEngine?: api.AgentEngine, requestedSkills?: api.AgentSkill[]) => {
     const provider = settings.providers[providerName];
     if (!provider) throw new Error(`provider "${providerName}" 不存在`);
     const id = requestedId?.trim() || `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -264,7 +336,8 @@ export default function App() {
       return;
     }
     const engine = requestedEngine ?? existing?.engine;
-    await api.agentCreateSession(id, provider, existing?.system_prompt, engine);
+    const enabledSkills: api.AgentSkill[] = requestedSkills ?? existing?.enabled_skills ?? (id.startsWith("doc-") ? ["documents", "memory"] : id.startsWith("photo-") ? ["photos", "memory"] : id.startsWith("music-") ? ["music", "videos", "memory"] : id.startsWith("video-") ? ["videos", "music", "memory"] : ALL_DEFAULT_SKILLS);
+    await api.agentCreateSession(id, provider, existing?.system_prompt, engine, enabledSkills);
     setSessions((prev) => prev.some((session) => session.id === id) ? prev : [...prev, { id, label: label || id, providerName, engine }]);
     setActiveId(id);
     if (openWorkbench) setView("workbench");
@@ -272,8 +345,8 @@ export default function App() {
     const next: api.Settings = {
       ...settings,
       agents: existing
-        ? (settings.agents ?? []).map((agent) => agent.id === id ? { ...agent, label: label || agent.label, provider_name: providerName, ...(engine ? { engine } : {}) } : agent)
-        : [...(settings.agents ?? []), { id, label: label || id, provider_name: providerName, ...(engine ? { engine } : {}), ...(id === "tanvis" ? { config_dir: "agents/tanvis" } : {}) }],
+        ? (settings.agents ?? []).map((agent) => agent.id === id ? { ...agent, label: label || agent.label, provider_name: providerName, enabled_skills: enabledSkills, ...(engine ? { engine } : {}) } : agent)
+        : [...(settings.agents ?? []), { id, label: label || id, provider_name: providerName, enabled_skills: enabledSkills, ...(engine ? { engine } : {}), ...(id === "tanvis" ? { config_dir: "agents/tanvis" } : {}) }],
     };
     await api.settingsSet(next).catch(() => {});
     setSettings(next);
@@ -293,7 +366,7 @@ export default function App() {
     setChats((current) => ({ ...current, [sid]: [] }));
     try { await api.agentAbort(sid); } catch { /* 当前没有运行中的请求也可以继续新建。 */ }
     try { await api.agentClose(sid); } catch { /* sidecar 重启后可能已经没有旧会话。 */ }
-    await api.agentCreateSession(sid, provider, agent?.system_prompt, agent?.engine ?? session.engine);
+    await api.agentCreateSession(sid, provider, agent?.system_prompt, agent?.engine ?? session.engine, agent?.enabled_skills);
   };
 
   const closeSession = async (sid: string) => {
@@ -379,10 +452,10 @@ export default function App() {
       const provider = agent ? next.providers[agent.provider_name] : undefined;
       if (!agent || !provider) continue;
       const previous = settings.agents?.find((item) => item.id === session.id);
-      if (previous?.provider_name === agent.provider_name && previous?.system_prompt === agent.system_prompt && previous?.engine === agent.engine) continue;
+      if (previous?.provider_name === agent.provider_name && previous?.system_prompt === agent.system_prompt && previous?.engine === agent.engine && JSON.stringify(previous?.enabled_skills ?? []) === JSON.stringify(agent.enabled_skills ?? [])) continue;
       try {
         await api.agentClose(session.id);
-        await api.agentCreateSession(session.id, provider, agent.system_prompt, agent.engine);
+        await api.agentCreateSession(session.id, provider, agent.system_prompt, agent.engine, agent.enabled_skills);
       } catch {
         // The session can be recreated on the next launch if the sidecar is
         // temporarily unavailable; settings remain saved in the meantime.
@@ -428,6 +501,7 @@ export default function App() {
           root={root}
           providerCount={Object.keys(settings.providers).length}
           sessionCount={sessions.length}
+          agentMetrics={agentMetrics}
           providers={settings.providers}
           settings={settings}
           conversationHistory={conversationHistory}
@@ -541,6 +615,7 @@ export default function App() {
           onClose={() => setShowSettings(false)}
         />
       )}
+      <MediaViewer path={mediaFile?.path ?? null} mime={mediaFile?.mime} dataUrl={mediaFile?.dataUrl} loadingPath={mediaLoading} error={mediaError} onClose={() => { setMediaFile(null); setMediaError(null); }} />
     </div>
   );
 }

@@ -48,6 +48,20 @@ function lastAssistantMessage(messages: readonly { role: string }[]): AssistantM
   return undefined;
 }
 
+function aggregateTurnUsage(messages: readonly { role: string }[]): { input: number; output: number; total: number } | undefined {
+  const assistantMessages = messages.filter((message) => message.role === "assistant") as AssistantMessage[];
+  if (!assistantMessages.length) return undefined;
+  const usage = assistantMessages.reduce((sum, message) => {
+    const current = message.usage;
+    return current ? {
+      input: sum.input + current.input,
+      output: sum.output + current.output,
+      total: sum.total + current.totalTokens,
+    } : sum;
+  }, { input: 0, output: 0, total: 0 });
+  return usage.total > 0 ? usage : undefined;
+}
+
 /**
  * Convert one AgentEvent into zero or more contract notifications
  * (session_id is added by the caller).
@@ -95,6 +109,7 @@ export function convertAgentEvent(event: AgentEvent, engine: "pi" | "deepseek-ha
       ];
     case "agent_end": {
       const assistant = lastAssistantMessage(event.messages);
+      const usage = aggregateTurnUsage(event.messages);
       if (assistant && assistant.stopReason === "error") {
         return [
           { type: "error", data: { message: assistant.errorMessage ?? "model request failed", engine } },
@@ -102,7 +117,11 @@ export function convertAgentEvent(event: AgentEvent, engine: "pi" | "deepseek-ha
       }
       return [
         { type: "progress", data: { phase: "complete", message: "Pi Agent Core 已完成", engine } },
-        { type: "message_complete", data: { stop_reason: assistant?.stopReason ?? "stop", engine } },
+        { type: "message_complete", data: {
+          stop_reason: assistant?.stopReason ?? "stop",
+          engine,
+          ...(usage ? { usage } : {}),
+        } },
       ];
     }
     default:

@@ -15,6 +15,7 @@ use crate::audit::AuditEntry;
 use crate::obsidian::{ObsidianListResult, ObsidianReadResult, ObsidianStore};
 use crate::rpc::Sidecar;
 use crate::settings::{ProviderConfig, Settings};
+use crate::storage::{snapshot as storage_snapshot, StorageSnapshot};
 use crate::vault::{
     CompressResult, ListDirResult, ReadBinaryResult, ReadFileResult, SearchResult, Vault,
     WriteFileResult,
@@ -67,6 +68,11 @@ fn vault_set_root(state: State<AppState>, app: AppHandle, path: String) -> Resul
 #[tauri::command]
 fn vault_get_root(state: State<AppState>) -> Option<String> {
     state.vault.root().map(|p| p.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn storage_summary() -> StorageSnapshot {
+    storage_snapshot()
 }
 
 #[tauri::command]
@@ -358,6 +364,7 @@ async fn agent_create_session(
     provider: ProviderConfig,
     system_prompt: Option<String>,
     engine: Option<String>,
+    enabled_skills: Option<Vec<String>>,
 ) -> Result<Value, String> {
     let mut params = json!({ "session_id": session_id, "provider": provider });
     if let Some(prompt) = system_prompt {
@@ -365,6 +372,9 @@ async fn agent_create_session(
     }
     if let Some(engine) = engine {
         params["engine"] = json!(engine);
+    }
+    if let Some(enabled_skills) = enabled_skills {
+        params["enabled_skills"] = json!(enabled_skills);
     }
     state.sidecar.request("agent/create_session", params).await
 }
@@ -690,6 +700,7 @@ pub fn run() {
             vault_set_root,
             vault_get_root,
             vault_init_home,
+            storage_summary,
             voice_transcribe,
             vault_read_file,
             vault_read_binary,

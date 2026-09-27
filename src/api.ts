@@ -33,7 +33,11 @@ export interface SavedAgent {
   /** Local, non-executable prompt workspace for this agent. */
   config_dir?: string;
   engine?: AgentEngine;
+  /** Enabled capability groups; runtime tools are filtered from this allow-list. */
+  enabled_skills?: AgentSkill[];
 }
+
+export type AgentSkill = "documents" | "photos" | "music" | "videos" | "mail" | "memory";
 
 export interface Settings {
   last_root?: string | null;
@@ -317,6 +321,23 @@ export interface AuditReadResult {
   total: number;
 }
 
+export interface StorageVolume {
+  name: string;
+  file_system: string;
+  mount_point: string;
+  kind: string;
+  removable: boolean;
+  total_bytes: number;
+  available_bytes: number;
+  used_bytes: number;
+  used_pct: number;
+}
+
+export interface StorageSnapshot {
+  sampled_at_ms: number;
+  volumes: StorageVolume[];
+}
+
 // ---------------------------------------------------------------------------
 // Tauri commands (contract section 3).
 //
@@ -327,6 +348,7 @@ export interface AuditReadResult {
 export const vaultSetRoot = (path: string) => invoke<string>("vault_set_root", { path });
 export const vaultGetRoot = () => invoke<string | null>("vault_get_root");
 export const vaultInitHome = () => invoke<string>("vault_init_home");
+export const storageSummary = () => invoke<StorageSnapshot>("storage_summary");
 export const voiceTranscribe = (audioBase64: string) => invoke<string>("voice_transcribe", { audioBase64 });
 export const vaultReadFile = (path: string) =>
   invoke<ReadFileResult>("vault_read_file", { path });
@@ -352,7 +374,8 @@ export const agentCreateSession = (
   provider: ProviderConfig,
   systemPrompt?: string,
   engine?: AgentEngine,
-) => invoke<{ session_id: string }>("agent_create_session", { sessionId, provider, systemPrompt, engine });
+  enabledSkills?: AgentSkill[],
+) => invoke<{ session_id: string }>("agent_create_session", { sessionId, provider, systemPrompt, engine, enabledSkills });
 export const agentSend = (sessionId: string, text: string) =>
   invoke<void>("agent_send", { sessionId, text });
 export const agentAnalyze = (provider: ProviderConfig, text: string, systemPrompt: string, engine?: AgentEngine) =>

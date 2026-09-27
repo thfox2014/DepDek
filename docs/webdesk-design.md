@@ -24,7 +24,7 @@
 |---|---|
 | `src-tauri/`（桌面端 Rust 核心） | **不共享进程**。webdesk 是独立二进制，桌面端不启动它、也不依赖它。 |
 | vault 沙箱（`vault.rs`） | webdesk 不读写用户的 DepDek Home 数据目录；它只读 `/proc`、`/sys` 与自己的 `data_dir`。 |
-| `docs/contract.md` | 未被修改：webdesk 不参与桌面端 ↔ sidecar 的 JSON-RPC 契约。 |
+| `docs/contract.md` | DepDek 桌面端新增 `storage_summary` Tauri 命令；Webdesk 仍是独立服务，不参与桌面端 ↔ sidecar 的 JSON-RPC。 |
 | agent 工具 | webdesk **不会**注册成 agent 工具；agent 依旧只有 `vault/*` 五个文件工具。 |
 
 这样切分的原因：远程管理需要一个**长期在线、可开机自启**的服务，而桌面端是随用户登录会话起停的 GUI；把管理面塞进 GUI 进程会让「关掉窗口 = 失去远程管理」。
@@ -76,7 +76,7 @@ webdesk/
       ├─ api.ts                   类型化客户端 + 浏览器预览开关
       ├─ demo.ts                  `?demo=1` 示例数据
       ├─ components/              charts.tsx（SVG 折线/环/进度条）、Login.tsx
-      ├─ desktop/                 DesktopShell.tsx、PerformanceWidget.tsx
+      ├─ desktop/                 DesktopShell.tsx、FloatingWindow.tsx、PerformanceWidget.tsx
       └─ apps/                    Overview / Performance / Processes / StorageNetwork / SystemInfo
 ```
 
@@ -165,12 +165,14 @@ location / {
 
 ## 7. 前端
 
-- **桌面（`DesktopShell`）**：顶栏（品牌 / 主机名 / 连接状态 / 版本 / 时钟 / 退出）+ 桌面上第一屏就是**系统性能监控小组件** + 应用图标网格 + 底部状态栏。
-- **性能监控小组件（`PerformanceWidget`）**：CPU 与内存环形仪表、CPU 趋势折线（近 4 分钟）、每核进度条、网络与磁盘实时速率、占用最高的应用列表。点击进入完整「性能监控」应用。
-- **应用**：概览（设备事实 + 全部指标卡片）、性能监控（2/4/10 分钟窗口）、进程与占用（应用聚合 + 进程表，可排序/搜索）、存储与网络、审计与关于。
+- **桌面（`DesktopShell`）**：以桌面图标启动应用，以浮动应用窗口展示详情；底部 Dock 支持返回桌面、切换应用和恢复已收起的性能窗。使用多色极光壁纸和半透明 Dock，系统连接与时间保持在顶栏。
+- **性能监控小窗（`PerformanceWidget`）**：常驻桌面的紧凑浮窗，呈现 CPU / 内存、近期 CPU 趋势、每核占用、网络与磁盘实时速率及资源占用热点；可最小化、从 Dock 恢复，或展开完整「性能监控」应用。
+- **拖动体验（`FloatingWindow`）**：使用 Pointer Events 与 `requestAnimationFrame` 批量直接更新 `translate3d`，拖动过程中不逐帧触发 React 渲染；松手时才提交位置并保存到浏览器本地。位置随视口变化约束在桌面可视区内，也支持聚焦标题栏后按住 `Alt` + 方向键移动（`Shift` 加速）。
+- **存储空间应用**：按挂载卷展示容量、已用/可用空间与空间偏紧状态；卷合计不代表物理盘容量（共享容器可能重复）。DepDek 桌面通过只读 `storage_summary` 读取本机挂载卷，Webdesk 通过已有受保护的 `/api/system/disks` / `/api/system/summary` 展示同一主机的独立采样。两端均不扫描文件内容，不提供分区写操作。
+- **其他应用**：概览（设备事实 + 全部指标卡片）、性能监控（2/4/10 分钟窗口）、进程与占用（应用聚合 + 进程表，可排序/搜索）、网络接口、审计与关于。
 - 轮询：`series` 2s、`summary`+`apps` 3s、进程表 3s（仅在该应用打开时）。
-- 图表是手写 SVG（`components/charts.tsx`），不引入图表库；前端产物约 177 kB JS / 11 kB CSS。
-- `?demo=1`（或 `VITE_WEBDESK_DEMO=1`）用 `demo.ts` 的示例数据渲染整套界面，用于纯浏览器评审与截图。
+- 图表是手写 SVG（`components/charts.tsx`），不引入图表库；桌面端打包产物约 184 kB JS / 24 kB CSS（gzip 约 59 / 6 kB）。
+- `?demo=1`（或 `VITE_WEBDESK_DEMO=1`）用 `demo.ts` 的示例数据渲染整套界面，用于纯浏览器评审与截图；`webdesk/scripts/screenshot.sh` 分别截取桌面与完整性能应用。
 
 ## 8. 构建、发布与版本
 
