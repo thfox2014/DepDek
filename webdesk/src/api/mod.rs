@@ -1,5 +1,6 @@
 //! HTTP routing.
 
+pub mod files;
 pub mod processes;
 pub mod session;
 pub mod system;
@@ -28,6 +29,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/apps", get(processes::apps))
         .route("/api/processes", get(processes::list))
         .route("/api/audit", get(system::audit_tail))
+        .route("/api/files", get(files::list))
+        .route("/api/files/preview", get(files::preview))
+        .route("/api/files/download", get(files::download))
         .fallback(web::serve)
         .layer(DefaultBodyLimit::max(64 * 1024))
         .layer(CompressionLayer::new())

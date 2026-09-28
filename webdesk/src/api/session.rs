@@ -33,6 +33,9 @@ impl ApiError {
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self { status: StatusCode::BAD_REQUEST, message: message.into() }
     }
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self { status: StatusCode::NOT_FOUND, message: message.into() }
+    }
     pub fn unavailable(message: impl Into<String>) -> Self {
         Self { status: StatusCode::SERVICE_UNAVAILABLE, message: message.into() }
     }

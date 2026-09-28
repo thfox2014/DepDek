@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import Overview from "../apps/Overview";
 import Performance from "../apps/Performance";
 import Processes from "../apps/Processes";
 import StorageNetwork from "../apps/StorageNetwork";
+import Files from "../apps/Files";
 import SystemInfo from "../apps/SystemInfo";
+import AppArtwork, { type AppArtworkKind } from "../components/AppArtwork";
 import {
   api,
   type AppList,
@@ -14,14 +16,16 @@ import {
 import FloatingWindow from "./FloatingWindow";
 import PerformanceWidget from "./PerformanceWidget";
 
-type AppId = "overview" | "performance" | "processes" | "storage" | "system";
+type AppId = "overview" | "performance" | "processes" | "storage" | "files" | "system";
+interface AppWindowState { id: AppId; maximized: boolean }
 
-const APPS: Array<{ id: AppId; label: string; icon: string; hint: string; tint: string }> = [
-  { id: "overview", label: "设备概览", icon: "⌂", hint: "设备与系统状态", tint: "mint" },
-  { id: "performance", label: "性能监控", icon: "⌁", hint: "实时资源趋势", tint: "blue" },
-  { id: "processes", label: "应用与进程", icon: "≋", hint: "资源占用排行", tint: "violet" },
-  { id: "storage", label: "存储空间", icon: "▧", hint: "卷容量、使用情况与网络", tint: "amber" },
-  { id: "system", label: "系统信息", icon: "ⓘ", hint: "审计状态与关于", tint: "slate" },
+const APPS: Array<{ id: AppId; label: string; icon: AppArtworkKind; hint: string; tint: string }> = [
+  { id: "overview", label: "设备概览", icon: "overview", hint: "设备与系统状态", tint: "mint" },
+  { id: "performance", label: "性能监控", icon: "performance", hint: "实时资源趋势", tint: "blue" },
+  { id: "processes", label: "应用与进程", icon: "processes", hint: "资源占用排行", tint: "violet" },
+  { id: "storage", label: "存储空间", icon: "storage", hint: "卷容量、使用情况与网络", tint: "amber" },
+  { id: "files", label: "文件管理", icon: "files", hint: "浏览、预览与下载文件", tint: "blue" },
+  { id: "system", label: "系统信息", icon: "system", hint: "审计状态与关于", tint: "slate" },
 ];
 
 export default function DesktopShell({
@@ -40,8 +44,10 @@ export default function DesktopShell({
   const [series, setSeries] = useState<Series | null>(null);
   const [apps, setApps] = useState<AppList | null>(null);
   const [windowSize, setWindowSize] = useState(120);
-  const [activeApp, setActiveApp] = useState<AppId | null>(null);
+  const [appWindows, setAppWindows] = useState<AppWindowState[]>([]);
+  const [minimizedApps, setMinimizedApps] = useState<AppId[]>([]);
   const [performanceVisible, setPerformanceVisible] = useState(true);
+  const [performanceMaximized, setPerformanceMaximized] = useState(false);
   const [error, setError] = useState("");
   const [clock, setClock] = useState(() => new Date());
 
@@ -91,9 +97,24 @@ export default function DesktopShell({
     };
   }, [windowSize]);
 
-  const openApp = APPS.find((entry) => entry.id === activeApp);
-  const performanceMiniVisible = performanceVisible && activeApp !== "performance";
-  const open = (app: AppId) => setActiveApp((current) => current === app ? null : app);
+  const visibleWindows = appWindows.filter((entry) => !minimizedApps.includes(entry.id));
+  const activeApp = visibleWindows.at(-1)?.id ?? null;
+  const performanceMiniVisible = performanceVisible && !visibleWindows.some((entry) => entry.id === "performance");
+  const open = (app: AppId) => {
+    setAppWindows((current) => {
+      const existing = current.find((entry) => entry.id === app);
+      const ordered = current.filter((entry) => entry.id !== app);
+      return [...ordered, existing ?? { id: app, maximized: false }];
+    });
+    setMinimizedApps((current) => current.filter((entry) => entry !== app));
+  };
+  const minimize = (app: AppId) => setMinimizedApps((current) => current.includes(app) ? current : [...current, app]);
+  const close = (app: AppId) => {
+    setAppWindows((current) => current.filter((entry) => entry.id !== app));
+    setMinimizedApps((current) => current.filter((entry) => entry !== app));
+  };
+  const toggleMaximize = (app: AppId) => setAppWindows((current) => current.map((entry) => entry.id === app ? { ...entry, maximized: !entry.maximized } : entry));
+  const focus = (app: AppId) => setAppWindows((current) => [...current.filter((entry) => entry.id !== app), ...current.filter((entry) => entry.id === app)]);
 
   return (
     <div className="desktop">
@@ -119,38 +140,47 @@ export default function DesktopShell({
         <div className="desktop__caption"><span>我的设备</span><small>常用应用</small></div>
         <nav className="desktop__shortcuts" aria-label="桌面应用">
           {APPS.map((app) => (
-            <button key={app.id} className={`desktop-icon desktop-icon--${app.tint}`} onDoubleClick={() => setActiveApp(app.id)} onClick={() => setActiveApp(app.id)}>
-              <span className="desktop-icon__image">{app.icon}</span>
+            <button key={app.id} className={`desktop-icon desktop-icon--${app.tint}`} onDoubleClick={() => open(app.id)} onClick={() => open(app.id)}>
+              <span className="desktop-icon__image"><AppArtwork kind={app.icon} /></span>
               <span className="desktop-icon__label">{app.label}</span>
             </button>
           ))}
         </nav>
 
-        {openApp && (
-          <section className="window window--open" aria-label={openApp.label}>
-            <header className="window__head">
-              <div className={`window__app-icon window__app-icon--${openApp.tint}`}>{openApp.icon}</div>
-              <div className="window__title"><b>{openApp.label}</b><small>{openApp.hint}</small></div>
-              <span className="window__host">{summary?.host.hostname ?? "DepDek Webdesk"}</span>
-              <div className="window__controls">
-                <button aria-label="最小化到桌面" title="最小化" onClick={() => setActiveApp(null)}>−</button>
-                <button className="window__close" aria-label="关闭窗口" title="关闭" onClick={() => setActiveApp(null)}>×</button>
+        {visibleWindows.map((appWindow, index) => {
+          const app = APPS.find((entry) => entry.id === appWindow.id)!;
+          return (
+            <section
+              key={appWindow.id}
+              className={`window window--open ${appWindow.maximized ? "window--maximized" : ""} ${activeApp === appWindow.id ? "window--focused" : ""}`}
+              aria-label={app.label}
+              style={{ "--window-cascade": `${Math.min(index * 28, 84)}px`, top: `${22 + Math.min(index * 22, 88)}px`, zIndex: 5 + index } as CSSProperties}
+              onPointerDown={() => focus(appWindow.id)}
+            >
+              <header className="window__head">
+                <div className="window__app-icon"><AppArtwork kind={app.icon} /></div>
+                <div className="window__title"><b>{app.label}</b><small>{app.hint}</small></div>
+                <span className="window__host">{summary?.host.hostname ?? "DepDek Webdesk"}</span>
+                <div className="window__controls">
+                  <button aria-label="最小化窗口" title="最小化" onClick={() => minimize(appWindow.id)}>−</button>
+                  <button aria-label={appWindow.maximized ? "还原窗口" : "最大化窗口"} title={appWindow.maximized ? "还原" : "最大化"} onClick={() => toggleMaximize(appWindow.id)}>{appWindow.maximized ? "❐" : "□"}</button>
+                  <button className="window__close" aria-label="关闭窗口" title="关闭" onClick={() => close(appWindow.id)}>×</button>
+                </div>
+              </header>
+              <div className="window__body">
+                {appWindow.id === "overview" && <Overview summary={summary} series={series} />}
+                {appWindow.id === "performance" && <Performance summary={summary} series={series} windowSize={windowSize} onWindowChange={setWindowSize} />}
+                {appWindow.id === "processes" && <Processes apps={apps} />}
+                {appWindow.id === "storage" && <StorageNetwork summary={summary} onRefresh={() => { setSummaryRefreshing(true); setSummaryRefresh((value) => value + 1); }} refreshing={summaryRefreshing} />}
+                {appWindow.id === "files" && <Files />}
+                {appWindow.id === "system" && <SystemInfo session={session} summary={summary} />}
               </div>
-            </header>
-            <div className="window__body">
-              {activeApp === "overview" && <Overview summary={summary} series={series} />}
-              {activeApp === "performance" && (
-                <Performance summary={summary} series={series} windowSize={windowSize} onWindowChange={setWindowSize} />
-              )}
-              {activeApp === "processes" && <Processes apps={apps} />}
-              {activeApp === "storage" && <StorageNetwork summary={summary} onRefresh={() => { setSummaryRefreshing(true); setSummaryRefresh((value) => value + 1); }} refreshing={summaryRefreshing} />}
-              {activeApp === "system" && <SystemInfo session={session} summary={summary} />}
-            </div>
-          </section>
-        )}
+            </section>
+          );
+        })}
 
         {performanceMiniVisible && (
-          <FloatingWindow stageRef={stageRef} storageKey="webdesk.performance-window.v2" className="floating-window--performance">
+          <FloatingWindow stageRef={stageRef} storageKey="webdesk.performance-window.v2" className={`floating-window--performance ${performanceMaximized ? "floating-window--maximized" : ""}`}>
             {(dragHandleProps) => (
               <PerformanceWidget
                 summary={summary}
@@ -158,24 +188,25 @@ export default function DesktopShell({
                 apps={apps}
                 dragHandleProps={dragHandleProps}
                 onMinimize={() => setPerformanceVisible(false)}
-                onOpenPerformance={() => setActiveApp("performance")}
-                onOpenProcesses={() => setActiveApp("processes")}
+                onClose={() => setPerformanceVisible(false)}
+                maximized={performanceMaximized}
+                onToggleMaximize={() => setPerformanceMaximized((value) => !value)}
               />
             )}
           </FloatingWindow>
         )}
 
         <nav className="dock" aria-label="应用程序坞">
-          <button className="dock__home" title="桌面" aria-label="返回桌面" onClick={() => setActiveApp(null)}>⌂</button>
+          <button className="dock__home" title="桌面" aria-label="最小化所有应用窗口" onClick={() => setMinimizedApps(appWindows.map((entry) => entry.id))}>⌂</button>
           <span className="dock__divider" />
           {APPS.map((app) => (
-            <button key={app.id} className={`dock__app ${activeApp === app.id ? "dock__app--active" : ""}`} title={app.label} aria-label={app.label} onClick={() => open(app.id)}>
-              <span className={`dock__icon dock__icon--${app.tint}`}>{app.icon}</span>
+            <button key={app.id} className={`dock__app ${appWindows.some((entry) => entry.id === app.id && !minimizedApps.includes(app.id)) ? "dock__app--active" : ""} ${minimizedApps.includes(app.id) ? "dock__app--minimized" : ""}`} title={minimizedApps.includes(app.id) ? `恢复${app.label}` : app.label} aria-label={minimizedApps.includes(app.id) ? `恢复${app.label}` : app.label} onClick={() => open(app.id)}>
+              <span className="dock__icon"><AppArtwork kind={app.icon} /></span>
               <i />
             </button>
           ))}
           <span className="dock__divider" />
-          <button className={`dock__app dock__app--monitor ${performanceMiniVisible || activeApp === "performance" ? "dock__app--active" : ""}`} title={performanceMiniVisible ? "性能窗口已显示" : "显示性能窗口"} aria-label={performanceMiniVisible ? "性能窗口已显示" : "显示性能窗口"} onClick={() => { setPerformanceVisible(true); if (activeApp === "performance") setActiveApp(null); }}>
+          <button className={`dock__app dock__app--monitor ${performanceMiniVisible || appWindows.some((entry) => entry.id === "performance") ? "dock__app--active" : ""}`} title={performanceMiniVisible ? "性能窗口已显示" : "显示性能窗口"} aria-label={performanceMiniVisible ? "性能窗口已显示" : "显示性能窗口"} onClick={() => { setPerformanceVisible(true); setPerformanceMaximized(false); if (appWindows.some((entry) => entry.id === "performance")) open("performance"); }}>
             <span className="dock__monitor"><i /><i /><i /></span><i />
           </button>
           <div className="dock__system"><span className={`dock__connection ${error ? "dock__connection--bad" : ""}`} /><span>{error ? "设备离线" : "本机在线"}</span><span>{session.tls ? "TLS" : "局域网"}</span></div>

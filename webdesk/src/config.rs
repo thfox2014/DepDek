@@ -24,6 +24,10 @@ pub struct Config {
     #[serde(default)]
     pub data_dir: Option<PathBuf>,
 
+    /// Explicit read-only root exposed by the Webdesk file manager.
+    #[serde(default)]
+    pub files_root: Option<PathBuf>,
+
     /// Serve the SPA from disk instead of the embedded copy (frontend dev).
     #[serde(default)]
     pub web_root: Option<PathBuf>,
@@ -119,6 +123,7 @@ impl Config {
         let Some(path) = path else {
             let mut config = Config::from_toml("")?;
             config.apply_env();
+            config.validate()?;
             return Ok((config, None));
         };
 
@@ -127,6 +132,7 @@ impl Config {
         let mut config = Config::from_toml(&raw)
             .with_context(|| format!("解析配置失败：{}", path.display()))?;
         config.apply_env();
+        config.validate()?;
         Ok((config, Some(path)))
     }
 
@@ -137,6 +143,7 @@ impl Config {
                 tls_cert: None,
                 tls_key: None,
                 data_dir: None,
+                files_root: None,
                 web_root: None,
                 auth: AuthConfig::default(),
                 metrics: MetricsConfig::default(),
@@ -148,7 +155,8 @@ impl Config {
     }
 
     /// Environment overrides win over the file, which keeps systemd units simple:
-    /// `DEPDEK_WEBDESK_BIND`, `DEPDEK_WEBDESK_PASSWORD_HASH`, `DEPDEK_WEBDESK_DATA_DIR`.
+    /// `DEPDEK_WEBDESK_BIND`, `DEPDEK_WEBDESK_PASSWORD_HASH`,
+    /// `DEPDEK_WEBDESK_DATA_DIR`, and `DEPDEK_WEBDESK_FILES_ROOT`.
     fn apply_env(&mut self) {
         if let Ok(bind) = std::env::var("DEPDEK_WEBDESK_BIND") {
             if let Ok(parsed) = bind.parse() {
@@ -165,9 +173,24 @@ impl Config {
                 self.data_dir = Some(PathBuf::from(dir));
             }
         }
+        if let Ok(dir) = std::env::var("DEPDEK_WEBDESK_FILES_ROOT") {
+            if !dir.trim().is_empty() {
+                self.files_root = Some(PathBuf::from(dir));
+            }
+        }
     }
 
     pub fn validate(&self) -> Result<()> {
+        if self
+            .files_root
+            .as_ref()
+            .is_some_and(|path| !path.is_absolute())
+        {
+            bail!("files_root 必须是绝对路径");
+        }
+        if self.files_root.as_deref() == Some(Path::new("/")) {
+            bail!("files_root 不能是系统根目录");
+        }
         if self.tls_cert.is_some() != self.tls_key.is_some() {
             bail!("tls_cert 与 tls_key 必须同时配置");
         }
@@ -199,6 +222,10 @@ impl Config {
 
     pub fn audit_path(&self) -> PathBuf {
         self.resolved_data_dir().join("webdesk-audit.jsonl")
+    }
+
+    pub fn resolved_files_root(&self) -> Option<PathBuf> {
+        self.files_root.clone()
     }
 
     pub fn tls_enabled(&self) -> bool {
@@ -244,6 +271,8 @@ mod tests {
         assert!(Config::from_toml("[metrics]\ninterval_ms = 10\n").is_err());
         assert!(Config::from_toml("[metrics]\nhistory = 0\n").is_err());
         assert!(Config::from_toml("tls_cert = \"/tmp/a.pem\"\n").is_err());
+        assert!(Config::from_toml("files_root = \"shared\"\n").is_err());
+        assert!(Config::from_toml("files_root = \"/\"\n").is_err());
         assert!(Config::from_toml("unknown_field = 1\n").is_err());
     }
 
@@ -256,5 +285,16 @@ mod tests {
             PathBuf::from("/var/lib/depdek-webdesk")
         );
         assert!(config.audit_path().ends_with("webdesk-audit.jsonl"));
+    }
+
+    #[test]
+    fn file_manager_requires_an_explicit_root() {
+        let mut config = Config::from_toml("").unwrap();
+        assert_eq!(config.resolved_files_root(), None);
+        config.files_root = Some(PathBuf::from("/srv/depdek/shared"));
+        assert_eq!(
+            config.resolved_files_root(),
+            Some(PathBuf::from("/srv/depdek/shared"))
+        );
     }
 }

@@ -1,7 +1,7 @@
 # DepDek Webdesk
 
 类飞牛的**远程 Web 管理控制台**：同一个局域网里的任何设备打开浏览器就能看这台机器的
-CPU / 内存 / 磁盘 / 网络，以及**每个应用程序**占用的资源。首页采用桌面与 Dock 布局，性能监控以可拖动、可收起的小窗常驻显示。
+CPU / 内存 / 磁盘 / 网络，以及**每个应用程序**占用的资源。首页采用桌面与 Dock 布局，应用窗口可最小化、最大化与缩放，并附带受限只读文件管理器。
 
 Rust（axum + sysinfo）后端 + React 前端，前端构建产物用 `rust-embed` 编进二进制 —— 单文件部署，
 运行时不需要 Node，也不需要静态目录。
@@ -42,7 +42,9 @@ cp webdesk.example.toml /etc/depdek/webdesk.toml   # 把上一步的 password_ha
 | `depdek-webdesk version` | 打印仓库 `VERSION` |
 
 配置查找顺序：`--config` → `$DEPDEK_WEBDESK_CONFIG` → `/etc/depdek/webdesk.toml` → 内置默认值。
-环境变量覆盖：`DEPDEK_WEBDESK_BIND`、`DEPDEK_WEBDESK_PASSWORD_HASH`、`DEPDEK_WEBDESK_DATA_DIR`。
+环境变量覆盖：`DEPDEK_WEBDESK_BIND`、`DEPDEK_WEBDESK_PASSWORD_HASH`、`DEPDEK_WEBDESK_DATA_DIR`、`DEPDEK_WEBDESK_FILES_ROOT`。
+
+文件管理目录必须通过 `files_root` 或 `DEPDEK_WEBDESK_FILES_ROOT` 显式指定为绝对路径；建议指向专用共享目录并只授予服务账号读取权限。文件应用提供目录浏览、文本预览和下载，不会改动文件。
 
 ## 部署为开机自启
 
@@ -70,7 +72,7 @@ open http://127.0.0.1:5280/?demo=1
 ## 测试
 
 ```bash
-cd webdesk && cargo test            # 30 个单测
+cd webdesk && cargo test            # 35 个单测
 bash webdesk/scripts/e2e.sh         # 26 项端到端 HTTP 断言
 bash webdesk/scripts/screenshot.sh  # 无头 Firefox 截图 → design-qa/webdesk-<日期>/
 ```
@@ -79,6 +81,6 @@ bash webdesk/scripts/screenshot.sh  # 无头 Firefox 截图 → design-qa/webdes
 
 - Argon2id 密码 + HttpOnly / SameSite=Strict 会话 Cookie + 绝对与空闲双超时；
 - 写操作校验 CSRF 令牌，登录失败按来源地址指数退避；
-- 只读 `/proc`、`/sys` 与自己的 `data_dir`，不需要 root，不提供 shell；
+- 只读 `/proc`、`/sys`、自己的 `data_dir` 与显式授权的 `files_root`，不需要 root，不提供 shell；
 - 所有登录与管理动作写入 append-only 审计 `webdesk-audit.jsonl`；
 - 本版本是明文 HTTP：仅建议可信局域网，或在前端加反向代理终止 TLS。

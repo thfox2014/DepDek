@@ -90,7 +90,7 @@ fn print_help() {
   depdek-webdesk version
 
 配置查找顺序: --config → $DEPDEK_WEBDESK_CONFIG → /etc/depdek/webdesk.toml → 内置默认值
-环境变量覆盖: DEPDEK_WEBDESK_BIND / DEPDEK_WEBDESK_PASSWORD_HASH / DEPDEK_WEBDESK_DATA_DIR"
+环境变量覆盖: DEPDEK_WEBDESK_BIND / DEPDEK_WEBDESK_PASSWORD_HASH / DEPDEK_WEBDESK_DATA_DIR / DEPDEK_WEBDESK_FILES_ROOT"
     );
 }
 
@@ -122,6 +122,13 @@ fn check_config(flags: Flags) -> Result<()> {
     println!("监听地址: {}", config.bind);
     println!("数据目录: {}", config.resolved_data_dir().display());
     println!("审计日志: {}", config.audit_path().display());
+    println!(
+        "文件管理根目录: {}",
+        config
+            .resolved_files_root()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "未配置".into())
+    );
     println!(
         "采样间隔: {} ms（保留 {} 个采样点）",
         config.metrics.interval_ms, config.metrics.history

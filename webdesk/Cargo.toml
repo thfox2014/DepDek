@@ -19,6 +19,7 @@ sysinfo = "0.39.6"
 thiserror = "2.0.21"
 time = { version = "0.3.55", features = ["formatting", "std"] }
 tokio = { version = "1.53.1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
 toml = "1.1.6"
 tower-http = { version = "0.7.1", features = ["fs", "compression-gzip", "trace", "limit"] }
 tracing = "0.1.44"

@@ -10,6 +10,8 @@ import type {
   AppList,
   AppUsage,
   AuditTail,
+  FileEntry,
+  FilesPage,
   ProcessList,
   ProcessUsage,
   Sample,
@@ -140,6 +142,51 @@ const APPS: AppUsage[] = [
     top_pids: [4012, 4020],
   },
 ];
+
+const FILES: Record<string, FileEntry[]> = {
+  "": [
+    { name: "项目资料", path: "项目资料", kind: "directory", size_bytes: 0, modified_at_ms: Date.now() - 3_600_000 },
+    { name: "照片", path: "照片", kind: "directory", size_bytes: 0, modified_at_ms: Date.now() - 86_400_000 },
+    { name: "下载", path: "下载", kind: "directory", size_bytes: 0, modified_at_ms: Date.now() - 172_800_000 },
+    { name: "NAS 使用说明.md", path: "NAS 使用说明.md", kind: "file", size_bytes: 2_840, modified_at_ms: Date.now() - 720_000 },
+    { name: "本周待办.txt", path: "本周待办.txt", kind: "file", size_bytes: 1_246, modified_at_ms: Date.now() - 7_200_000 },
+    { name: "设备清单.csv", path: "设备清单.csv", kind: "file", size_bytes: 28_390, modified_at_ms: Date.now() - 604_800_000 },
+  ],
+  "项目资料": [
+    { name: "产品规划", path: "项目资料/产品规划", kind: "directory", size_bytes: 0, modified_at_ms: Date.now() - 86_400_000 },
+    { name: "版本路线图.md", path: "项目资料/版本路线图.md", kind: "file", size_bytes: 7_481, modified_at_ms: Date.now() - 86_400_000 },
+    { name: "会议纪要.txt", path: "项目资料/会议纪要.txt", kind: "file", size_bytes: 4_120, modified_at_ms: Date.now() - 259_200_000 },
+  ],
+  "项目资料/产品规划": [
+    { name: "AgentOS 概念方案.md", path: "项目资料/产品规划/AgentOS 概念方案.md", kind: "file", size_bytes: 12_288, modified_at_ms: Date.now() - 172_800_000 },
+  ],
+  "照片": [
+    { name: "2026-09 设备照片", path: "照片/2026-09 设备照片", kind: "directory", size_bytes: 0, modified_at_ms: Date.now() - 43_200_000 },
+    { name: "桌面壁纸.png", path: "照片/桌面壁纸.png", kind: "file", size_bytes: 1_482_300, modified_at_ms: Date.now() - 604_800_000 },
+  ],
+  "下载": [
+    { name: "depdek-webdesk-v0.2.0.tar.gz", path: "下载/depdek-webdesk-v0.2.0.tar.gz", kind: "file", size_bytes: 18_230_552, modified_at_ms: Date.now() - 3_600_000 },
+  ],
+};
+
+const DEMO_TEXT: Record<string, string> = {
+  "NAS 使用说明.md": "# NAS 使用说明\n\n- 共享文件位于「项目资料」目录\n- 图片可在「照片」目录浏览\n- 文件管理器当前为只读查看与下载模式\n",
+  "本周待办.txt": "本周待办\n1. 检查备份任务\n2. 整理项目资料\n3. 更新 AgentOS 方案\n",
+  "项目资料/版本路线图.md": "# 版本路线图\n\n## 下一阶段\n- 桌面窗口管理\n- 文件浏览与下载\n- 统一权限审计\n",
+  "项目资料/会议纪要.txt": "会议纪要\n讨论了 Webdesk 桌面窗口和本地文件访问边界。\n",
+  "项目资料/产品规划/AgentOS 概念方案.md": "# AgentOS 概念方案\n\n以任务为中心组织 Agent、工具和个人数据，在可审计授权下让智能体完成跨应用工作。\n",
+};
+
+function filesPage(path: string): FilesPage {
+  const items = FILES[path] ?? [];
+  return {
+    root_name: "我的资料",
+    path,
+    parent_path: path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : path ? "" : null,
+    items,
+    truncated: false,
+  };
+}
 
 function processRows(): ProcessUsage[] {
   const rows: Array<[number, string, string, number, number, string]> = [
@@ -346,5 +393,14 @@ export const demoApi = {
       detail: entry.ok ? {} : { reason: "bad-password" },
     }));
     return { path: "/var/lib/depdek-webdesk/webdesk-audit.jsonl", entries: entries.slice(0, limit) };
+  },
+  async files(path: string): Promise<FilesPage> {
+    return filesPage(path);
+  },
+  async filePreview(path: string): Promise<{ content: string }> {
+    return { content: DEMO_TEXT[path] ?? "预览示例：此文件内容仅用于界面演示。" };
+  },
+  async download(path: string): Promise<Blob> {
+    return new Blob([DEMO_TEXT[path] ?? `DepDek Webdesk 演示文件：${path}\n`], { type: "text/plain;charset=utf-8" });
   },
 };

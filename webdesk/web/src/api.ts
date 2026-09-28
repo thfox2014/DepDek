@@ -178,6 +178,22 @@ export interface AuditTail {
   entries: AuditEntry[];
 }
 
+export interface FileEntry {
+  name: string;
+  path: string;
+  kind: "directory" | "file";
+  size_bytes: number;
+  modified_at_ms: number | null;
+}
+
+export interface FilesPage {
+  root_name: string;
+  path: string;
+  parent_path: string | null;
+  items: FileEntry[];
+  truncated: boolean;
+}
+
 const params = new URLSearchParams(window.location.search);
 export const demoMode =
   import.meta.env.VITE_WEBDESK_DEMO === "1" || params.get("demo") === "1";
@@ -210,6 +226,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
+async function download(path: string): Promise<Blob> {
+  if (demoMode) return demoApi.download(path);
+  const response = await fetch(`/api/files/download?path=${encodeURIComponent(path)}`, {
+    credentials: "same-origin",
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { error?: unknown } | null;
+    throw new Error(payload?.error ? String(payload.error) : `下载失败（HTTP ${response.status}）`);
+  }
+  return response.blob();
+}
+
 export const api = {
   session: () => (demoMode ? demoApi.session() : request<SessionInfo>("/api/session")),
   login: (password: string) =>
@@ -232,6 +260,11 @@ export const api = {
     demoMode ? demoApi.apps(limit) : request<AppList>(`/api/apps?limit=${limit}`),
   audit: (limit: number) =>
     demoMode ? demoApi.audit(limit) : request<AuditTail>(`/api/audit?limit=${limit}`),
+  files: (path = "") =>
+    demoMode ? demoApi.files(path) : request<FilesPage>(`/api/files?path=${encodeURIComponent(path)}`),
+  filePreview: (path: string) =>
+    demoMode ? demoApi.filePreview(path) : request<{ content: string }>(`/api/files/preview?path=${encodeURIComponent(path)}`),
+  fileDownload: download,
 };
 
 export function formatBytes(bytes: number, digits = 1): string {

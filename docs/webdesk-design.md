@@ -1,6 +1,6 @@
 # DepDek Webdesk 设计（远程 Web 管理控制台）
 
-> 状态：v0.2.0 首个可运行版本（登录 / 概览 / 性能监控 / 进程与每应用占用 / 存储与网络 / 审计与关于）
+> 状态：v0.2.x（登录 / 桌面与可管理窗口 / 文件管理 / 概览 / 性能监控 / 进程与每应用占用 / 存储与网络 / 审计与关于）
 > 相关：`webdesk/`（Rust 服务 + 前端）、[contract.md](contract.md)（桌面端三方契约，本文档不修改该契约）
 
 ## 1. 目标与非目标
@@ -13,7 +13,7 @@
 
 **非目标（本版本明确不做）**
 
-- 不做 shell / 任意命令执行，不做任意路径文件读写。
+- 不做 shell / 任意命令执行；文件应用只允许在显式配置根目录内浏览、文本预览和下载，不提供上传、改名、删除或任意路径访问。
 - 不做多用户与 RBAC：单管理员账号 + 密码。
 - 不做 NAS 共享、快照、备份的写操作（路线图第 2 阶段）。
 - 不自己实现 TLS 终止：本版本经反向代理（nginx/caddy）提供 HTTPS，见 §5.4。
@@ -23,7 +23,7 @@
 | 组件 | 关系 |
 |---|---|
 | `src-tauri/`（桌面端 Rust 核心） | **不共享进程**。webdesk 是独立二进制，桌面端不启动它、也不依赖它。 |
-| vault 沙箱（`vault.rs`） | webdesk 不读写用户的 DepDek Home 数据目录；它只读 `/proc`、`/sys` 与自己的 `data_dir`。 |
+| vault 沙箱（`vault.rs`） | webdesk 不读写用户的 DepDek Home 数据目录；它只读 `/proc`、`/sys`，自己的 `data_dir`，以及管理员单独配置的只读文件根目录。 |
 | `docs/contract.md` | DepDek 桌面端新增 `storage_summary` Tauri 命令；Webdesk 仍是独立服务，不参与桌面端 ↔ sidecar 的 JSON-RPC。 |
 | agent 工具 | webdesk **不会**注册成 agent 工具；agent 依旧只有 `vault/*` 五个文件工具。 |
 
@@ -70,6 +70,7 @@ webdesk/
 │     ├─ mod.rs                   路由装配（限流中间件层）
 │     ├─ session.rs               登录/登出/会话 + 鉴权与 CSRF 守卫
 │     ├─ system.rs                health/summary/series/disks/network/audit
+│     ├─ files.rs                 配置根目录下的只读列表/预览/下载与审计
 │     └─ processes.rs             /api/apps、/api/processes
 └─ web/                           前端（Vite + React + TS，无 UI 库、无图表库）
    └─ src/
@@ -77,7 +78,7 @@ webdesk/
       ├─ demo.ts                  `?demo=1` 示例数据
       ├─ components/              charts.tsx（SVG 折线/环/进度条）、Login.tsx
       ├─ desktop/                 DesktopShell.tsx、FloatingWindow.tsx、PerformanceWidget.tsx
-      └─ apps/                    Overview / Performance / Processes / StorageNetwork / SystemInfo
+      └─ apps/                    Overview / Performance / Processes / StorageNetwork / Files / SystemInfo
 ```
 
 ## 4. 指标与「应用程序」归并
@@ -122,7 +123,7 @@ CPU 百分比沿用 `sysinfo` 语义：单核占比（多核可 > 100%），同�
 
 `<data_dir>/webdesk-audit.jsonl`，一行一个 JSON 对象，只追加：`ts` / `ts_ms` / `action` / `actor` / `ip` / `ok` / `detail`。
 当前动作：`service.start`、`service.stop`、`login.success`、`login.failure`、`login.blocked`、`session.logout`。
-审计写入失败只打印到 stderr，**不会**让请求失败（与桌面端 vault 审计一致的取舍）。`/api/audit` 只回读末尾 256 KiB。
+审计写入失败只打印到 stderr，**不会**让请求失败（与桌面端 vault 审计一致的取舍）。当前动作包括登录/会话和 `files.list` / `files.preview` / `files.download`；`/api/audit` 只回读末尾 256 KiB。
 
 ### 5.4 网络暴露
 
@@ -141,12 +142,12 @@ location / {
 
 ### 5.5 权限
 
-服务本身不需要 root：只读 `/proc`、`/sys`，写自己的 `data_dir`。
+服务本身不需要 root：只读 `/proc`、`/sys`，写自己的 `data_dir`，并只读显式授权的 `files_root`。生产部署应把 `files_root` 指向专用共享目录，并确保服务账号只有读取权限；无认证调试模式下文件 API 一律禁用。
 `deploy/depdek-webdesk.service` 用 `DynamicUser=yes` + `ProtectSystem=strict` + `ProtectHome=read-only` 等限制；将来若要做 NAS/服务管理，再按能力拆分 helper 并逐项授权。
 
 ## 6. HTTP API
 
-所有响应为 JSON；未鉴权访问受保护接口返回 `401 {"error": "..."}`。
+除文件下载外，响应为 JSON；未鉴权访问受保护接口返回 `401 {"error": "..."}`。
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
@@ -161,14 +162,18 @@ location / {
 | GET | `/api/apps?limit=N` | 是 | 每应用聚合（CPU/内存/IO/PID） |
 | GET | `/api/processes?sort=cpu\|mem\|disk&limit=N` | 是 | 进程明细，默认 50 |
 | GET | `/api/audit?limit=N` | 是 | 审计日志尾部（默认 50） |
+| GET | `/api/files?path=相对路径` | 是 | 浏览配置根目录；最多返回 500 项，忽略隐藏文件与符号链接 |
+| GET | `/api/files/preview?path=相对路径` | 是 | 预览允许类型的 UTF-8 文本，单文件上限 256 KiB |
+| GET | `/api/files/download?path=相对路径` | 是 | 下载配置根目录内普通文件，最大 4 GiB；流式传输 |
 | GET | `/`、静态资源 | 否 | 内嵌 SPA；未知 `/api/*` 返回 JSON 404，不会被 SPA 吞掉 |
 
 ## 7. 前端
 
-- **桌面（`DesktopShell`）**：以桌面图标启动应用，以浮动应用窗口展示详情；底部 Dock 支持返回桌面、切换应用和恢复已收起的性能窗。使用多色极光壁纸和半透明 Dock，系统连接与时间保持在顶栏。
-- **性能监控小窗（`PerformanceWidget`）**：常驻桌面的紧凑浮窗，呈现 CPU / 内存、近期 CPU 趋势、每核占用、网络与磁盘实时速率及资源占用热点；可最小化、从 Dock 恢复，或展开完整「性能监控」应用。
+- **桌面（`DesktopShell`）**：以桌面图标启动应用，以可并存的浮动窗口展示详情；窗口支持最小化到 Dock、最大化/还原，并可拖动右下角缩放。Dock 可恢复最小化窗口或切换前台。
+- **性能监控小窗（`PerformanceWidget`）**：常驻桌面的紧凑浮窗，呈现 CPU / 内存、近期 CPU 趋势、每核占用、网络与磁盘实时速率及资源占用热点；支持最小化、最大化/还原、右下角缩放、从 Dock 恢复，或展开完整「性能监控」应用。
 - **拖动体验（`FloatingWindow`）**：使用 Pointer Events 与 `requestAnimationFrame` 批量直接更新 `translate3d`，拖动过程中不逐帧触发 React 渲染；松手时才提交位置并保存到浏览器本地。位置随视口变化约束在桌面可视区内，也支持聚焦标题栏后按住 `Alt` + 方向键移动（`Shift` 加速）。
 - **存储空间应用**：按挂载卷展示容量、已用/可用空间与空间偏紧状态；卷合计不代表物理盘容量（共享容器可能重复）。DepDek 桌面通过只读 `storage_summary` 读取本机挂载卷，Webdesk 通过已有受保护的 `/api/system/disks` / `/api/system/summary` 展示同一主机的独立采样。两端均不扫描文件内容，不提供分区写操作。
+- **文件管理应用**：Webdesk 通过 `files_root` 沙箱目录浏览文件夹、按当前目录名称筛选、预览小型 UTF-8 文本并下载文件；操作记录在 Webdesk append-only 审计日志。此版本只读，不允许创建、上传、移动、改名或删除；不跟随符号链接，也拒绝越出根目录的路径。
 - **其他应用**：概览（设备事实 + 全部指标卡片）、性能监控（2/4/10 分钟窗口）、进程与占用（应用聚合 + 进程表，可排序/搜索）、网络接口、审计与关于。
 - 轮询：`series` 2s、`summary`+`apps` 3s、进程表 3s（仅在该应用打开时）。
 - 图表是手写 SVG（`components/charts.tsx`），不引入图表库；桌面端打包产物约 184 kB JS / 24 kB CSS（gzip 约 59 / 6 kB）。
@@ -195,7 +200,7 @@ webdesk/target/release/depdek-webdesk serve --config /etc/depdek/webdesk.toml
 ## 9. 测试
 
 ```bash
-cd webdesk && cargo test                       # 30 个单测：配置/认证/会话/限流/审计/归并/采样/静态资源
+cd webdesk && cargo test                       # 35 个单测：含文件沙箱路径/预览/下载校验
 bash webdesk/scripts/e2e.sh                    # 26 项端到端断言（真实 HTTP + 真实 /proc）
 bash webdesk/scripts/screenshot.sh             # 无头 Firefox 截图到 design-qa/webdesk-<日期>/
 ```
@@ -206,7 +211,7 @@ e2e 覆盖：健康检查、未登录 401、未知 API JSON 404、SPA 可访问�
 
 | 阶段 | 内容 |
 |---|---|
-| 1（当前） | 登录、概览、性能监控（桌面小组件 + 应用）、进程与每应用占用、存储/网络只读、审计视图 |
+| 1（当前） | 登录、桌面窗口管理、文件只读浏览/下载、概览、性能监控、进程与每应用占用、存储/网络只读、审计视图 |
 | 2 | 内置 TLS 终端（自签 + 上传证书）、磁盘 SMART、温度/风扇、告警阈值与通知、移动端布局打磨 |
 | 3 | NAS 能力：共享目录、快照、备份任务；全部写操作二次确认 + 审计 + 逐项能力授权 |
 | 4 | systemd 服务管理（启停/重启，白名单单元）、日志查看器、软件更新（签名校验 + 回滚） |

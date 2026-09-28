@@ -1,5 +1,6 @@
 import { Meter, Sparkline, toneFor } from "../components/charts";
 import { formatBytes, formatRate, type AppList, type Series, type Summary } from "../api";
+import AppArtwork from "../components/AppArtwork";
 import type { DragHandleProps } from "./FloatingWindow";
 
 interface Props {
@@ -8,8 +9,9 @@ interface Props {
   apps: AppList | null;
   dragHandleProps: DragHandleProps;
   onMinimize: () => void;
-  onOpenPerformance: () => void;
-  onOpenProcesses: () => void;
+  onClose: () => void;
+  maximized: boolean;
+  onToggleMaximize: () => void;
 }
 
 /** Compact, live desktop window for the read-only machine resource snapshot. */
@@ -19,8 +21,9 @@ export default function PerformanceWidget({
   apps,
   dragHandleProps,
   onMinimize,
-  onOpenPerformance,
-  onOpenProcesses,
+  onClose,
+  maximized,
+  onToggleMaximize,
 }: Props) {
   const samples = series?.samples ?? [];
   const cpuHistory = samples.map((sample) => sample.cpu_pct);
@@ -34,16 +37,16 @@ export default function PerformanceWidget({
     <section className="widget widget--performance" aria-label="系统性能监控">
       <header className="widget__head">
         <div className="widget__drag-handle" {...dragHandleProps}>
-          <span className="widget__mark" aria-hidden="true">⌁</span>
+          <span className="widget__mark"><AppArtwork kind="performance" /></span>
           <div className="widget__title">
             <h2>性能概览</h2>
             <small><i className={`dot ${summary ? "dot--ok" : "dot--bad"}`} />{summary ? `${summary.host.hostname} · ${summary.host.cores_logical} 线程` : "正在连接本机…"}</small>
           </div>
         </div>
         <div className="widget__actions">
-          <button className="widget__icon-button" title="查看进程" aria-label="查看进程与占用" onClick={onOpenProcesses}>≋</button>
           <button className="widget__icon-button" title="收起窗口" aria-label="收起性能监控" onClick={onMinimize}>−</button>
-          <button className="widget__icon-button widget__icon-button--accent" title="打开完整监控" aria-label="打开完整性能监控" onClick={onOpenPerformance}>↗</button>
+          <button className="widget__icon-button" title={maximized ? "还原窗口" : "最大化窗口"} aria-label={maximized ? "还原性能窗口" : "最大化性能窗口"} onClick={onToggleMaximize}>{maximized ? "❐" : "□"}</button>
+          <button className="widget__icon-button widget__icon-button--close" title="关闭性能窗口" aria-label="关闭性能窗口" onClick={onClose}>×</button>
         </div>
       </header>
 

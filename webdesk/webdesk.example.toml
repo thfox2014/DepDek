@@ -10,6 +10,9 @@ bind = "0.0.0.0:8787"
 # 数据目录（审计日志等）。默认 $XDG_DATA_HOME/depdek-webdesk，systemd 部署建议 /var/lib/depdek-webdesk。
 # data_dir = "/var/lib/depdek-webdesk"
 
+# 文件管理只读浏览根目录。必需显式设置为专用共享目录，并确保服务进程有只读权限；未配置时文件管理不可用。
+# files_root = "/srv/depdek/shared"
+
 # 开发用：从磁盘读取前端，而不是用编进二进制的内嵌副本。
 # web_root = "/home/tanhong/DepDek/webdesk/web/dist"
 

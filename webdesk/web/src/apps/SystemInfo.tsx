@@ -40,7 +40,7 @@ export default function SystemInfo({ session, summary }: { session: SessionInfo;
             {session.tls ? "已配置 TLS 证书" : "HTTP 明文传输：仅建议可信局域网，或用 nginx/caddy 反向代理终止 TLS"}
           </li>
           <li className="ok">管理动作写入 append-only 审计日志（webdesk-audit.jsonl）</li>
-          <li className="ok">不提供 shell / 任意文件读写；后续能力需逐项确认并审计</li>
+          <li className="ok">不提供 shell；文件应用仅可在授权根目录内只读查看与下载，操作有审计</li>
         </ul>
       </section>
 
