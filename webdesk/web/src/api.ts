@@ -194,6 +194,37 @@ export interface FilesPage {
   truncated: boolean;
 }
 
+export interface AgentStatus {
+  available: boolean;
+  configured: boolean;
+  engine: string;
+  model: string;
+  provider_id?: string;
+}
+
+export type AgentProviderProtocol = "openai-completions" | "openai-responses" | "anthropic-messages";
+
+export interface AgentProvider {
+  id: string;
+  name: string;
+  base_url: string;
+  protocol: AgentProviderProtocol;
+  model: string;
+  active: boolean;
+  configured: boolean;
+}
+
+export interface AgentProviderDraft extends Omit<AgentProvider, "active" | "configured"> {
+  api_key: string;
+}
+
+export interface AgentChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export type AgentId = "wukong" | "bajie" | "master" | "shaseng";
+
 const params = new URLSearchParams(window.location.search);
 export const demoMode =
   import.meta.env.VITE_WEBDESK_DEMO === "1" || params.get("demo") === "1";
@@ -265,6 +296,29 @@ export const api = {
   filePreview: (path: string) =>
     demoMode ? demoApi.filePreview(path) : request<{ content: string }>(`/api/files/preview?path=${encodeURIComponent(path)}`),
   fileDownload: download,
+  agentStatus: () => (demoMode ? demoApi.agentStatus() : request<AgentStatus>("/api/agent/status")),
+  agentProviders: () => (demoMode ? demoApi.agentProviders() : request<{ providers: AgentProvider[]; active_id: string }>("/api/agent/providers")),
+  saveAgentProvider: (provider: AgentProviderDraft) =>
+    demoMode
+      ? demoApi.saveAgentProvider(provider)
+      : request<{ providers: AgentProvider[]; active_id: string; restart_ok: boolean; message: string }>("/api/agent/providers", {
+          method: "POST",
+          body: JSON.stringify({ ...provider }),
+        }),
+  activateAgentProvider: (id: string) =>
+    demoMode
+      ? demoApi.activateAgentProvider(id)
+      : request<{ providers: AgentProvider[]; active_id: string; restart_ok: boolean; message: string }>("/api/agent/providers/activate", {
+          method: "POST",
+          body: JSON.stringify({ id }),
+        }),
+  agentChat: (agent: AgentId, message: string, history: AgentChatMessage[]) =>
+    demoMode
+      ? demoApi.agentChat(agent, message, history)
+      : request<{ engine: string; model: string; provider_id?: string; text: string }>("/api/agent/chat", {
+          method: "POST",
+          body: JSON.stringify({ agent, message, history }),
+        }),
 };
 
 export function formatBytes(bytes: number, digits = 1): string {

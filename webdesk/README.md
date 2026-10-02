@@ -1,7 +1,7 @@
 # DepDek Webdesk
 
-类飞牛的**远程 Web 管理控制台**：同一个局域网里的任何设备打开浏览器就能看这台机器的
-CPU / 内存 / 磁盘 / 网络，以及**每个应用程序**占用的资源。首页采用桌面与 Dock 布局，应用窗口可最小化、最大化与缩放，并附带受限只读文件管理器。
+**远程 Web 管理 + Agent 工作台**：同一个局域网里的设备可以看主机资源、浏览显式授权的只读共享，并打开全屏 Agent Team 协作室，在悟空、八戒、师傅、沙僧之间切换，与隔离的 DeepSeek Harness 对话。
+Harness 独立运行于 `depdek-agent`，Webdesk 通过 Unix socket 连接，不持久化 API Key，也不执行 shell。用户明确提交 Provider 密钥时，Webdesk 仅在请求期间转发至受限配置服务。
 
 Rust（axum + sysinfo）后端 + React 前端，前端构建产物用 `rust-embed` 编进二进制 —— 单文件部署，
 运行时不需要 Node，也不需要静态目录。
@@ -42,13 +42,18 @@ cp webdesk.example.toml /etc/depdek/webdesk.toml   # 把上一步的 password_ha
 | `depdek-webdesk version` | 打印仓库 `VERSION` |
 
 配置查找顺序：`--config` → `$DEPDEK_WEBDESK_CONFIG` → `/etc/depdek/webdesk.toml` → 内置默认值。
-环境变量覆盖：`DEPDEK_WEBDESK_BIND`、`DEPDEK_WEBDESK_PASSWORD_HASH`、`DEPDEK_WEBDESK_DATA_DIR`、`DEPDEK_WEBDESK_FILES_ROOT`。
+环境变量覆盖：`DEPDEK_WEBDESK_BIND`、`DEPDEK_WEBDESK_PASSWORD_HASH`、`DEPDEK_WEBDESK_DATA_DIR`、`DEPDEK_WEBDESK_FILES_ROOT`、`DEPDEK_WEBDESK_AGENT_SOCKET`、`DEPDEK_WEBDESK_AGENT_CONFIG_SOCKET`。
 
 文件管理目录必须通过 `files_root` 或 `DEPDEK_WEBDESK_FILES_ROOT` 显式指定为绝对路径；建议指向专用共享目录并只授予服务账号读取权限。文件应用提供目录浏览、文本预览和下载，不会改动文件。
 
 ## 部署为开机自启
 
+Agent 云端执行需先单独安装 `agent-service/`。Webdesk 服务加入 `depdek-agent` 组后连接聊天 socket，并加入专用 `depdek-webdesk` 组后连接只写 Provider 配置 broker；该 broker 负责按白名单更新 `/etc/depdek/agent.env`，Webdesk 本身不读取或写入密钥文件。远程提交 API Key 要启用 TLS；本机回环访问可在无 TLS 时使用。
+
 ```bash
+getent group depdek-agent >/dev/null || sudo groupadd --system depdek-agent
+getent group depdek-webdesk >/dev/null || sudo groupadd --system depdek-webdesk
+id depdek-agent >/dev/null 2>&1 || sudo useradd --system --no-create-home --shell /usr/sbin/nologin --gid depdek-agent depdek-agent
 sudo install -m 0755 webdesk/target/release/depdek-webdesk /usr/local/bin/depdek-webdesk
 sudo mkdir -p /etc/depdek && sudo cp webdesk/webdesk.example.toml /etc/depdek/webdesk.toml
 sudo install -m 0644 webdesk/deploy/depdek-webdesk.service /etc/systemd/system/
@@ -72,8 +77,9 @@ open http://127.0.0.1:5280/?demo=1
 ## 测试
 
 ```bash
-cd webdesk && cargo test            # 35 个单测
-bash webdesk/scripts/e2e.sh         # 26 项端到端 HTTP 断言
+cargo test --manifest-path webdesk/Cargo.toml  # Webdesk 后端单测
+npm run agent:test                   # depdek-agent 单测
+bash webdesk/scripts/e2e.sh         # HTTP / 鉴权 / Agent socket 断言
 bash webdesk/scripts/screenshot.sh  # 无头 Firefox 截图 → design-qa/webdesk-<日期>/
 ```
 
@@ -81,6 +87,7 @@ bash webdesk/scripts/screenshot.sh  # 无头 Firefox 截图 → design-qa/webdes
 
 - Argon2id 密码 + HttpOnly / SameSite=Strict 会话 Cookie + 绝对与空闲双超时；
 - 写操作校验 CSRF 令牌，登录失败按来源地址指数退避；
-- 只读 `/proc`、`/sys`、自己的 `data_dir` 与显式授权的 `files_root`，不需要 root，不提供 shell；
+- Webdesk 只读 `/proc`、`/sys`、自己的 `data_dir` 与显式授权的 `files_root`，不需要 root，不提供 shell；Agent 的 DeepSeek Key 只由独立 `depdek-agent` 进程持有；
+- Agent 对话必须逐轮确认发送至 DeepSeek；Harness 的文件/shell/Web/子 Agent 工具均禁用；
 - 所有登录与管理动作写入 append-only 审计 `webdesk-audit.jsonl`；
 - 本版本是明文 HTTP：仅建议可信局域网，或在前端加反向代理终止 TLS。

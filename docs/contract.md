@@ -272,6 +272,33 @@ type AgentSkill = "documents" | "photos" | "music" | "videos" | "mail" | "memory
 
 所有 vault_* commands 与 sidecar 走**同一个 Vault 服务**，同样写审计日志（session_id="user"）。command 错误以字符串 message 返回（Tauri `Result<T, String>`），message 中包含错误码文本，如 `E32001 path escapes root`。
 
+### 3.1 Linux depdek-space 服务（首期）
+
+depdek-space 是独立于 Tauri 桌面进程的 Linux 逻辑存储服务，不改变现有 storage_summary 行为。首期二进制位于 space-service/，可通过 systemd user service 常驻运行。
+
+- 资源类型：hot（高速本地）、durable（本地长期）、cloud（云资源登记）。
+- 用户对象地址：逻辑 space_id/key，不暴露物理资源路径。
+- 首期真实读写：hot 和 durable；cloud 仅登记、保存 endpoint/bucket 并做健康检查。
+- 状态文件：服务 root 下的 state.json；对象数据以 SHA-256 内容地址保存到资源目录的隐藏 .depdek-space/objects/。
+- 服务 socket：Unix socket，一行一个 JSON-RPC 2.0 请求，默认权限 0600。
+
+首期方法：
+
+| method | params | 说明 |
+|---|---|---|
+| space/init | {} | 初始化服务状态 |
+| space/resource/add | ResourceAddArgs | 登记 hot/durable/cloud 资源 |
+| space/resource/list | {} | 列出资源 |
+| space/space/create | {name, primary_class} | 创建逻辑空间 |
+| space/space/list | {} | 列出逻辑空间 |
+| space/object/put | {space_id, key, file} | 写入本地对象并生成版本 |
+| space/object/get | {space_id, key, output} | 读取最新版本 |
+| space/object/list | {space_id} | 列出逻辑对象 |
+| space/summary | {} | 服务摘要 |
+| space/health | {} | 资源健康状态 |
+
+CLI 可以在没有 daemon 时直接操作同一状态；指定 --socket 后改为通过常驻服务操作。该服务不获得 Agent 的任意 fs/bash 权限，后续接入 Agent 时仍需通过受控的 space/* capability。
+
 ## 4. Tauri events（Rust → 前端）
 
 | event | payload |

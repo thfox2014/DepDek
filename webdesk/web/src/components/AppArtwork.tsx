@@ -1,6 +1,6 @@
 import { useId } from "react";
 
-export type AppArtworkKind = "overview" | "performance" | "processes" | "storage" | "files" | "system";
+export type AppArtworkKind = "overview" | "performance" | "processes" | "storage" | "files" | "system" | "agent";
 
 /** Shared glossy cobalt-and-amber artwork for the Webdesk app launcher and windows. */
 export default function AppArtwork({ kind, className = "" }: { kind: AppArtworkKind; className?: string }) {
@@ -118,6 +118,21 @@ export default function AppArtwork({ kind, className = "" }: { kind: AppArtworkK
           <path d="m38 48 7 7 14-16" stroke={fill("amber")} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" filter={fill("glow")} />
           <path d="m69 58 6 2-2 5-6-2m-37-5-6 2 2 5 6-2" fill={fill("amber")} stroke="#ffe49b" strokeWidth="1" />
           <path d="m48 16 3 5h-6l3-5Z" fill={fill("amber")} />
+        </g>
+      )}
+
+      {kind === "agent" && (
+        <g filter={fill("shadow")} shapeRendering="crispEdges">
+          <rect x="32" y="18" width="32" height="9" rx="2" fill={fill("amber")} stroke="#fff1a3" strokeWidth="1.5" />
+          <rect x="27" y="29" width="42" height="35" rx="9" fill={fill("amber")} stroke="#ffe79a" strokeWidth="1.5" />
+          <rect x="21" y="38" width="10" height="17" rx="4" fill={fill("amber")} />
+          <rect x="65" y="38" width="10" height="17" rx="4" fill={fill("amber")} />
+          <rect x="37" y="43" width="6" height="4" rx="1" fill="#13204d" />
+          <rect x="53" y="43" width="6" height="4" rx="1" fill="#13204d" />
+          <path d="M42 54h12" stroke="#9a3c24" strokeWidth="2.4" strokeLinecap="square" />
+          <path d="M25 65h46l-5 15H30l-5-15Z" fill={fill("blue")} stroke={fill("cyan")} strokeWidth="1.5" />
+          <path d="M18 83c11-6 49-6 60 0" stroke={fill("amber")} strokeWidth="4" strokeLinecap="round" />
+          <circle cx="48" cy="34" r="2" fill="#fff4ae" />
         </g>
       )}
     </svg>

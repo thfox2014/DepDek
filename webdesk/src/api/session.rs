@@ -10,9 +10,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::auth::{
-    self, client_ip, session_cookie, Session, CSRF_HEADER, SESSION_COOKIE,
-};
+use crate::auth::{self, client_ip, session_cookie, Session, CSRF_HEADER, SESSION_COOKIE};
 use crate::state::AppState;
 
 pub const VERSION: &str = env!("DEPDEK_VERSION");
@@ -25,19 +23,34 @@ pub struct ApiError {
 
 impl ApiError {
     pub fn unauthorized(message: impl Into<String>) -> Self {
-        Self { status: StatusCode::UNAUTHORIZED, message: message.into() }
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            message: message.into(),
+        }
     }
     pub fn forbidden(message: impl Into<String>) -> Self {
-        Self { status: StatusCode::FORBIDDEN, message: message.into() }
+        Self {
+            status: StatusCode::FORBIDDEN,
+            message: message.into(),
+        }
     }
     pub fn bad_request(message: impl Into<String>) -> Self {
-        Self { status: StatusCode::BAD_REQUEST, message: message.into() }
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            message: message.into(),
+        }
     }
     pub fn not_found(message: impl Into<String>) -> Self {
-        Self { status: StatusCode::NOT_FOUND, message: message.into() }
+        Self {
+            status: StatusCode::NOT_FOUND,
+            message: message.into(),
+        }
     }
     pub fn unavailable(message: impl Into<String>) -> Self {
-        Self { status: StatusCode::SERVICE_UNAVAILABLE, message: message.into() }
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message: message.into(),
+        }
     }
     pub fn too_many(retry_after_secs: u64) -> Self {
         Self {
@@ -70,8 +83,8 @@ pub fn guard(state: &AppState, headers: &HeaderMap) -> Result<Session, ApiError>
     if state.insecure_no_auth {
         return Ok(anonymous_session());
     }
-    let session_id = auth::cookie(headers, SESSION_COOKIE)
-        .ok_or_else(|| ApiError::unauthorized("未登录"))?;
+    let session_id =
+        auth::cookie(headers, SESSION_COOKIE).ok_or_else(|| ApiError::unauthorized("未登录"))?;
     state
         .sessions
         .touch(session_id)
@@ -79,7 +92,11 @@ pub fn guard(state: &AppState, headers: &HeaderMap) -> Result<Session, ApiError>
 }
 
 /// State-changing requests must echo the session CSRF token.
-pub fn guard_csrf(state: &AppState, headers: &HeaderMap, session: &Session) -> Result<(), ApiError> {
+pub fn guard_csrf(
+    state: &AppState,
+    headers: &HeaderMap,
+    session: &Session,
+) -> Result<(), ApiError> {
     if state.insecure_no_auth {
         return Ok(());
     }
@@ -105,7 +122,10 @@ pub struct SessionInfo {
 }
 
 /// `GET /api/session` — never fails, the SPA uses it to pick login vs desktop.
-pub async fn current(State(state): State<std::sync::Arc<AppState>>, headers: HeaderMap) -> Response {
+pub async fn current(
+    State(state): State<std::sync::Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
     let session = if state.insecure_no_auth {
         Some(anonymous_session())
     } else {
@@ -157,17 +177,25 @@ pub async fn login(
         ));
     }
     if let Some(wait) = state.throttle.blocked_for(&ip) {
-        state
-            .audit
-            .record("login.blocked", "anon", &ip, false, json!({ "retry_after": wait }));
+        state.audit.record(
+            "login.blocked",
+            "anon",
+            &ip,
+            false,
+            json!({ "retry_after": wait }),
+        );
         return Err(ApiError::too_many(wait));
     }
 
     if !auth::verify_password(&body.password, &state.config.auth.password_hash) {
         let failures = state.throttle.record_failure(&ip);
-        state
-            .audit
-            .record("login.failure", "anon", &ip, false, json!({ "failures": failures }));
+        state.audit.record(
+            "login.failure",
+            "anon",
+            &ip,
+            false,
+            json!({ "failures": failures }),
+        );
         return Err(ApiError::unauthorized("密码错误"));
     }
 
@@ -208,7 +236,9 @@ pub async fn logout(
     if !state.insecure_no_auth {
         state.sessions.remove(&session.id);
     }
-    state.audit.record("session.logout", session.user, &session.ip, true, json!({}));
+    state
+        .audit
+        .record("session.logout", session.user, &session.ip, true, json!({}));
     let cookie = auth::cleared_cookie(state.secure_cookies());
     Ok((
         [(header::SET_COOKIE, cookie)],
@@ -230,7 +260,10 @@ mod tests {
         let dir = std::env::temp_dir().join("depdek-webdesk-api-tests");
         Arc::new(AppState {
             audit: crate::audit::AuditLog::new(&dir.join("audit.jsonl")),
-            sessions: crate::auth::SessionStore::new(config.auth.session_ttl_secs, config.auth.idle_timeout_secs),
+            sessions: crate::auth::SessionStore::new(
+                config.auth.session_ttl_secs,
+                config.auth.idle_timeout_secs,
+            ),
             throttle: crate::auth::LoginThrottle::new(config.auth.max_failures),
             metrics: crate::metrics::Sampler::new(2_000, 60).shared(),
             version: VERSION.to_string(),
@@ -244,7 +277,10 @@ mod tests {
     fn guard_rejects_missing_and_expired_sessions() {
         let state = state("");
         let empty = HeaderMap::new();
-        assert_eq!(guard(&state, &empty).unwrap_err().status, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            guard(&state, &empty).unwrap_err().status,
+            StatusCode::UNAUTHORIZED
+        );
 
         let session = state.sessions.create("127.0.0.1");
         let mut headers = HeaderMap::new();
@@ -281,7 +317,10 @@ mod tests {
         assert_eq!(ApiError::unauthorized("x").status, StatusCode::UNAUTHORIZED);
         assert_eq!(ApiError::forbidden("x").status, StatusCode::FORBIDDEN);
         assert_eq!(ApiError::bad_request("x").status, StatusCode::BAD_REQUEST);
-        assert_eq!(ApiError::unavailable("x").status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            ApiError::unavailable("x").status,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
         assert_eq!(ApiError::too_many(3).status, StatusCode::TOO_MANY_REQUESTS);
     }
 }

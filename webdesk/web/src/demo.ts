@@ -9,6 +9,11 @@
 import type {
   AppList,
   AppUsage,
+  AgentChatMessage,
+  AgentId,
+  AgentStatus,
+  AgentProvider,
+  AgentProviderDraft,
   AuditTail,
   FileEntry,
   FilesPage,
@@ -25,6 +30,16 @@ const CORES = 4;
 const TOTAL_MEMORY = 15.6 * 1024 ** 3;
 const INTERVAL_MS = 2000;
 const HISTORY = 300;
+let demoActiveProviderId = "deepseek";
+let demoProviders: AgentProvider[] = [{
+  id: "deepseek",
+  name: "DeepSeek",
+  base_url: "https://api.deepseek.com",
+  protocol: "openai-completions",
+  model: "deepseek-v4-flash",
+  active: true,
+  configured: true,
+}];
 
 /** Deterministic PRNG so screenshots are stable between runs. */
 function makeRandom(seed: number) {
@@ -402,5 +417,36 @@ export const demoApi = {
   },
   async download(path: string): Promise<Blob> {
     return new Blob([DEMO_TEXT[path] ?? `DepDek Webdesk 演示文件：${path}\n`], { type: "text/plain;charset=utf-8" });
+  },
+  async agentStatus(): Promise<AgentStatus> {
+    const active = demoProviders.find((provider) => provider.id === demoActiveProviderId);
+    return { available: true, configured: true, engine: "deepseek-harness", model: active?.model ?? "deepseek-v4-flash", provider_id: demoActiveProviderId };
+  },
+  async agentProviders(): Promise<{ providers: AgentProvider[]; active_id: string }> {
+    return { providers: demoProviders.map((provider) => ({ ...provider })), active_id: demoActiveProviderId };
+  },
+  async saveAgentProvider(provider: AgentProviderDraft): Promise<{ providers: AgentProvider[]; active_id: string; restart_ok: boolean; message: string }> {
+    const row: AgentProvider = { id: provider.id, name: provider.name, base_url: provider.base_url, protocol: provider.protocol, model: provider.model, active: true, configured: Boolean(provider.api_key.trim()) };
+    demoProviders = [...demoProviders.filter((item) => item.id !== row.id), row];
+    demoActiveProviderId = row.id;
+    demoProviders = demoProviders.map((item) => ({ ...item, active: item.id === demoActiveProviderId }));
+    return { providers: demoProviders.map((item) => ({ ...item })), active_id: demoActiveProviderId, restart_ok: true, message: "演示模式：Provider 已加入列表；此演示不会保存 API Key，也不会调用真实模型。" };
+  },
+  async activateAgentProvider(id: string): Promise<{ providers: AgentProvider[]; active_id: string; restart_ok: boolean; message: string }> {
+    if (!demoProviders.some((provider) => provider.id === id && provider.configured)) throw new Error("该 Provider 尚未配置");
+    demoActiveProviderId = id;
+    demoProviders = demoProviders.map((provider) => ({ ...provider, active: provider.id === id }));
+    return { providers: demoProviders.map((provider) => ({ ...provider })), active_id: id, restart_ok: true, message: "演示模式：已切换 Harness 当前模型；聊天回复仍为演示内容。" };
+  },
+  async agentChat(agent: AgentId, message: string, history: AgentChatMessage[]): Promise<{ engine: string; model: string; provider_id?: string; text: string }> {
+    void history;
+    const agentName = { wukong: "悟空", bajie: "八戒", master: "师傅", shaseng: "沙僧" }[agent];
+    const model = demoProviders.find((provider) => provider.id === demoActiveProviderId)?.model ?? "deepseek-v4-flash";
+    return {
+      engine: "deepseek-harness",
+      model,
+      provider_id: demoActiveProviderId,
+      text: `${agentName}听到了。你刚才说的是“${message}”。这是 Webdesk 预览回应（${model}）；演示模式不会调用真实模型。`,
+    };
   },
 };

@@ -23,7 +23,11 @@ struct Assets;
 /// Fallback handler: static files, then SPA index, then JSON 404 for `/api/*`.
 pub async fn serve(State(state): State<Arc<AppState>>, uri: Uri) -> Response {
     let requested = uri.path().trim_start_matches('/');
-    let requested = if requested.is_empty() { "index.html" } else { requested };
+    let requested = if requested.is_empty() {
+        "index.html"
+    } else {
+        requested
+    };
 
     // Never let the SPA fallback swallow an unknown API route: the client wants
     // JSON, and a 200 with HTML would look like a success.
@@ -67,7 +71,8 @@ async fn read_asset(web_root: Option<&PathBuf>, path: &str) -> Option<Response> 
     let mut response = Response::new(Body::from(bytes));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_str(mime.as_ref()).unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+        HeaderValue::from_str(mime.as_ref())
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
     );
     response
         .headers_mut()

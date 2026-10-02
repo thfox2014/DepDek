@@ -1,6 +1,6 @@
 # DepDek Webdesk 设计（远程 Web 管理控制台）
 
-> 状态：v0.2.x（登录 / 桌面与可管理窗口 / 文件管理 / 概览 / 性能监控 / 进程与每应用占用 / 存储与网络 / 审计与关于）
+> 状态：v0.2.x（登录 / 四人 Agent 协作室 / 隔离 DeepSeek Harness 服务 / 文件管理 / 性能监控 / 存储与网络 / 审计）
 > 相关：`webdesk/`（Rust 服务 + 前端）、[contract.md](contract.md)（桌面端三方契约，本文档不修改该契约）
 
 ## 1. 目标与非目标
@@ -13,7 +13,7 @@
 
 **非目标（本版本明确不做）**
 
-- 不做 shell / 任意命令执行；文件应用只允许在显式配置根目录内浏览、文本预览和下载，不提供上传、改名、删除或任意路径访问。
+- 不做 shell / 任意命令执行。Agent 只提供文本分析，不获得文件、shell、Web、子 Agent 或工作流工具；文件应用只允许在显式配置根目录内浏览、文本预览和下载，不提供上传、改名、删除或任意路径访问。
 - 不做多用户与 RBAC：单管理员账号 + 密码。
 - 不做 NAS 共享、快照、备份的写操作（路线图第 2 阶段）。
 - 不自己实现 TLS 终止：本版本经反向代理（nginx/caddy）提供 HTTPS，见 §5.4。
@@ -25,7 +25,7 @@
 | `src-tauri/`（桌面端 Rust 核心） | **不共享进程**。webdesk 是独立二进制，桌面端不启动它、也不依赖它。 |
 | vault 沙箱（`vault.rs`） | webdesk 不读写用户的 DepDek Home 数据目录；它只读 `/proc`、`/sys`，自己的 `data_dir`，以及管理员单独配置的只读文件根目录。 |
 | `docs/contract.md` | DepDek 桌面端新增 `storage_summary` Tauri 命令；Webdesk 仍是独立服务，不参与桌面端 ↔ sidecar 的 JSON-RPC。 |
-| agent 工具 | webdesk **不会**注册成 agent 工具；agent 依旧只有 `vault/*` 五个文件工具。 |
+| agent 工具 | Webdesk **不注册成 agent 工具，也不执行子进程**；Agent 页面把有界文本请求转给单独的 `depdek-agent`。该服务只通过本机 Unix socket 接入，dsh 运行在临时目录、headless profile 和禁用本地/网络工具的策略下，不访问 DepDek Home/Vault。 |
 
 这样切分的原因：远程管理需要一个**长期在线、可开机自启**的服务，而桌面端是随用户登录会话起停的 GUI；把管理面塞进 GUI 进程会让「关掉窗口 = 失去远程管理」。
 
@@ -36,6 +36,8 @@
    │  HTTP/1.1 + JSON, Cookie 会话
    ▼
 webdesk/ (Rust, axum)  ──►  Sampler（后台采样任务，sysinfo + /proc）
+   │  /api/agent/* ──Unix socket──► depdek-agent (独立 Rust 服务)
+   │                                 └─ dsh --profile headless（只读工具策略）
    │                          └─ 环形缓冲：CPU/内存/磁盘/网络 历史
    │  rust-embed 内嵌 SPA         └─ 进程快照 + 按 cgroup/可执行文件归并的「应用」
    ▼
@@ -78,7 +80,8 @@ webdesk/
       ├─ demo.ts                  `?demo=1` 示例数据
       ├─ components/              charts.tsx（SVG 折线/环/进度条）、Login.tsx
       ├─ desktop/                 DesktopShell.tsx、FloatingWindow.tsx、PerformanceWidget.tsx
-      └─ apps/                    Overview / Performance / Processes / StorageNetwork / Files / SystemInfo
+      └─ apps/                    Agent / Overview / Performance / Processes / StorageNetwork / Files / SystemInfo
+agent-service/                    独立 depdek-agent crate、systemd 单元与 Key 安装说明
 ```
 
 ## 4. 指标与「应用程序」归并
@@ -116,13 +119,13 @@ CPU 百分比沿用 `sysinfo` 语义：单核占比（多核可 > 100%），同�
 ### 5.2 暴力破解与 CSRF
 
 - 同一来源地址连续失败 `max_failures`（默认 5）次后封禁 60s，之后指数退避至最多 15 分钟。
-- 所有**写操作**（登出、未来任何变更）必须带 `x-depdek-csrf`，值与会话绑定；缺失或不匹配返回 403。
+- 所有**写操作**（登出、Agent 对话等）必须带 `x-depdek-csrf`，值与会话绑定；缺失或不匹配返回 403。
 - 请求体上限 64 KiB（`DefaultBodyLimit`），避免大 body 打满内存。
 
 ### 5.3 审计
 
 `<data_dir>/webdesk-audit.jsonl`，一行一个 JSON 对象，只追加：`ts` / `ts_ms` / `action` / `actor` / `ip` / `ok` / `detail`。
-当前动作：`service.start`、`service.stop`、`login.success`、`login.failure`、`login.blocked`、`session.logout`。
+当前动作：`service.start`、`service.stop`、`login.success`、`login.failure`、`login.blocked`、`session.logout`、`agent.chat`。Agent 审计仅记录 actor、时间、provider/model、消息长度和轮数，不写入 prompt、对话正文或 Key。
 审计写入失败只打印到 stderr，**不会**让请求失败（与桌面端 vault 审计一致的取舍）。当前动作包括登录/会话和 `files.list` / `files.preview` / `files.download`；`/api/audit` 只回读末尾 256 KiB。
 
 ### 5.4 网络暴露
@@ -142,8 +145,8 @@ location / {
 
 ### 5.5 权限
 
-服务本身不需要 root：只读 `/proc`、`/sys`，写自己的 `data_dir`，并只读显式授权的 `files_root`。生产部署应把 `files_root` 指向专用共享目录，并确保服务账号只有读取权限；无认证调试模式下文件 API 一律禁用。
-`deploy/depdek-webdesk.service` 用 `DynamicUser=yes` + `ProtectSystem=strict` + `ProtectHome=read-only` 等限制；将来若要做 NAS/服务管理，再按能力拆分 helper 并逐项授权。
+Webdesk 本身不需要 root：只读 `/proc`、`/sys`，写自己的 `data_dir`，并只读显式授权的 `files_root`。生产部署应把 `files_root` 指向专用共享目录，并确保服务账号只有读取权限；无认证调试模式下文件 API 一律禁用。
+`deploy/depdek-webdesk.service` 用 `DynamicUser=yes` + `ProtectSystem=strict` + `ProtectHome=read-only` 等限制，加入 `depdek-agent` 组访问聊天 socket，并加入 `depdek-webdesk` 组访问仅提供 Provider 配置的受限 socket。独立 `depdek-agent` 使用专用系统用户、`ProtectHome=yes`、私有临时目录与最小环境；Harness 的 API Key 只从 `/etc/depdek/agent.env` 注入。密钥在用户提交时会经 Webdesk 内存短暂转发给 root 配置 broker；Webdesk 不读取密钥文件、不持久化、不回显或记录密钥。dsh 使用 120 秒超时、并发上限 2、请求/响应大小上限，并禁用文件、shell、Web、sub-agent/workflow 工具。用户每轮需单独确认云端外发；语音输入调用浏览器 Web Speech API，需 HTTPS/localhost 并由浏览器申请麦克风权限。识别音频是否发送到浏览器供应商服务取决于浏览器实现；Webdesk 不会上传原始音频，但识别出的文本也不会自动发送给 DeepSeek。
 
 ## 6. HTTP API
 
@@ -165,11 +168,14 @@ location / {
 | GET | `/api/files?path=相对路径` | 是 | 浏览配置根目录；最多返回 500 项，忽略隐藏文件与符号链接 |
 | GET | `/api/files/preview?path=相对路径` | 是 | 预览允许类型的 UTF-8 文本，单文件上限 256 KiB |
 | GET | `/api/files/download?path=相对路径` | 是 | 下载配置根目录内普通文件，最大 4 GiB；流式传输 |
+| GET | `/api/agent/status` | 是 | 独立 Agent 服务连接与配置状态（不返回 API Key） |
+| POST | `/api/agent/chat` | 是 + CSRF | `{agent?, message, history}` 有界文本；`agent` 可为 `wukong` / `bajie` / `master` / `shaseng`，缺省 `wukong`；服务端审计元数据但不记录正文；交由 `depdek-agent`/DeepSeek Harness 单轮执行 |
 | GET | `/`、静态资源 | 否 | 内嵌 SPA；未知 `/api/*` 返回 JSON 404，不会被 SPA 吞掉 |
 
 ## 7. 前端
 
 - **桌面（`DesktopShell`）**：以桌面图标启动应用，以可并存的浮动窗口展示详情；窗口支持最小化到 Dock、最大化/还原，并可拖动右下角缩放。Dock 可恢复最小化窗口或切换前台。
+- **Agent Team（`apps/Agent`）**：桌面图标打开默认的“西游协作室”，左侧可切换悟空、八戒、师傅、沙僧并查看服务/忙闲状态；中间是各角色独立的会话记录、Markdown 回复与文字/语音输入；右侧可收起和拖动调整宽度的交互面板，从最新回复提取线索，并将跟进问题填入草稿，不代替用户执行动作。四个角色共享同一个隔离的 `depdek-agent`/DeepSeek Harness 执行器，仅 system prompt 人设不同；每轮发送前单独确认。语音识别可能由浏览器供应商服务处理音频，识别结果只进入草稿。
 - **性能监控小窗（`PerformanceWidget`）**：常驻桌面的紧凑浮窗，呈现 CPU / 内存、近期 CPU 趋势、每核占用、网络与磁盘实时速率及资源占用热点；支持最小化、最大化/还原、右下角缩放、从 Dock 恢复，或展开完整「性能监控」应用。
 - **拖动体验（`FloatingWindow`）**：使用 Pointer Events 与 `requestAnimationFrame` 批量直接更新 `translate3d`，拖动过程中不逐帧触发 React 渲染；松手时才提交位置并保存到浏览器本地。位置随视口变化约束在桌面可视区内，也支持聚焦标题栏后按住 `Alt` + 方向键移动（`Shift` 加速）。
 - **存储空间应用**：按挂载卷展示容量、已用/可用空间与空间偏紧状态；卷合计不代表物理盘容量（共享容器可能重复）。DepDek 桌面通过只读 `storage_summary` 读取本机挂载卷，Webdesk 通过已有受保护的 `/api/system/disks` / `/api/system/summary` 展示同一主机的独立采样。两端均不扫描文件内容，不提供分区写操作。

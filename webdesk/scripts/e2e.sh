@@ -10,7 +10,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 webdesk="$repo_root/webdesk"
 binary="$webdesk/target/release/depdek-webdesk"
-run_dir="$webdesk/.run"
+run_dir="${DEPDEK_WEBDESK_E2E_DIR:-$webdesk/.run}"
 port="${DEPDEK_WEBDESK_E2E_PORT:-8788}"
 password="e2e-password-123"
 base="http://127.0.0.1:$port"
@@ -47,7 +47,7 @@ interval_ms = 1000
 history = 30
 EOF
 
-"$binary" serve --config "$run_dir/webdesk.toml" > "$run_dir/serve.log" 2>&1 &
+DEPDEK_WEBDESK_AGENT_SOCKET="$run_dir/agent.sock" DEPDEK_WEBDESK_AGENT_CONFIG_SOCKET="$run_dir/agent-config.sock" "$binary" serve --config "$run_dir/webdesk.toml" > "$run_dir/serve.log" 2>&1 &
 server_pid=$!
 trap 'kill "$server_pid" 2>/dev/null || true' EXIT
 
@@ -78,6 +78,22 @@ summary="$(curl -s -b "$run_dir/cookies.txt" "$base/api/system/summary")"
 check "summary.host.cores_logical >= 1" "yes" "$(echo "$summary" | python3 -c 'import json,sys; print("yes" if json.load(sys.stdin)["host"]["cores_logical"] >= 1 else "no")')"
 check "summary.memory.total_bytes > 0" "yes" "$(echo "$summary" | python3 -c 'import json,sys; print("yes" if json.load(sys.stdin)["memory"]["total_bytes"] > 0 else "no")')"
 check "summary.apps 非空" "yes" "$(echo "$summary" | python3 -c 'import json,sys; print("yes" if len(json.load(sys.stdin)["apps"]) > 0 else "no")')"
+check "Agent status 要求登录" "401" "$(curl -s -o /dev/null -w '%{http_code}' "$base/api/agent/status")"
+check "Agent Provider 列表要求登录" "401" "$(curl -s -o /dev/null -w '%{http_code}' "$base/api/agent/providers")"
+agent_status="$(curl -s -b "$run_dir/cookies.txt" "$base/api/agent/status")"
+check "Agent status 无服务时安全降级" "false" "$(echo "$agent_status" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["available"]).lower())')"
+check "Agent 对话校验 CSRF" "403" "$(curl -s -o /dev/null -w '%{http_code}' -b "$run_dir/cookies.txt" -H 'content-type: application/json' -d '{"message":"hello","history":[]}' "$base/api/agent/chat")"
+check "Provider 保存校验 CSRF" "403" "$(curl -s -o /dev/null -w '%{http_code}' -b "$run_dir/cookies.txt" -H 'content-type: application/json' -d '{"id":"test","name":"test","base_url":"https://example.com","protocol":"openai-completions","model":"test","api_key":"do-not-log-this"}' "$base/api/agent/providers")"
+provider_save_status="$(curl -s -o /dev/null -w '%{http_code}' -b "$run_dir/cookies.txt" -H "x-depdek-csrf: $csrf" -H 'content-type: application/json' -d '{"id":"test","name":"test","base_url":"https://example.com","protocol":"openai-completions","model":"test","api_key":"do-not-log-this"}' "$base/api/agent/providers")"
+check "Provider 保存只转发给安全 broker" "503" "$provider_save_status"
+check "切换 Provider 校验 CSRF" "403" "$(curl -s -o /dev/null -w '%{http_code}' -b "$run_dir/cookies.txt" -H 'content-type: application/json' -d '{"id":"test"}' "$base/api/agent/providers/activate")"
+provider_activate_status="$(curl -s -o /dev/null -w '%{http_code}' -b "$run_dir/cookies.txt" -H "x-depdek-csrf: $csrf" -H 'content-type: application/json' -d '{"id":"test"}' "$base/api/agent/providers/activate")"
+check "切换 Provider 只转发给安全 broker" "503" "$provider_activate_status"
+provider_audit="$(curl -s -b "$run_dir/cookies.txt" "$base/api/audit?limit=50")"
+check "审计记录 Provider 保存尝试" "yes" "$(echo "$provider_audit" | grep -q 'agent.provider.save' && echo yes || echo no)"
+check "审计记录 Provider 切换尝试" "yes" "$(echo "$provider_audit" | grep -q 'agent.provider.activate' && echo yes || echo no)"
+check "审计不保存 Provider API Key" "yes" "$(echo "$provider_audit" | grep -q 'do-not-log-this' && echo no || echo yes)"
+check "Agent 对话未连接执行器返回 503" "503" "$(curl -s -o /dev/null -w '%{http_code}' -b "$run_dir/cookies.txt" -H "x-depdek-csrf: $csrf" -H 'content-type: application/json' -d '{"message":"hello","history":[]}' "$base/api/agent/chat")"
 check "series 有采样点" "yes" "$(curl -s -b "$run_dir/cookies.txt" "$base/api/system/series?window=5" | python3 -c 'import json,sys; print("yes" if len(json.load(sys.stdin)["samples"]) > 0 else "no")')"
 check "processes 按内存排序" "yes" "$(curl -s -b "$run_dir/cookies.txt" "$base/api/processes?sort=mem&limit=5" | python3 -c '
 import json,sys
@@ -85,6 +101,9 @@ rows=[p["mem_bytes"] for p in json.load(sys.stdin)["processes"]]
 print("yes" if rows == sorted(rows, reverse=True) and len(rows) > 0 else "no")')"
 check "apps 含每应用聚合" "yes" "$(curl -s -b "$run_dir/cookies.txt" "$base/api/apps?limit=3" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("yes" if d["apps"] and d["apps"][0]["processes"] >= 1 else "no")')"
 check "audit 含登录记录" "yes" "$(curl -s -b "$run_dir/cookies.txt" "$base/api/audit?limit=20" | grep -q 'login.success' && echo yes || echo no)"
+agent_audit="$(curl -s -b "$run_dir/cookies.txt" "$base/api/audit?limit=50")"
+check "审计记录 Agent 尝试" "yes" "$(echo "$agent_audit" | grep -q 'agent.chat' && echo yes || echo no)"
+check "审计不保存 Agent 对话正文" "yes" "$(echo "$agent_audit" | grep -q 'hello' && echo no || echo yes)"
 
 echo "== CSRF 与登出"
 check "登出缺少 CSRF 令牌被拒" "403" "$(curl -s -o /dev/null -w '%{http_code}' -b "$run_dir/cookies.txt" -X POST "$base/api/logout")"

@@ -13,6 +13,7 @@ RestartSec=3
 
 # 运行身份与权限收窄
 DynamicUser=yes
+SupplementaryGroups=depdek-agent depdek-webdesk
 StateDirectory=depdek-webdesk
 Environment=DEPDEK_WEBDESK_DATA_DIR=/var/lib/depdek-webdesk
 ProtectSystem=strict

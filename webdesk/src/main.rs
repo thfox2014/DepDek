@@ -90,7 +90,7 @@ fn print_help() {
   depdek-webdesk version
 
 配置查找顺序: --config → $DEPDEK_WEBDESK_CONFIG → /etc/depdek/webdesk.toml → 内置默认值
-环境变量覆盖: DEPDEK_WEBDESK_BIND / DEPDEK_WEBDESK_PASSWORD_HASH / DEPDEK_WEBDESK_DATA_DIR / DEPDEK_WEBDESK_FILES_ROOT"
+环境变量覆盖: DEPDEK_WEBDESK_BIND / DEPDEK_WEBDESK_PASSWORD_HASH / DEPDEK_WEBDESK_DATA_DIR / DEPDEK_WEBDESK_FILES_ROOT / DEPDEK_WEBDESK_AGENT_SOCKET / DEPDEK_WEBDESK_AGENT_CONFIG_SOCKET"
     );
 }
 
@@ -122,6 +122,7 @@ fn check_config(flags: Flags) -> Result<()> {
     println!("监听地址: {}", config.bind);
     println!("数据目录: {}", config.resolved_data_dir().display());
     println!("审计日志: {}", config.audit_path().display());
+    println!("Agent Harness socket: {}", config.agent_socket.display());
     println!(
         "文件管理根目录: {}",
         config
@@ -201,10 +202,7 @@ async fn serve(flags: Flags) -> Result<()> {
     let sampler_task = sampler.spawn();
 
     let state = Arc::new(AppState {
-        sessions: SessionStore::new(
-            config.auth.session_ttl_secs,
-            config.auth.idle_timeout_secs,
-        ),
+        sessions: SessionStore::new(config.auth.session_ttl_secs, config.auth.idle_timeout_secs),
         throttle: LoginThrottle::new(config.auth.max_failures),
         audit,
         metrics,

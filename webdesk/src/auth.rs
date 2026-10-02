@@ -234,7 +234,10 @@ mod tests {
         assert!(!hash.contains("correct horse battery"), "不得包含明文");
         assert!(verify_password("correct horse battery", &hash));
         assert!(!verify_password("wrong password", &hash));
-        assert!(!verify_password("correct horse battery", "not-a-phc-string"));
+        assert!(!verify_password(
+            "correct horse battery",
+            "not-a-phc-string"
+        ));
     }
 
     #[test]

@@ -23,10 +23,7 @@ impl AuditLog {
     pub fn new(path: &Path) -> Self {
         if let Some(parent) = path.parent() {
             if let Err(error) = fs::create_dir_all(parent) {
-                eprintln!(
-                    "[webdesk] 无法创建审计目录 {}：{error}",
-                    parent.display()
-                );
+                eprintln!("[webdesk] 无法创建审计目录 {}：{error}", parent.display());
             }
         }
         Self {
@@ -53,14 +50,21 @@ impl AuditLog {
         });
         let _guard = self.lock.lock().expect("audit mutex");
         let line = format!("{entry}\n");
-        match OpenOptions::new().create(true).append(true).open(&self.path) {
+        match OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)
+        {
             Ok(mut file) => {
                 if let Err(error) = file.write_all(line.as_bytes()) {
                     eprintln!("[webdesk] 审计写入失败 {}：{error}", self.path.display());
                 }
             }
             Err(error) => {
-                eprintln!("[webdesk] 无法打开审计文件 {}：{error}", self.path.display());
+                eprintln!(
+                    "[webdesk] 无法打开审计文件 {}：{error}",
+                    self.path.display()
+                );
             }
         }
     }
@@ -74,7 +78,13 @@ mod tests {
     fn appends_one_json_object_per_line() {
         let dir = tempfile::tempdir().unwrap();
         let log = AuditLog::new(&dir.path().join("nested/webdesk-audit.jsonl"));
-        log.record("login.failure", "anon", "10.0.0.1", false, json!({"reason": "bad-password"}));
+        log.record(
+            "login.failure",
+            "anon",
+            "10.0.0.1",
+            false,
+            json!({"reason": "bad-password"}),
+        );
         log.record("login.success", "admin", "10.0.0.1", true, Value::Null);
 
         let raw = std::fs::read_to_string(log.path()).unwrap();

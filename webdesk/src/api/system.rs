@@ -129,7 +129,10 @@ fn read_tail(path: &std::path::Path, limit: usize) -> std::io::Result<Vec<Value>
     file.seek(SeekFrom::Start(start))?;
     let mut buffer = String::new();
     file.read_to_string(&mut buffer)?;
-    let mut lines: Vec<&str> = buffer.lines().filter(|line| !line.trim().is_empty()).collect();
+    let mut lines: Vec<&str> = buffer
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
     if start > 0 && !lines.is_empty() {
         // The first line may be a partial record.
         lines.remove(0);

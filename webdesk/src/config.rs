@@ -28,6 +28,14 @@ pub struct Config {
     #[serde(default)]
     pub files_root: Option<PathBuf>,
 
+    /// Unix socket for the separately sandboxed DeepSeek Harness executor.
+    #[serde(default = "default_agent_socket")]
+    pub agent_socket: PathBuf,
+
+    /// Unix socket for the narrow privileged broker that writes Provider secrets.
+    #[serde(default = "default_agent_config_socket")]
+    pub agent_config_socket: PathBuf,
+
     /// Serve the SPA from disk instead of the embedded copy (frontend dev).
     #[serde(default)]
     pub web_root: Option<PathBuf>,
@@ -95,6 +103,12 @@ impl Default for MetricsConfig {
 fn default_bind() -> SocketAddr {
     "0.0.0.0:8787".parse().expect("valid default bind address")
 }
+fn default_agent_socket() -> PathBuf {
+    PathBuf::from("/run/depdek-agent/agent.sock")
+}
+fn default_agent_config_socket() -> PathBuf {
+    PathBuf::from("/run/depdek-agent-config/config.sock")
+}
 fn default_session_ttl() -> u64 {
     12 * 60 * 60
 }
@@ -129,8 +143,8 @@ impl Config {
 
         let raw = std::fs::read_to_string(&path)
             .with_context(|| format!("读取配置失败：{}", path.display()))?;
-        let mut config = Config::from_toml(&raw)
-            .with_context(|| format!("解析配置失败：{}", path.display()))?;
+        let mut config =
+            Config::from_toml(&raw).with_context(|| format!("解析配置失败：{}", path.display()))?;
         config.apply_env();
         config.validate()?;
         Ok((config, Some(path)))
@@ -144,6 +158,8 @@ impl Config {
                 tls_key: None,
                 data_dir: None,
                 files_root: None,
+                agent_socket: default_agent_socket(),
+                agent_config_socket: default_agent_config_socket(),
                 web_root: None,
                 auth: AuthConfig::default(),
                 metrics: MetricsConfig::default(),
@@ -178,6 +194,16 @@ impl Config {
                 self.files_root = Some(PathBuf::from(dir));
             }
         }
+        if let Ok(path) = std::env::var("DEPDEK_WEBDESK_AGENT_SOCKET") {
+            if !path.trim().is_empty() {
+                self.agent_socket = PathBuf::from(path);
+            }
+        }
+        if let Ok(path) = std::env::var("DEPDEK_WEBDESK_AGENT_CONFIG_SOCKET") {
+            if !path.trim().is_empty() {
+                self.agent_config_socket = PathBuf::from(path);
+            }
+        }
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -190,6 +216,12 @@ impl Config {
         }
         if self.files_root.as_deref() == Some(Path::new("/")) {
             bail!("files_root 不能是系统根目录");
+        }
+        if !self.agent_socket.is_absolute() {
+            bail!("agent_socket 必须是绝对路径");
+        }
+        if !self.agent_config_socket.is_absolute() {
+            bail!("agent_config_socket 必须是绝对路径");
         }
         if self.tls_cert.is_some() != self.tls_key.is_some() {
             bail!("tls_cert 与 tls_key 必须同时配置");
@@ -252,6 +284,14 @@ mod tests {
         assert_eq!(config.bind.to_string(), "0.0.0.0:8787");
         assert!(config.auth.password_hash.is_empty());
         assert_eq!(config.metrics.interval_ms, 2_000);
+        assert_eq!(
+            config.agent_socket,
+            PathBuf::from("/run/depdek-agent/agent.sock")
+        );
+        assert_eq!(
+            config.agent_config_socket,
+            PathBuf::from("/run/depdek-agent-config/config.sock")
+        );
         assert!(!config.tls_enabled());
     }
 
@@ -273,6 +313,8 @@ mod tests {
         assert!(Config::from_toml("tls_cert = \"/tmp/a.pem\"\n").is_err());
         assert!(Config::from_toml("files_root = \"shared\"\n").is_err());
         assert!(Config::from_toml("files_root = \"/\"\n").is_err());
+        assert!(Config::from_toml("agent_socket = \"relative/agent.sock\"\n").is_err());
+        assert!(Config::from_toml("agent_config_socket = \"relative/config.sock\"\n").is_err());
         assert!(Config::from_toml("unknown_field = 1\n").is_err());
     }
 

@@ -1,0 +1,14 @@
+[Unit]
+Description=DepDek logical storage space service
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/depdek-space --root %h/.local/share/depdek/space serve --socket %t/depdek-space.sock
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

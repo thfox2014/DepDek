@@ -89,7 +89,9 @@ pub fn host_info(sys: &System) -> HostInfo {
         uptime_secs: System::uptime(),
         cores_logical: sys.cpus().len(),
         cores_physical: System::physical_core_count().unwrap_or_else(|| sys.cpus().len()),
-        cpu_brand: cpu.map(|cpu| cpu.brand().trim().to_string()).unwrap_or_default(),
+        cpu_brand: cpu
+            .map(|cpu| cpu.brand().trim().to_string())
+            .unwrap_or_default(),
         cpu_frequency_mhz: cpu.map(|cpu| cpu.frequency()).unwrap_or_default(),
         sampled_at_ms: crate::util::now_ms(),
     }
@@ -156,7 +158,11 @@ pub fn disks(disks: &Disks) -> Vec<DiskSummary> {
 }
 
 /// Byte-per-second rates per interface, given the previous totals.
-pub fn networks(networks: &Networks, previous: &HashMap<String, (u64, u64)>, elapsed_ms: u64) -> Vec<NetworkSummary> {
+pub fn networks(
+    networks: &Networks,
+    previous: &HashMap<String, (u64, u64)>,
+    elapsed_ms: u64,
+) -> Vec<NetworkSummary> {
     let seconds = (elapsed_ms as f64 / 1000.0).max(0.001);
     let mut result: Vec<NetworkSummary> = networks
         .list()
@@ -164,14 +170,19 @@ pub fn networks(networks: &Networks, previous: &HashMap<String, (u64, u64)>, ela
         .map(|(name, data)| {
             let received = data.total_received();
             let transmitted = data.total_transmitted();
-            let (prev_rx, prev_tx) = previous.get(name).copied().unwrap_or((received, transmitted));
+            let (prev_rx, prev_tx) = previous
+                .get(name)
+                .copied()
+                .unwrap_or((received, transmitted));
             NetworkSummary {
                 name: name.clone(),
                 received_bytes: received,
                 transmitted_bytes: transmitted,
                 rx_bytes_per_sec: received.saturating_sub(prev_rx) as f64 / seconds,
                 tx_bytes_per_sec: transmitted.saturating_sub(prev_tx) as f64 / seconds,
-                errors: data.total_errors_on_received().saturating_add(data.total_errors_on_transmitted()),
+                errors: data
+                    .total_errors_on_received()
+                    .saturating_add(data.total_errors_on_transmitted()),
             }
         })
         .filter(|interface| interface.received_bytes > 0 || interface.transmitted_bytes > 0)
@@ -184,7 +195,12 @@ pub fn network_totals(networks: &Networks) -> HashMap<String, (u64, u64)> {
     networks
         .list()
         .iter()
-        .map(|(name, data)| (name.clone(), (data.total_received(), data.total_transmitted())))
+        .map(|(name, data)| {
+            (
+                name.clone(),
+                (data.total_received(), data.total_transmitted()),
+            )
+        })
         .collect()
 }
 
@@ -208,7 +224,10 @@ pub fn disk_throughput() -> HashMap<String, (u64, u64)> {
         }
         let read_sectors: u64 = fields[5].parse().unwrap_or(0);
         let written_sectors: u64 = fields[9].parse().unwrap_or(0);
-        result.insert(name.to_string(), (read_sectors * 512, written_sectors * 512));
+        result.insert(
+            name.to_string(),
+            (read_sectors * 512, written_sectors * 512),
+        );
     }
     result
 }
@@ -219,10 +238,18 @@ fn is_partition_or_virtual(name: &str) -> bool {
     }
     if name.starts_with("nvme") || name.starts_with("mmcblk") {
         // nvme0n1 / nvme0n1p2, mmcblk0 / mmcblk0p1
-        return name.contains('p') && name.rsplit('p').next().is_some_and(|tail| tail.chars().all(|c| c.is_ascii_digit()));
+        return name.contains('p')
+            && name
+                .rsplit('p')
+                .next()
+                .is_some_and(|tail| tail.chars().all(|c| c.is_ascii_digit()));
     }
     // sda / sda1, vda / vda2, hda / hda3
-    let tail_digits = name.chars().rev().take_while(|c| c.is_ascii_digit()).count();
+    let tail_digits = name
+        .chars()
+        .rev()
+        .take_while(|c| c.is_ascii_digit())
+        .count();
     tail_digits > 0
 }
 

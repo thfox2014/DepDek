@@ -15,9 +15,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use sysinfo::{Disks, Networks, ProcessesToUpdate, System, MINIMUM_CPU_UPDATE_INTERVAL};
 
-pub use host::{
-    CpuSummary, DiskSummary, DiskThroughput, HostInfo, MemorySummary, NetworkSummary,
-};
+pub use host::{CpuSummary, DiskSummary, DiskThroughput, HostInfo, MemorySummary, NetworkSummary};
 pub use processes::{AppUsage, ProcessUsage};
 
 /// How many applications the sampler keeps in the snapshot.
@@ -88,14 +86,11 @@ impl Metrics {
                 .partial_cmp(&a.cpu_pct)
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| b.mem_bytes.cmp(&a.mem_bytes)),
-            SortKey::Memory => b
-                .mem_bytes
-                .cmp(&a.mem_bytes)
-                .then_with(|| {
-                    b.cpu_pct
-                        .partial_cmp(&a.cpu_pct)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                }),
+            SortKey::Memory => b.mem_bytes.cmp(&a.mem_bytes).then_with(|| {
+                b.cpu_pct
+                    .partial_cmp(&a.cpu_pct)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
             SortKey::Disk => (b.disk_read_bytes + b.disk_write_bytes)
                 .cmp(&(a.disk_read_bytes + a.disk_write_bytes))
                 .then_with(|| {
@@ -163,8 +158,14 @@ impl Collector {
         let networks = host::networks(&self.networks, &self.previous_net, elapsed_ms);
         let disk_totals = host::disk_throughput();
 
-        let net_rx_bps: f64 = networks.iter().map(|interface| interface.rx_bytes_per_sec).sum();
-        let net_tx_bps: f64 = networks.iter().map(|interface| interface.tx_bytes_per_sec).sum();
+        let net_rx_bps: f64 = networks
+            .iter()
+            .map(|interface| interface.rx_bytes_per_sec)
+            .sum();
+        let net_tx_bps: f64 = networks
+            .iter()
+            .map(|interface| interface.tx_bytes_per_sec)
+            .sum();
 
         let mut disk_read = 0u64;
         let mut disk_write = 0u64;
@@ -309,15 +310,25 @@ mod tests {
         assert!(metrics.host.cores_logical >= 1);
         assert!(metrics.memory.total_bytes > 0);
         assert!(metrics.memory.used_bytes <= metrics.memory.total_bytes);
-        assert!((0.0..=100.0).contains(&metrics.cpu.usage_pct), "cpu={}", metrics.cpu.usage_pct);
+        assert!(
+            (0.0..=100.0).contains(&metrics.cpu.usage_pct),
+            "cpu={}",
+            metrics.cpu.usage_pct
+        );
         assert!((0.0..=100.0).contains(&metrics.memory.used_pct));
         assert!(!metrics.history.is_empty());
         assert_eq!(metrics.sample_count, 1);
         // The sampler must always see at least itself.
         assert!(!metrics.processes.is_empty());
         assert!(!metrics.apps.is_empty());
-        assert!(metrics.processes.iter().all(|process| process.cpu_pct >= 0.0));
-        assert!(metrics.processes.iter().any(|process| process.mem_bytes > 0));
+        assert!(metrics
+            .processes
+            .iter()
+            .all(|process| process.cpu_pct >= 0.0));
+        assert!(metrics
+            .processes
+            .iter()
+            .any(|process| process.mem_bytes > 0));
     }
 
     #[test]
@@ -345,7 +356,12 @@ mod tests {
         ];
         assert_eq!(metrics.top_processes(SortKey::Cpu, 1)[0].pid, 2);
         assert_eq!(metrics.top_processes(SortKey::Memory, 1)[0].pid, 3);
-        assert_eq!(metrics.top_processes(SortKey::parse(Some("memory")), 2).len(), 2);
+        assert_eq!(
+            metrics
+                .top_processes(SortKey::parse(Some("memory")), 2)
+                .len(),
+            2
+        );
         assert_eq!(SortKey::parse(Some("disk")), SortKey::Disk);
         assert_eq!(SortKey::parse(None), SortKey::Cpu);
     }

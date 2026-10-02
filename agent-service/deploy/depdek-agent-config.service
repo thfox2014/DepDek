@@ -1,0 +1,41 @@
+[Unit]
+Description=DepDek Agent Provider configuration broker
+After=depdek-agent.service
+
+[Service]
+Type=simple
+User=root
+Group=depdek-webdesk
+RuntimeDirectory=depdek-agent-config
+RuntimeDirectoryMode=0750
+UMask=0007
+Environment=DEPDEK_AGENT_CONFIG_SOCKET=/run/depdek-agent-config/config.sock
+Environment=DEPDEK_AGENT_ENV_PATH=/etc/depdek/agent.env
+ExecStart=/usr/local/bin/depdek-agent-config
+Restart=on-failure
+RestartSec=3
+
+# Narrow privileged surface: one Unix socket, one fixed config file, one fixed
+# systemd restart. It has no network access and never returns secret values.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+ReadWritePaths=/etc/depdek
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=depdek-agent-config
+
+[Install]
+WantedBy=multi-user.target

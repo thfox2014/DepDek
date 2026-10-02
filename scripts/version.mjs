@@ -33,11 +33,17 @@ const paths = {
   webdeskCargoToml: join(repoRoot, "webdesk", "Cargo.toml"),
   webdeskCargoLock: join(repoRoot, "webdesk", "Cargo.lock"),
   webdeskWebPackage: join(repoRoot, "webdesk", "web", "package.json"),
+  spaceCargoToml: join(repoRoot, "space-service", "Cargo.toml"),
+  spaceCargoLock: join(repoRoot, "space-service", "Cargo.lock"),
+  agentCargoToml: join(repoRoot, "agent-service", "Cargo.toml"),
+  agentCargoLock: join(repoRoot, "agent-service", "Cargo.lock"),
 };
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/;
 const CARGO_PACKAGE_NAME = "agent-workbench";
 const WEBDESK_CARGO_PACKAGE_NAME = "depdek-webdesk";
+const SPACE_CARGO_PACKAGE_NAME = "depdek-space";
+const AGENT_CARGO_PACKAGE_NAME = "depdek-agent";
 
 function fail(message) {
   console.error(`✗ ${message}`);
@@ -80,6 +86,10 @@ function collectManifests() {
     { label: "src-tauri/Cargo.lock", current: cargoLockVersion(paths.cargoLock, CARGO_PACKAGE_NAME) },
     { label: "webdesk/Cargo.toml", current: cargoTomlVersion(paths.webdeskCargoToml, "webdesk/Cargo.toml") },
     { label: "webdesk/Cargo.lock", current: cargoLockVersion(paths.webdeskCargoLock, WEBDESK_CARGO_PACKAGE_NAME) },
+    { label: "space-service/Cargo.toml", current: cargoTomlVersion(paths.spaceCargoToml, "space-service/Cargo.toml") },
+    { label: "space-service/Cargo.lock", current: cargoLockVersion(paths.spaceCargoLock, SPACE_CARGO_PACKAGE_NAME) },
+    { label: "agent-service/Cargo.toml", current: cargoTomlVersion(paths.agentCargoToml, "agent-service/Cargo.toml") },
+    { label: "agent-service/Cargo.lock", current: cargoLockVersion(paths.agentCargoLock, AGENT_CARGO_PACKAGE_NAME) },
   ];
 }
 
@@ -144,6 +154,10 @@ function writeVersion(version, dryRun) {
   writeCargoLockVersion(paths.cargoLock, CARGO_PACKAGE_NAME, version, dryRun);
   writeCargoTomlVersion(paths.webdeskCargoToml, version, dryRun);
   writeCargoLockVersion(paths.webdeskCargoLock, WEBDESK_CARGO_PACKAGE_NAME, version, dryRun);
+  writeCargoTomlVersion(paths.spaceCargoToml, version, dryRun);
+  writeCargoLockVersion(paths.spaceCargoLock, SPACE_CARGO_PACKAGE_NAME, version, dryRun);
+  writeCargoTomlVersion(paths.agentCargoToml, version, dryRun);
+  writeCargoLockVersion(paths.agentCargoLock, AGENT_CARGO_PACKAGE_NAME, version, dryRun);
 }
 
 function commandCheck() {
@@ -155,7 +169,7 @@ function commandCheck() {
     console.error("  修复：npm run version:sync");
     process.exit(1);
   }
-  console.log(`✓ 版本一致：${version}（VERSION 与 7 个 manifest + 2 个 Cargo.lock）`);
+  console.log(`✓ 版本一致：${version}（VERSION 与所有 manifest / Cargo.lock）`);
 }
 
 function commandSync() {
