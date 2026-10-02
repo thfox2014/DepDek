@@ -18,7 +18,7 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-TARGET_USER="${DEPDEK_SSH_USER:-${SUDO_USER:-}}"
+TARGET_USER=""
 KEY_ONLY=0
 for arg in "$@"; do
   case "$arg" in
@@ -28,10 +28,32 @@ for arg in "$@"; do
     *) echo "未知参数：$arg（见 --help）" >&2; exit 1 ;;
   esac
 done
+
+# 解析要授权的用户：--user > $DEPDEK_SSH_USER > $SUDO_USER(非 root) > 仓库属主 > 首个普通用户。
+# 单独处理是因为在 root shell（sudo -i / su）里 SUDO_USER 会是 root，
+# 那样就会去 /root/.ssh 找公钥、静默跳过授权那一步。
+resolve_user() {
+  local candidate
+  for candidate in "${DEPDEK_SSH_USER:-}" "${SUDO_USER:-}"; do
+    if [ -n "$candidate" ] && [ "$candidate" != "root" ] && id "$candidate" >/dev/null 2>&1; then
+      echo "$candidate"
+      return
+    fi
+  done
+  candidate="$(stat -c '%U' "$(cd "$(dirname "$0")/.." && pwd)" 2>/dev/null || true)"
+  if [ -n "$candidate" ] && [ "$candidate" != "root" ] && id "$candidate" >/dev/null 2>&1; then
+    echo "$candidate"
+    return
+  fi
+  awk -F: '$3 >= 1000 && $3 < 60000 { print $1; exit }' /etc/passwd
+}
+
+[ -n "$TARGET_USER" ] || TARGET_USER="$(resolve_user)"
 if [ -z "$TARGET_USER" ] || ! id "$TARGET_USER" >/dev/null 2>&1; then
   echo "无法确定要授权的用户，请用 --user=<name> 指定" >&2
   exit 1
 fi
+echo "目标用户：$TARGET_USER"
 
 echo "== 1/5 安装 openssh-server"
 export DEBIAN_FRONTEND=noninteractive
@@ -40,8 +62,15 @@ apt-get install -y --no-install-recommends openssh-server
 
 echo "== 2/5 授权 $TARGET_USER 已有的公钥"
 home="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
-pub="$home/.ssh/id_ed25519.pub"
-if [ -f "$pub" ]; then
+key_ready=0
+pub=""
+if [ -f "$home/.ssh/id_ed25519.pub" ]; then
+  pub="$home/.ssh/id_ed25519.pub"
+elif compgen -G "$home/.ssh/*.pub" >/dev/null 2>&1; then
+  pub="$(compgen -G "$home/.ssh/*.pub" | head -1)"
+fi
+
+if [ -n "$pub" ] && [ -f "$pub" ]; then
   install -d -m 700 -o "$TARGET_USER" -g "$TARGET_USER" "$home/.ssh"
   touch "$home/.ssh/authorized_keys"
   chown "$TARGET_USER:$TARGET_USER" "$home/.ssh/authorized_keys"
@@ -50,10 +79,18 @@ if [ -f "$pub" ]; then
     echo "   已存在，跳过"
   else
     cat "$pub" >> "$home/.ssh/authorized_keys"
-    echo "   已写入 authorized_keys（指纹：$(ssh-keygen -lf "$pub" | awk '{print $2}')）"
+    echo "   已写入 authorized_keys ← $(basename "$pub")（指纹：$(ssh-keygen -lf "$pub" | awk '{print $2}')）"
   fi
+  key_ready=1
 else
-  echo "   未找到 $pub，跳过（可稍后手动放公钥）"
+  echo "   ⚠ $home/.ssh 下没有 *.pub 公钥，密钥登录不会生效。"
+  echo "     先以 $TARGET_USER 身份生成：ssh-keygen -t ed25519 -C \"$TARGET_USER@\$(hostname)\""
+  echo "     然后重跑本脚本，或手动执行："
+  echo "       install -d -m 700 ~/.ssh && cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+  if [ "$KEY_ONLY" -eq 1 ]; then
+    echo "   ✗ 你要求 --key-only，但没有可用公钥，继续下去会把自己锁在外面，已中止。" >&2
+    exit 1
+  fi
 fi
 
 echo "== 3/5 写入 /etc/ssh/sshd_config.d/99-depdek.conf"
@@ -83,12 +120,17 @@ systemctl restart ssh
 echo "== 5/5 验证"
 systemctl is-active ssh | sed 's/^/  服务状态: /'
 ss -ltnp 2>/dev/null | grep -E ':22\b' | sed 's/^/  监听: /' || echo "  ⚠ 22 端口未监听"
+if [ "$key_ready" -eq 1 ]; then
+  echo "  密钥登录: 已写入 authorized_keys（用你自己的私钥试一下）"
+else
+  echo "  ⚠ 密钥登录: 未就绪（没有公钥），目前只能密码登录"
+fi
 lan_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
 cat <<EOF
 
 完成。局域网内其他设备：
   ssh $TARGET_USER@${lan_ip:-<本机IP>}
-本机自测：
+本机自测（在 $TARGET_USER 自己的终端里，不需要 sudo，先设好 known_hosts）：
   ssh $TARGET_USER@127.0.0.1
 
 提示：
