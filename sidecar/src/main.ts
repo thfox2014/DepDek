@@ -5,8 +5,13 @@
  * stdout carries protocol lines only; all logging goes to stderr.
  */
 
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
+
 import { createStdioPeer } from "./rpc.js";
 import { SessionManager } from "./sessions.js";
+import { LocalVault } from "./localVault.js";
+import { startAgentHttpServer } from "./httpServer.js";
 import { applyMailAction, deleteMail, fetchMail, listMailboxes, sendMail } from "./mail.js";
 import { pushCalendarEvent, syncCalendar } from "./calendar.js";
 import { enqueueTodo, listTodos, updateTodo } from "./todo.js";
@@ -95,5 +100,33 @@ function reportFatal(context: string, err: unknown): void {
 
 process.on("uncaughtException", (err) => reportFatal("uncaught exception", err));
 process.on("unhandledRejection", (reason) => reportFatal("unhandled rejection", reason));
+
+// ---------------------------------------------------------------------------
+// Optional standalone HTTP service (browser preview, headless appliances).
+//
+//   node dist/sidecar.mjs --http[=port] --home <data folder>
+//
+// Serves the settings API out of the local data folder. The desktop shell
+// keeps talking over stdio and never starts this server.
+// ---------------------------------------------------------------------------
+
+function cliValue(flag: string): string | undefined {
+  const argv = process.argv.slice(2);
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === flag) return argv[i + 1];
+    if (arg?.startsWith(`${flag}=`)) return arg.slice(flag.length + 1);
+  }
+  return undefined;
+}
+
+if (process.argv.slice(2).some((arg) => arg === "--http" || arg.startsWith("--http="))) {
+  const port = Number(cliValue("--http") ?? process.env["DEPDEK_AGENT_HTTP_PORT"] ?? 1421);
+  const home = resolve(
+    cliValue("--home") ?? process.env["DEPDEK_HOME"] ?? join(homedir(), "DepDek-Home"),
+  );
+  const service = await startAgentHttpServer(new LocalVault(home), port);
+  console.error(`[sidecar] agent HTTP service: http://127.0.0.1:${service.port} (home: ${home})`);
+}
 
 console.error("[sidecar] ready");

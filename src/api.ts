@@ -383,8 +383,39 @@ export const agentAnalyze = (provider: ProviderConfig, text: string, systemPromp
 export const agentAbort = (sessionId: string) => invoke<void>("agent_abort", { sessionId });
 export const agentClose = (sessionId: string) => invoke<void>("agent_close", { sessionId });
 
-export const settingsGet = () => invoke<Settings>("settings_get");
-export const settingsSet = (settings: Settings) => invoke<void>("settings_set", { settings });
+// Browser-only UX preview: Tauri commands are unavailable in Vite. Settings
+// are then read and written through the standalone agent HTTP service, which
+// persists them as files in the local data folder (never in browser storage).
+const AGENT_HTTP_BASE = "/v1";
+const isBrowserPreview = () => typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
+
+async function agentService<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${AGENT_HTTP_BASE}${path}`, init);
+  if (!response.ok) {
+    throw new Error(
+      `agent 服务请求失败：${init?.method ?? "GET"} ${path} → HTTP ${response.status}`,
+    );
+  }
+  if (response.status === 204) return undefined as T;
+  return (await response.json()) as T;
+}
+
+export const settingsGet = async (): Promise<Settings> => {
+  if (isBrowserPreview()) return agentService<Settings>("/settings");
+  return invoke<Settings>("settings_get");
+};
+
+export const settingsSet = async (settings: Settings): Promise<void> => {
+  if (isBrowserPreview()) {
+    await agentService<void>("/settings", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(settings),
+    });
+    return;
+  }
+  return invoke<void>("settings_set", { settings });
+};
 export const obsidianSetRoot = (path: string) => invoke<string>("obsidian_set_root", { path });
 export const obsidianGetRoot = () => invoke<string | null>("obsidian_get_root");
 export const obsidianClearRoot = () => invoke<void>("obsidian_clear_root");

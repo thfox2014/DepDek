@@ -153,11 +153,22 @@ export default function App() {
     bootstrapped.current = true;
     (async () => {
       try {
-        // Browser-only UX preview: Tauri commands are unavailable in Vite,
-        // so provide a clearly local sample Home for visual/product QA.
+        // Browser-only UX preview: Tauri commands are unavailable in Vite, so
+        // settings come from the standalone agent service (they live in the
+        // local data folder). When that service is not running, fall back to
+        // the embedded sample Home for visual/product QA.
         if (!("__TAURI_INTERNALS__" in window)) {
-          setSettings({ providers: { [INITIAL_PROVIDER_NAME]: INITIAL_DEEPSEEK_PROVIDER }, agents: INITIAL_AGENTS });
-          setRoot("~/DepDek-Home · 浏览器 UX 预览");
+          const fromService = await api.settingsGet().catch(() => null);
+          const served = Boolean(
+            fromService &&
+              (Object.keys(fromService.providers ?? {}).length > 0 || (fromService.agents ?? []).length > 0),
+          );
+          const preview: api.Settings =
+            served && fromService
+              ? fromService
+              : { providers: { [INITIAL_PROVIDER_NAME]: INITIAL_DEEPSEEK_PROVIDER }, agents: INITIAL_AGENTS };
+          setSettings(preview);
+          setRoot(preview.last_root || "~/DepDek-Home · 浏览器 UX 预览");
           return;
         }
         const loaded = await api.settingsGet().catch(() => ({ providers: {} }) as api.Settings);

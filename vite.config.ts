@@ -16,6 +16,15 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
+    // Browser preview: settings are persisted by the standalone agent service
+    // (sidecar) into the local data folder. Keep the port in sync with
+    // DEPDEK_AGENT_HTTP_PORT (default 1421).
+    proxy: {
+      "/v1": {
+        target: `http://127.0.0.1:${process.env.DEPDEK_AGENT_HTTP_PORT ?? "1421"}`,
+        changeOrigin: false,
+      },
+    },
   },
   build: {
     target: "es2021",
