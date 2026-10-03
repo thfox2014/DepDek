@@ -416,6 +416,46 @@ export const settingsSet = async (settings: Settings): Promise<void> => {
   }
   return invoke<void>("settings_set", { settings });
 };
+
+// Conversation history (contract 6.2): the authoritative copy lives in the
+// vault as `agent/<id>/conversations.json`. Desktop reads it through the Rust
+// vault commands; the browser preview goes through the agent HTTP service
+// (vault route, same path pattern). Returns null when no history exists yet.
+export const conversationRead = async (agentId: string): Promise<string | null> => {
+  const path = `agent/${agentId}/conversations.json`;
+  if (isBrowserPreview()) {
+    try {
+      const result = await agentService<{ content: string; size: number }>(
+        `/vault/read?path=${encodeURIComponent(path)}`,
+      );
+      return result.content;
+    } catch (err) {
+      if (String(err).includes("404") || String(err).includes("not found")) return null;
+      throw err;
+    }
+  }
+  try {
+    const result = await invoke<ReadFileResult>("vault_read_file", { path });
+    return result.content;
+  } catch (err) {
+    // -32002 = path does not exist (no history yet).
+    if (String(err).includes("-32002") || String(err).toLowerCase().includes("not found")) return null;
+    throw err;
+  }
+};
+
+export const conversationWrite = async (agentId: string, content: string): Promise<void> => {
+  const path = `agent/${agentId}/conversations.json`;
+  if (isBrowserPreview()) {
+    await agentService<void>("/vault/write", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path, content }),
+    });
+    return;
+  }
+  await invoke<WriteFileResult>("vault_write_file", { path, content });
+};
 export const obsidianSetRoot = (path: string) => invoke<string>("obsidian_set_root", { path });
 export const obsidianGetRoot = () => invoke<string | null>("obsidian_get_root");
 export const obsidianClearRoot = () => invoke<void>("obsidian_clear_root");

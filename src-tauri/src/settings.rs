@@ -28,6 +28,28 @@ pub enum ProviderConfig {
     },
 }
 
+impl ProviderConfig {
+    /// Borrow the mutable `api_key` (OpenAI-compatible providers make it optional).
+    pub fn api_key_mut(&mut self) -> Option<&mut String> {
+        match self {
+            ProviderConfig::OpenAi { api_key, .. } | ProviderConfig::Anthropic { api_key, .. } => {
+                Some(api_key)
+            }
+            ProviderConfig::OpenAiCompatible { api_key, .. } => api_key.as_mut(),
+        }
+    }
+
+    /// Borrow the `api_key`.
+    pub fn api_key(&self) -> Option<&str> {
+        match self {
+            ProviderConfig::OpenAi { api_key, .. } | ProviderConfig::Anthropic { api_key, .. } => {
+                Some(api_key.as_str())
+            }
+            ProviderConfig::OpenAiCompatible { api_key, .. } => api_key.as_deref(),
+        }
+    }
+}
+
 /// A saved agent session configuration, restored on next launch.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SavedAgent {

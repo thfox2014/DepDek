@@ -15,12 +15,15 @@
 import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
+import { isSecretRef, secretRef, createCredentialsAccess } from "./credentials.js";
 import { readSettings, writeSettings, type SettingsFile } from "./settingsFile.js";
 import type { VaultClient } from "./tools.js";
 
 const MAX_BODY = 2 * 1024 * 1024;
 const DEFAULT_ALLOWED_ORIGIN = "http://localhost:1420";
 const REDACTED = "********";
+/** Only conversation files for the browser preview may be written here. */
+const VAULT_FILE_PATTERN = /^agent\/[a-zA-Z0-9._-]+\/conversations\.json$/;
 
 export interface AgentHttpService {
   port: number;
@@ -105,6 +108,28 @@ function mergeSettings(current: SettingsFile, incoming: unknown): SettingsFile {
   } as SettingsFile;
 }
 
+/**
+ * Fresh (non-placeholder) provider API keys never land in settings.json:
+ * they are encrypted into secrets/providers.enc.json and replaced by a
+ * `$secret:` reference. Placeholder/redacted/`$secret:` values pass through.
+ */
+async function encryptFreshProviderKeys(
+  client: VaultClient,
+  settings: SettingsFile,
+): Promise<void> {
+  const access = await createCredentialsAccess(client, "settings");
+  for (const [name, cfg] of Object.entries(settings.providers)) {
+    const record = cfg as Record<string, unknown>;
+    const apiKey = record.api_key;
+    if (typeof apiKey !== "string" || apiKey === "" || apiKey === REDACTED || isSecretRef(apiKey)) {
+      continue;
+    }
+    const ref = secretRef("providers", `${name}.api_key`);
+    await access.setSecret("providers", `${name}.api_key`, apiKey);
+    record.api_key = ref;
+  }
+}
+
 function sendJson(
   res: ServerResponse,
   status: number,
@@ -132,7 +157,8 @@ async function handle(
   options: AgentHttpOptions & { allowedOrigin: string },
 ): Promise<void> {
   const cors = corsHeaders(req, options.allowedOrigin);
-  const { pathname } = new URL(req.url ?? "/", "http://localhost");
+  const url = new URL(req.url ?? "/", "http://localhost");
+  const { pathname } = url;
   try {
     if (req.method === "OPTIONS") {
       sendNoContent(res, cors);
@@ -144,7 +170,14 @@ async function handle(
     }
     const settingsRoute =
       pathname === "/v1/settings" && (req.method === "GET" || req.method === "PUT");
-    if (settingsRoute && !tokenMatches(options.token, req.headers["x-depdek-token"])) {
+    const vaultRoute =
+      pathname === "/v1/vault/read" && req.method === "GET";
+    const vaultWriteRoute =
+      pathname === "/v1/vault/write" && req.method === "PUT";
+    if (
+      (settingsRoute || vaultRoute || vaultWriteRoute) &&
+      !tokenMatches(options.token, req.headers["x-depdek-token"])
+    ) {
       sendJson(res, 401, { error: "unauthorized" }, cors);
       return;
     }
@@ -155,8 +188,47 @@ async function handle(
     if (req.method === "PUT" && pathname === "/v1/settings") {
       const raw = await readBody(req);
       const current = await readSettings(client);
-      await writeSettings(client, mergeSettings(current, JSON.parse(raw || "{}")));
+      const merged = mergeSettings(current, JSON.parse(raw || "{}"));
+      await encryptFreshProviderKeys(client, merged);
+      await writeSettings(client, merged);
       sendNoContent(res, cors);
+      return;
+    }
+    if (vaultRoute) {
+      // Conversation persistence for the browser preview (section 2.3):
+      // only agent/<id>/conversations.json may be read/written over HTTP.
+      const path = url.searchParams.get("path") ?? "";
+      if (!VAULT_FILE_PATTERN.test(path)) {
+        sendJson(res, 400, { error: "path must match agent/<id>/conversations.json" }, cors);
+        return;
+      }
+      try {
+        const file = await client.request<{ content: string; size: number; sha256: string }>(
+          "vault/read_file",
+          { session_id: "user", path },
+        );
+        sendJson(res, 200, file, cors);
+      } catch (err) {
+        if (err instanceof Error && /not found|no such file|-32002/i.test(err.message)) {
+          sendJson(res, 404, { error: "file not found" }, cors);
+          return;
+        }
+        throw err;
+      }
+      return;
+    }
+    if (vaultWriteRoute) {
+      const body = JSON.parse(await readBody(req)) as { path?: string; content?: string };
+      const path = String(body.path ?? "");
+      if (!VAULT_FILE_PATTERN.test(path)) {
+        sendJson(res, 400, { error: "path must match agent/<id>/conversations.json" }, cors);
+        return;
+      }
+      const written = await client.request<{ size: number; sha256: string }>(
+        "vault/write_file",
+        { session_id: "user", path, content: String(body.content ?? "") },
+      );
+      sendJson(res, 200, written, cors);
       return;
     }
     sendJson(res, 404, { error: `no route for ${req.method ?? "GET"} ${pathname}` }, cors);

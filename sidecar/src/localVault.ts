@@ -29,6 +29,18 @@ const PROTECTED_PATHS = [
 /** First-party sessions (UI + connectors) that may access protected files. */
 const TRUSTED_SESSIONS = new Set(["user", "mail", "calendar", "settings"]);
 
+/** Mirrors vault.rs `is_protected_path`: exact credential files plus the
+ *  whole encrypted secrets/ tree (master key + credential blobs). */
+function isProtectedPath(rel: string): boolean {
+  return (
+    PROTECTED_PATHS.includes(rel) ||
+    rel === "secrets" ||
+    rel.startsWith("secrets/")
+  );
+}
+
+const MAX_BINARY_BYTES = 64 * 1024 * 1024;
+
 export class LocalVault implements VaultClient {
   private readonly prefix: string;
 
@@ -44,7 +56,7 @@ export class LocalVault implements VaultClient {
       .replaceAll("\\", "/")
       .replace(/^\.\/+/, "")
       .replace(/\/+$/, "");
-    if (!TRUSTED_SESSIONS.has(sessionId) && PROTECTED_PATHS.includes(rel)) {
+    if (!TRUSTED_SESSIONS.has(sessionId) && isProtectedPath(rel)) {
       throw new RpcError(ERR_PATH, "access to credential/private files is denied");
     }
     switch (method) {
@@ -52,6 +64,13 @@ export class LocalVault implements VaultClient {
         return (await this.read(args.path)) as T;
       case "vault/write_file":
         return (await this.write(args.path, args.content)) as T;
+      case "vault/read_binary":
+        return (await this.readBinary(args.path)) as T;
+      case "vault/write_binary":
+        return (await this.writeBinary(
+          args.path,
+          (args as { data_base64?: string }).data_base64,
+        )) as T;
       default:
         throw new RpcError(-32601, `standalone sidecar does not implement ${method}`);
     }
@@ -89,5 +108,35 @@ export class LocalVault implements VaultClient {
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, text, "utf8");
     return { size };
+  }
+
+  private async readBinary(path: string | undefined) {
+    const target = this.resolvePath(path);
+    try {
+      const bytes = await readFile(target);
+      return { data_base64: bytes.toString("base64"), size: bytes.length, mime: "application/octet-stream" };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new RpcError(ERR_PATH, `file not found: ${path}`);
+      }
+      throw err;
+    }
+  }
+
+  private async writeBinary(path: string | undefined, dataBase64: string | undefined) {
+    const encoded = String(dataBase64 ?? "");
+    // Reject obviously oversized payloads before decoding, then verify the
+    // canonical round-trip so corrupt base64 cannot silently write garbage.
+    if (encoded.length > (MAX_BINARY_BYTES / 3) * 4 + 4) {
+      throw new RpcError(ERR_TOO_LARGE, "payload exceeds the 64 MiB cap");
+    }
+    const bytes = Buffer.from(encoded, "base64");
+    if (bytes.length > MAX_BINARY_BYTES || bytes.toString("base64") !== encoded) {
+      throw new RpcError(ERR_PATH, "data_base64 is not valid base64");
+    }
+    const target = this.resolvePath(path);
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, bytes);
+    return { size: bytes.length };
   }
 }

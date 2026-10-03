@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { normalizeCalendarEndpoint, parseIcsEvents, pushCalendarEvent, syncCalendar, type CalendarAccount } from "../src/calendar.js";
+import { createCredentialsAccess } from "../src/credentials.js";
 import { RpcError } from "../src/rpc.js";
 import type { VaultClient } from "../src/tools.js";
 
 function fakeVault(initial: Record<string, string> = {}) {
   const files = new Map(Object.entries(initial));
+  const binaryFiles = new Map<string, Buffer>();
   const vault: VaultClient = {
     request: vi.fn(async (method: string, params: any) => {
       if (method === "vault/read_file") {
@@ -16,10 +18,19 @@ function fakeVault(initial: Record<string, string> = {}) {
         files.set(params.path, params.content);
         return { size: params.content.length, sha256: "x" };
       }
+      if (method === "vault/read_binary") {
+        const data = binaryFiles.get(params.path);
+        if (data === undefined) throw new RpcError(-32002, "path not found");
+        return { data_base64: data.toString("base64"), size: data.length, mime: "application/octet-stream" };
+      }
+      if (method === "vault/write_binary") {
+        binaryFiles.set(params.path, Buffer.from(params.data_base64, "base64"));
+        return { size: params.data_base64.length, sha256: "x" };
+      }
       throw new Error(`unexpected method ${method}`);
     }),
   };
-  return { vault, files };
+  return { vault, files, binaryFiles };
 }
 
 const ICS = `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:meeting-1\r\nDTSTART:20260808T093000Z\r\nDTEND:20260808T103000Z\r\nSUMMARY:产品周会\r\nLOCATION:会议室 B\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:day-1\r\nDTSTART;VALUE=DATE:20260809\r\nDTEND;VALUE=DATE:20260810\r\nSUMMARY:休息日\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n`;
@@ -84,5 +95,42 @@ describe("calendar adapters", () => {
   it("blocks outbound writes for read-only providers", async () => {
     const { vault } = fakeVault({ "calendar/accounts.json": JSON.stringify({ accounts: [ACCOUNT] }) });
     await expect(pushCalendarEvent(vault, { account: "google", event: { id: "local-1", title: "x", start: "2026-08-08T01:00:00.000Z", end: "2026-08-08T02:00:00.000Z" } })).rejects.toThrow("OAuth");
+  });
+
+  it("resolves a $secret password reference for authenticated feeds", async () => {
+    const account: CalendarAccount = { id: "sub", name: "订阅", provider: "ics", endpoint: "https://calendar.test/feed.ics", user: "u", password: "$secret:calendar.sub.password" };
+    const { vault, files } = fakeVault({
+      "calendar/accounts.json": JSON.stringify({ accounts: [account] }),
+      "calendar/events.json": JSON.stringify({ version: 1, updated_at: "", events: [] }),
+    });
+    const access = await createCredentialsAccess(vault, "calendar");
+    await access.setSecret("calendar", "sub.password", "hidden-pw");
+
+    const fetchImpl = vi.fn(async () => new Response(ICS, { status: 200, headers: { "content-type": "text/calendar" } }));
+    await expect(syncCalendar(vault, { account: "sub" }, fetchImpl)).resolves.toMatchObject({ imported: 2 });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://calendar.test/feed.ics",
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: `Basic ${Buffer.from("u:hidden-pw").toString("base64")}` }) }),
+    );
+    // The config file still carries the reference, never the plaintext.
+    expect(files.get("calendar/accounts.json")!).toContain("$secret:calendar.sub.password");
+    expect(files.get("calendar/accounts.json")!).not.toContain("hidden-pw");
+  });
+
+  it("resolves a $secret access_token reference for Bearer auth", async () => {
+    const account: CalendarAccount = { id: "g", name: "Google", provider: "google", endpoint: "https://calendar.test/feed.ics", access_token: "$secret:calendar.g.access_token" };
+    const { vault } = fakeVault({
+      "calendar/accounts.json": JSON.stringify({ accounts: [account] }),
+      "calendar/events.json": JSON.stringify({ version: 1, updated_at: "", events: [] }),
+    });
+    const access = await createCredentialsAccess(vault, "calendar");
+    await access.setSecret("calendar", "g.access_token", "tok-hidden");
+
+    const fetchImpl = vi.fn(async () => new Response(ICS, { status: 200, headers: { "content-type": "text/calendar" } }));
+    await expect(syncCalendar(vault, { account: "g" }, fetchImpl)).resolves.toMatchObject({ imported: 2 });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://calendar.test/feed.ics",
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer tok-hidden" }) }),
+    );
   });
 });

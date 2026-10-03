@@ -72,11 +72,19 @@ describe("agent HTTP service", () => {
     const saved = JSON.parse(read.content) as {
       providers: Record<string, { api_key: string; model: string }>;
     };
-    expect(saved.providers.DeepSeek.api_key).toBe("sk-real");
+    // The stored value survives as its `$secret:` reference (redacted round-trips
+    // preserve it) and the model field still updated.
+    expect(saved.providers.DeepSeek.api_key).toBe("$secret:providers.DeepSeek.api_key");
     expect(saved.providers.DeepSeek.model).toBe("deepseek-v3");
+    // The ciphertext blob holds the encrypted secret, never the plaintext.
+    const blob = await new LocalVault(dir).request<{ content: string }>("vault/read_file", {
+      session_id: "settings",
+      path: "secrets/providers.enc.json",
+    });
+    expect(blob.content).not.toContain("sk-real");
   });
 
-  it("accepts a fresh api_key on PUT and stores it", async () => {
+  it("accepts a fresh api_key on PUT, encrypts it and stores a $secret reference", async () => {
     await writeSettings({ providers: {}, agents: [] });
     const res = await fetch(`http://127.0.0.1:${service.port}/v1/settings`, {
       method: "PUT",
@@ -91,7 +99,64 @@ describe("agent HTTP service", () => {
       path: "settings/settings.json",
     });
     const saved = JSON.parse(read.content) as { providers: Record<string, { api_key: string }> };
-    expect(saved.providers.New.api_key).toBe("sk-new");
+    expect(saved.providers.New.api_key).toBe("$secret:providers.New.api_key");
+    // Plaintext never lands in settings.json or the blob file.
+    expect(read.content).not.toContain("sk-new");
+    const blob = await new LocalVault(dir).request<{ content: string }>("vault/read_file", {
+      session_id: "settings",
+      path: "secrets/providers.enc.json",
+    });
+    expect(blob.content).not.toContain("sk-new");
+  });
+
+  it("round-trips conversation history over GET/PUT /v1/vault", async () => {
+    const write = await fetch(`http://127.0.0.1:${service.port}/v1/vault/write`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", "x-depdek-token": TOKEN, origin: ORIGIN },
+      body: JSON.stringify({
+        path: "agent/tanvis/conversations.json",
+        content: JSON.stringify([{ id: "c1", title: "t", createdAt: 1, blocks: [] }]),
+      }),
+    });
+    expect(write.status).toBe(200);
+    const body = (await write.json()) as { size: number };
+    expect(body.size).toBeGreaterThan(0);
+
+    const readFile = await new LocalVault(dir).request<{ content: string }>("vault/read_file", {
+      session_id: "user",
+      path: "agent/tanvis/conversations.json",
+    });
+    const parsed = JSON.parse(readFile.content) as { id: string }[];
+    expect(parsed[0].id).toBe("c1");
+
+    const res = await fetch(
+      `http://127.0.0.1:${service.port}/v1/vault/read?path=${encodeURIComponent("agent/tanvis/conversations.json")}`,
+      { headers: { "x-depdek-token": TOKEN, origin: ORIGIN } },
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).content).toContain("\"c1\"");
+  });
+
+  it("rejects vault paths outside agent/<id>/conversations.json", async () => {
+    for (const path of ["settings/settings.json", "agent/tanvis/notes.md", "../escape", "secrets/master.key"]) {
+      const res = await fetch(
+        `http://127.0.0.1:${service.port}/v1/vault/read?path=${encodeURIComponent(path)}`,
+        { headers: { "x-depdek-token": TOKEN, origin: ORIGIN } },
+      );
+      expect(res.status).toBe(400);
+    }
+    const missing = await fetch(
+      `http://127.0.0.1:${service.port}/v1/vault/read?path=${encodeURIComponent("agent/nobody/conversations.json")}`,
+      { headers: { "x-depdek-token": TOKEN, origin: ORIGIN } },
+    );
+    expect(missing.status).toBe(404);
+  });
+
+  it("requires the token for vault routes too", async () => {
+    const res = await fetch(
+      `http://127.0.0.1:${service.port}/v1/vault/read?path=${encodeURIComponent("agent/tanvis/conversations.json")}`,
+    );
+    expect(res.status).toBe(401);
   });
 
   it("emits CORS headers only for the allowed origin", async () => {

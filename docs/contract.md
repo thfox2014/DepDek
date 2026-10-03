@@ -74,7 +74,7 @@ type AgentEngine = "pi" | "deepseek-harness";
 
 所有方法 params 均含 `session_id`（用于审计归属，前端用户操作记为 `"user"`）。`path` 一律为**相对数据文件夹根**的 POSIX 风格相对路径（`.` 表示根）。
 
-**凭据保护（按 session）**：trusted session 集合为 `"user" | "mail" | "calendar" | "settings"`；agent session（其余任何 id）对受保护路径（`tasks/history.json`、`mail/accounts.json`、`calendar/accounts.json`、`settings/settings.json`）的全部操作（read/write/binary/list/search/stat/delete/compress）一律拒绝 -32001，且这些文件对 agent 的目录列举与全文搜索不可见、目录压缩时被排除。trusted session 不受此限制。`myinfo/profile.json`（agent 上下文有意读取的用户自述）与 `todo/queue.json`（sidecar 以 TODO_SESSION_ID 维护）不在此列。
+**凭据保护（按 session）**：trusted session 集合为 `"user" | "mail" | "calendar" | "settings"`；agent session（其余任何 id）对受保护路径（`tasks/history.json`、`mail/accounts.json`、`calendar/accounts.json`、`settings/settings.json`，以及 `secrets/` 整棵子树——`master.key` 与所有 `<scope>.enc.json` 密文 blob）的全部操作（read/write/binary/list/search/stat/delete/compress）一律拒绝 -32001，且这些文件与目录对 agent 的目录列举和全文搜索不可见、目录压缩时被排除。trusted session 不受此限制。`myinfo/profile.json`（agent 上下文有意读取的用户自述）与 `todo/queue.json`（sidecar 以 TODO_SESSION_ID 维护）不在此列。会话历史位于 `agent/<id>/conversations.json`（Vault 明文，见 6.2），是 agent 自身会话的可读写文件，不在保护名单内。
 
 | 方法 | params | result |
 |---|---|---|
@@ -99,7 +99,7 @@ sidecar 另注册 `propose_memory` 工具（必须提供 `source_refs`），它�
 
 | code | 含义 |
 |---|---|
-| -32001 | 路径越出数据文件夹根（含 `..`、绝对路径、逃逸 symlink），或 agent session 触碰受保护凭据文件 |
+| -32001 | 路径越出数据文件夹根（含 `..`、绝对路径、逃逸 symlink），或 agent session 触碰受保护凭据文件 / `secrets/` 加密子树 |
 | -32002 | 路径不存在 |
 | -32003 | 超过大小限制（单文件读/写上限 10 MiB） |
 | -32004 | 数据文件夹根未设置 |
@@ -224,7 +224,9 @@ type MemoryRecord = {
 | `agent_abort` | `{session_id: string}` | — |
 | `agent_close` | `{session_id: string}` | — |
 | `settings_get` | — | `Settings` |
-| `settings_set` | `{settings: Settings}` | — |
+| `settings_set` | `{settings: Settings}` | —（迁移：新写入的明文 provider api_key 自动加密到 `secrets/providers.enc.json` 并落为 `$secret:` 引用，见 6.1） |
+| `credentials_set` | `{scope: string, key: string, value: string}` | —（value 为空字符串时删除该条目） |
+| `credentials_has` | `{scope: string, key: string}` | `boolean`（scope/key 是否存在密文条目，供 Settings UI 判断“已加密”） |
 | `mail_fetch` | `{account?: string, refreshBody?: boolean}` | `{fetched: number, accounts: [...]}`（同 `mail/fetch` result，转发 sidecar） |
 | `mail_delete` | `{account: string, uids: number[]}` | `{account: string, deleted: number}`（转发 `mail/delete`） |
 | `mail_list_mailboxes` | `{account: string}` | `{account: string, mailboxes: [...]}`（转发 `mail/list_mailboxes`） |
@@ -297,7 +299,21 @@ type AgentSkill = "documents" | "photos" | "music" | "videos" | "mail" | "memory
 3. 文本 read/write 单文件上限 10 MiB（-32003）；binary read/write 上限 64 MiB。
 4. 文本接口仅处理 UTF-8（-32005）；二进制接口通过 base64 传输。
 5. 每个 vault 操作无论成功失败都写审计。
-6. 凭据保护名单：`tasks/history.json`、`mail/accounts.json`、`calendar/accounts.json`、`settings/settings.json` 仅对 trusted session（`user`/`mail`/`calendar`/`settings`）开放；agent session 对名单内文件的任何操作返回 -32001 并照常审计，名单内文件同时从目录列举、内容搜索和 agent 压缩中排除。`myinfo/profile.json`（agent 上下文有意读取）与 `todo/queue.json`（sidecar 自管）不在名单内。
+6. 凭据保护名单：`tasks/history.json`、`mail/accounts.json`、`calendar/accounts.json`、`settings/settings.json` 及 `secrets/` 子树（master key + 密文 blob）仅对 trusted session（`user`/`mail`/`calendar`/`settings`）开放；agent session 对名单内路径的任何操作返回 -32001 并照常审计，名单内文件同时从目录列举、内容搜索和 agent 压缩中排除。`myinfo/profile.json`（agent 上下文有意读取）与 `todo/queue.json`（sidecar 自管）不在名单内。
+
+### 6.1 凭据加密存储（P1，Rust 与 Node 同一格式）
+
+- 明文不再写入配置。`secrets/` 目录存放：`master.key`（32 字节随机，Unix 权限 0600）+ 每个 scope 一个 `secrets/<scope>.enc.json` 密文 blob。
+- blob 格式：`{version: 1, entries: { "<key>": "<b64(nonce(12) || ciphertext || tag(16))>" }}`，AES-256-GCM，nonce 每次随机。桌面端 Rust `credentials.rs`、浏览器预览 Node `sidecar/src/credentials.ts`、迁移脚本 `scripts/migrate-credentials.mjs` 共用完全相同的格式，可互相解密。
+- 配置中的引用格式为 `$secret:<scope>.<key>`；`********` 仍是脱敏占位符（读写回环保留旧值）。读取时遇到 `$secret:` 引用在内存中解密使用，不写回配置文件，因此引用在磁盘上持续保持。
+- scope/key 约定：`mail`（`<name>.password`）、`calendar`（`<id>.password` / `<id>.access_token`）、`providers`（`<name>.api_key`，对应 settings/providers）。
+- 旧明文兼容：`mail/accounts.json`、`calendar/accounts.json`、`settings/settings.json` 中遗留的明文密码 / api_key 读取时仍可用（fallback），仅新写入时加密；`node scripts/migrate-credentials.mjs --root <Home>` 可将现存明文一次性迁移为 `$secret:` 引用（幂等：先写密文再写回配置，写回失败保留明文并告警）。
+- 写入路径：桌面 `settings_set` 与 HTTP `PUT /v1/settings` 收到非占位符、非引用的新明文 api_key 时自动加密；Settings UI 亦可用 `credentials_set`/`credentials_has` 直接管理密文条目。
+
+### 6.2 会话历史持久化（P1）
+
+- 会话历史文件为 `<Home>/agent/<id>/conversations.json`（Vault 明文，README 附带的压缩/搜索/备份等既有能力直接生效），仅用户界面与 Rust 通过 `vault_read_file`/`vault_write_file` 读写；浏览器预览经 `GET/PUT /v1/vault/read|write`（仅限该路径模式，见第 9 节）。
+- 前端启动时先尝试从该文件引导历史（bootstrap），后续变更以 800ms 节流后台落盘；localStorage 降级为崩溃缓存（仅在 Vault 不可用时兜底，且能恢复时同步回 Vault），不再是会话历史的权威存储。
 
 ## 7. 邮件存储约定
 
@@ -312,7 +328,7 @@ type MailAccount = {
   port?: number;       // 默认 993
   secure?: boolean;    // 默认 true（TLS）
   user: string;        // 邮箱地址
-  password: string;    // 密码或客户端授权码（明文存于本地 vault，与 settings 中 API key 一致）
+  password: string;    // 密码或客户端授权码；P1 起为 `$secret:mail.<name>.password` 引用（密文存 `secrets/mail.enc.json`），旧明文仍可读（兼容回退），新写入一律加密
   mailbox?: string;    // 默认 "INBOX"
   last_uid?: number;   // 增量同步状态，由 sidecar 维护，用户/agent 勿改
   smtp_host?: string;  // SMTP 服务器；留空时由 IMAP host 自动推断
@@ -365,7 +381,7 @@ type TodoUpdateInput = {
 type TodoQueueFile = { version: 1; updatedAt: string; items: TodoItem[] };
 ```
 
-`calendar/events.json` 是本地中枢的当前聚合视图；事件先落本地，外部写回永远是显式动作。连接凭据仍属于 V0.2 明文兼容债务，后续迁移到 Credential Broker/OS Keychain。
+`calendar/accounts.json` 的 `password`/`access_token` 自 P1 起为 `$secret:calendar.<id>.password` / `$secret:calendar.<id>.access_token` 引用（密文存 `secrets/calendar.enc.json`），旧明文仍可读（兼容回退），新写入一律加密。`calendar/events.json` 是本地中枢的当前聚合视图；事件先落本地，外部写回永远是显式动作。
 
 `todo/queue.json` 是待办中枢的当前队列；来源记录不覆盖原始邮件或日历事件，移动泳道只更新待办本身。
 
@@ -377,11 +393,13 @@ type TodoQueueFile = { version: 1; updatedAt: string; items: TodoItem[] };
 |---|---|---|
 | `GET /v1/health` | `{ok: true}` | 无 |
 | `GET /v1/settings` | 当前 Settings；返回前所有 provider 的 `api_key` 脱敏为 `********` | `x-depdek-token` |
-| `PUT /v1/settings` | 补丁合并：`********`/空/缺失的 `api_key` 保留旧值，其余字段覆盖，`agents` 数组整体替换 | `x-depdek-token` |
+| `PUT /v1/settings` | 补丁合并：`********`/空/缺失的 `api_key` 保留旧值，其余字段覆盖，`agents` 数组整体替换；字段值为非占位符的新明文 api_key 时自动加密到 `secrets/providers.enc.json` 并落为 `$secret:providers.<name>.api_key` 引用 | `x-depdek-token` |
+| `GET /v1/vault/read?path=...` | 读取会话历史：`path` 必须匹配 `agent/<id>/conversations.json`，返回 `{content: string, size: number}`；文件不存在返回 `{error: "not found"}`（404） | `x-depdek-token` |
+| `PUT /v1/vault/write` | 写入会话历史：body `{path, content}`，同样仅限 `agent/<id>/conversations.json` 模式；返回 `{size: number, sha256: string}` | `x-depdek-token` |
 
 安全模型：
 
 1. 服务只监听 `127.0.0.1`。
 2. CORS 只对 `http://localhost:1420`（Vite dev origin）放行；其余 origin 不返回 `access-control-allow-origin`，浏览器会阻断响应读取。
-3. 每次启动生成随机 per-launch token（`randomBytes(24).toString("hex")`），settings 读写必须携带 `x-depdek-token`（恒定时间比较），缺失或错误返回 401。
+3. 每次启动生成随机 per-launch token（`randomBytes(24).toString("hex")`），settings 与会话历史（vault）读写必须携带 `x-depdek-token`（恒定时间比较），缺失或错误返回 401。
 4. token 由 `scripts/dev-preview.mjs` 从 sidecar stderr 捕获并写入 `.preview-token`（0600），Vite proxy 在转发 `/v1/*` 时注入该请求头；浏览器 JS 永远接触不到 token。

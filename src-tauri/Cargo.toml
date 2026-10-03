@@ -41,6 +41,10 @@ tauri = { version = "2", optional = true , features = [] }
 tauri-plugin-dialog = { version = "2", optional = true }
 tauri-plugin-store = { version = "2", optional = true }
 
+# P1: encrypted credential store (secrets/<scope>.enc.json, AES-256-GCM)
+aes-gcm = "0.10"
+rand = "0.8"
+
 [build-dependencies]
 tauri-build = { version = "2", optional = true , features = [] }
 

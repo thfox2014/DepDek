@@ -253,18 +253,29 @@ fn is_trusted_session(session_id: &str) -> bool {
     matches!(session_id, "user" | "mail" | "calendar" | "settings")
 }
 
-/// Paths hidden from agent sessions (`&[]` for trusted first-party sessions).
-fn excluded_for(session_id: &str) -> &'static [&'static str] {
-    if is_trusted_session(session_id) {
-        &[]
-    } else {
-        PROTECTED_PATHS
-    }
+/// True when `relnorm` is a credential/private file — either an exact match
+/// in PROTECTED_PATHS or anything under the encrypted `secrets/` tree (the
+/// master key and encrypted credential blobs from `credentials.rs`).
+fn is_protected_path(relnorm: &str) -> bool {
+    PROTECTED_PATHS.contains(&relnorm)
+        || relnorm == "secrets"
+        || relnorm.starts_with("secrets/")
+}
+
+/// Exact-match list used by `compress` to skip protected files by absolute
+/// path. Directory-based secrets/ skipping is handled via `skip_secrets`.
+pub(crate) fn protected_paths() -> &'static [&'static str] {
+    PROTECTED_PATHS
+}
+
+/// Hidden from agent listings/searches; trusted sessions see everything.
+fn hidden_from(session_id: &str, relnorm: &str) -> bool {
+    !is_trusted_session(session_id) && is_protected_path(relnorm)
 }
 
 /// Reject agent access to protected paths; trusted sessions pass through.
 fn protected_guard(session_id: &str, relnorm: &str) -> Result<(), VaultError> {
-    if is_trusted_session(session_id) || !PROTECTED_PATHS.contains(&relnorm) {
+    if is_trusted_session(session_id) || !is_protected_path(relnorm) {
         return Ok(());
     }
     Err(VaultError::Escape(
@@ -533,7 +544,7 @@ impl Vault {
             self.record_audit(session_id, Op::List, &audit_path, Err(&error));
             return Err(error);
         }
-        let result = self.list_dir_inner(rel, excluded_for(session_id));
+        let result = self.list_dir_inner(rel, session_id);
         self.record_audit(
             session_id,
             Op::List,
@@ -544,7 +555,7 @@ impl Vault {
     }
 
     pub fn search_files(&self, session_id: &str, query: &str) -> Result<SearchResult, VaultError> {
-        let result = self.search_files_inner(query, excluded_for(session_id));
+        let result = self.search_files_inner(query, session_id);
         self.record_audit(
             session_id,
             Op::Search,
@@ -612,9 +623,8 @@ impl Vault {
                 }
             }
         }
-        let excluded: Vec<PathBuf> = if is_trusted_session(session_id) {
-            Vec::new()
-        } else {
+        let skip_secrets = !is_trusted_session(session_id);
+        let excluded: Vec<PathBuf> = if skip_secrets {
             self.root_pair()
                 .map(|pair| {
                     PROTECTED_PATHS
@@ -623,8 +633,10 @@ impl Vault {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default()
+        } else {
+            Vec::new()
         };
-        let result = self.compress_inner(source_rel, archive_rel, &excluded);
+        let result = self.compress_inner(source_rel, archive_rel, &excluded, skip_secrets);
         let audit_path = result
             .as_ref()
             .map(|value| value.archive.clone())
@@ -721,7 +733,7 @@ impl Vault {
         })
     }
 
-    fn list_dir_inner(&self, rel: &str, excluded: &[&str]) -> Result<ListDirResult, VaultError> {
+    fn list_dir_inner(&self, rel: &str, session_id: &str) -> Result<ListDirResult, VaultError> {
         let (path, relnorm) = self.resolve_existing(rel)?;
         if !fs::metadata(&path)?.is_dir() {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a directory").into());
@@ -731,13 +743,14 @@ impl Vault {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
             // The audit log is invisible to all vault operations; protected
-            // files are also hidden from agent sessions.
+            // files (credential files plus the whole secrets/ tree) are also
+            // hidden from agent sessions.
             let entry_rel = if relnorm.is_empty() {
                 name.clone()
             } else {
                 format!("{relnorm}/{name}")
             };
-            if name == AUDIT_FILE_NAME || excluded.contains(&entry_rel.as_str()) {
+            if name == AUDIT_FILE_NAME || hidden_from(session_id, &entry_rel) {
                 continue;
             }
             // Follow symlinks to classify; skip anything that cannot be
@@ -763,10 +776,10 @@ impl Vault {
         Ok(ListDirResult { entries })
     }
 
-    fn search_files_inner(&self, query: &str, excluded: &[&str]) -> Result<SearchResult, VaultError> {
+    fn search_files_inner(&self, query: &str, session_id: &str) -> Result<SearchResult, VaultError> {
         let pair = self.root_pair()?;
         let mut matches = Vec::new();
-        search_dir(&pair.root, &pair.root, query, &mut matches, excluded);
+        search_dir(&pair.root, &pair.root, query, &mut matches, session_id);
         Ok(SearchResult { matches })
     }
 
@@ -810,6 +823,7 @@ impl Vault {
         source_rel: &str,
         archive_rel: Option<&str>,
         excluded: &[PathBuf],
+        skip_secrets: bool,
     ) -> Result<CompressResult, VaultError> {
         let (source_path, source_norm) = self.resolve_existing(source_rel)?;
         let source_meta = fs::symlink_metadata(&source_path)?;
@@ -896,6 +910,7 @@ impl Vault {
                 &mut files,
                 &mut bytes,
                 excluded,
+                skip_secrets,
             )?;
             let encoder = builder.into_inner()?;
             encoder.finish()?;
@@ -933,6 +948,7 @@ fn append_archive_entries(
     files: &mut usize,
     bytes: &mut u64,
     excluded: &[PathBuf],
+    skip_secrets: bool,
 ) -> Result<(), VaultError> {
     let file_type = fs::symlink_metadata(path)?.file_type();
     if file_type.is_symlink() {
@@ -971,6 +987,11 @@ fn append_archive_entries(
         if entry.file_name() == AUDIT_FILE_NAME {
             continue;
         }
+        // Encrypted credential blobs and the master key never enter archives
+        // produced on behalf of an agent session.
+        if skip_secrets && entry.file_name() == "secrets" {
+            continue;
+        }
         let child_name = match name {
             Some(parent) => parent.join(entry.file_name()),
             None => PathBuf::from(entry.file_name()),
@@ -984,20 +1005,36 @@ fn append_archive_entries(
             files,
             bytes,
             excluded,
+            skip_secrets,
         )?;
     }
     Ok(())
 }
 
+/// Relative vault path of `path` under `root`, using `/` separators.
+fn relative_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .components()
+        .filter_map(|c| match c {
+            Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 /// Recursive content search. Never follows symlinks (a symlinked directory
 /// could point outside the root), skips the audit log, oversized files and
-/// non-UTF-8 files, and stops at `MAX_SEARCH_MATCHES`.
+/// non-UTF-8 files, and stops at `MAX_SEARCH_MATCHES`. Credential/private
+/// files (including the encrypted secrets/ tree) are hidden from agent
+/// sessions.
 fn search_dir(
     dir: &Path,
     root: &Path,
     query: &str,
     matches: &mut Vec<SearchMatch>,
-    excluded: &[&str],
+    session_id: &str,
 ) {
     if matches.len() >= MAX_SEARCH_MATCHES {
         return;
@@ -1019,8 +1056,12 @@ fn search_dir(
             continue;
         }
         let path = entry.path();
+        let rel = relative_path(root, &path);
         if ft.is_dir() {
-            search_dir(&path, root, query, matches, excluded);
+            if hidden_from(session_id, &rel) {
+                continue;
+            }
+            search_dir(&path, root, query, matches, session_id);
         } else if ft.is_file() {
             let Ok(meta) = entry.metadata() else {
                 continue;
@@ -1031,19 +1072,9 @@ fn search_dir(
             let Ok(text) = fs::read_to_string(&path) else {
                 continue;
             };
-            let rel = path
-                .strip_prefix(root)
-                .unwrap_or(&path)
-                .components()
-                .filter_map(|c| match c {
-                    Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("/");
             // Credential files are excluded from agent searches even though
             // the audit log itself is skipped above.
-            if excluded.contains(&rel.as_str()) {
+            if hidden_from(session_id, &rel) {
                 continue;
             }
             for (idx, line) in text.lines().enumerate() {
@@ -1283,6 +1314,103 @@ mod tests {
         assert_eq!(
             agent.files, 0,
             "agent archive should exclude accounts.json"
+        );
+    }
+
+    #[test]
+    fn secrets_tree_denied_to_agent_sessions() {
+        let (_dir, v) = setup();
+        v.write_file("user", "secrets/master.key", "opaque-key-bytes")
+            .unwrap();
+        v.write_file("user", "secrets/mail.enc.json", r#"{"enc": "cipher"}"#)
+            .unwrap();
+        v.write_file("user", "docs/a.txt", "public").unwrap();
+
+        // Agent sessions are denied every operation inside secrets/.
+        for p in ["secrets/master.key", "secrets/mail.enc.json"] {
+            assert_eq!(
+                v.read_file("agent-1", p).unwrap_err().code(),
+                -32001,
+                "read {p}"
+            );
+            assert_eq!(
+                v.read_file("user", p).unwrap().content.contains("enc") || p.contains("key"),
+                true,
+                "trusted read {p}"
+            );
+            assert_eq!(
+                v.write_file("agent-1", p, "x").unwrap_err().code(),
+                -32001,
+                "write {p}"
+            );
+            assert_eq!(
+                v.write_binary("agent-1", p, "eA==").unwrap_err().code(),
+                -32001,
+                "write_binary {p}"
+            );
+            assert_eq!(
+                v.stat("agent-1", p).unwrap_err().code(),
+                -32001,
+                "stat {p}"
+            );
+            assert_eq!(
+                v.delete_file("agent-1", p).unwrap_err().code(),
+                -32001,
+                "delete {p}"
+            );
+        }
+
+        // The secrets/ directory itself is invisible in root listings and
+        // cannot be listed by an agent session.
+        let root_list = v.list_dir("agent-1", ".").unwrap();
+        assert!(
+            !root_list.entries.iter().any(|e| e.name == "secrets"),
+            "agent listing exposed secrets/"
+        );
+        let root_list = v.list_dir("user", ".").unwrap();
+        assert!(
+            root_list.entries.iter().any(|e| e.name == "secrets"),
+            "trusted listing should show secrets/"
+        );
+        assert_eq!(
+            v.list_dir("agent-1", "secrets").unwrap_err().code(),
+            -32001,
+            "agent list_dir secrets"
+        );
+
+        // Agent searches never walk into the secrets/ tree.
+        let results = v.search_files("agent-1", "cipher").unwrap();
+        assert!(
+            results.matches.is_empty(),
+            "agent search leaked secrets content"
+        );
+        let results = v.search_files("user", "cipher").unwrap();
+        assert!(
+            results.matches.iter().any(|m| m.path == "secrets/mail.enc.json"),
+            "trusted search should find secrets content"
+        );
+    }
+
+    #[test]
+    fn compress_excludes_secrets_tree_for_agent_sessions() {
+        let (_dir, v) = setup();
+        v.write_file("user", "secrets/master.key", "opaque-key-bytes")
+            .unwrap();
+        v.write_file("user", "docs/a.txt", "hello").unwrap();
+
+        // Trusted sessions may package the secrets tree.
+        let trusted = v.compress("user", ".", None).unwrap();
+        assert_eq!(
+            trusted.files, 2,
+            "trusted archive should include secrets/ and docs/"
+        );
+        std::fs::remove_file(v.root().unwrap().join(&trusted.archive)).unwrap();
+
+        // Agent archives never contain the secrets/ tree.
+        let agent = v.compress("agent-1", ".", None).unwrap();
+        assert_eq!(
+            agent.files, 1,
+            "agent archive should exclude secrets/ but keep docs/a.txt"
         );
     }
 
