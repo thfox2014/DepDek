@@ -227,4 +227,51 @@ describe("vault tools", () => {
       "E32001",
     );
   });
+
+  it("blocks credential files from every vault tool", async () => {
+    const protectedPaths = [
+      "mail/accounts.json",
+      "calendar/accounts.json",
+      "settings/settings.json",
+    ];
+    for (const path of protectedPaths) {
+      const read = await toolByName(mockClient({ content: "secret" }), "read_file").execute("tc1", { path });
+      expect(read.details).toMatchObject({ blocked: true });
+      expect(read.content[0].text).toContain("excluded from AI context");
+
+      const write = await toolByName(mockClient({}), "write_file").execute("tc1", { path, content: "x" });
+      expect(write.details).toMatchObject({ blocked: true });
+
+      const del = await toolByName(mockClient({}), "delete_file").execute("tc1", { path });
+      expect(del.details).toMatchObject({ blocked: true });
+
+      const compress = await toolByName(mockClient({}), "compress").execute("tc1", { path });
+      expect(compress.details).toMatchObject({ blocked: true });
+    }
+  });
+
+  it("filters credential files from search results and directory listings", async () => {
+    const search = await toolByName(
+      mockClient({
+        matches: [
+          { path: "mail/accounts.json", line: 1, snippet: "imap secret" },
+          { path: "notes/a.txt", line: 2, snippet: "safe" },
+        ],
+      }),
+      "search_files",
+    ).execute("tc1", { query: "e" });
+    expect(search.content[0].text).toBe("notes/a.txt:2: safe");
+
+    const list = await toolByName(
+      mockClient({
+        entries: [
+          { name: "accounts.json", kind: "file", size: 99 },
+          { name: "readme.txt", kind: "file", size: 10 },
+        ],
+      }),
+      "list_files",
+    ).execute("tc1", { path: "mail" });
+    expect(list.content[0].text).toContain("readme.txt");
+    expect(list.content[0].text).not.toContain("accounts.json");
+  });
 });

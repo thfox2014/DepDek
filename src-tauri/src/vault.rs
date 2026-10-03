@@ -233,6 +233,45 @@ fn normalize(rel: &str) -> Result<String, VaultError> {
     Ok(parts.join("/"))
 }
 
+/// Credential / private account files that must stay out of agent reach.
+///
+/// Only trusted first-party sessions (`user` UI, `mail`/`calendar`/`settings`
+/// connectors) may touch these; any agent session is denied so credentials
+/// never enter model context (contract sections 2.3, 7 and 9).
+///
+/// Deliberately excluded: `myinfo/profile.json` (user self-description that
+/// the agent context builder reads on purpose, see sidecar/context.ts) and
+/// `todo/queue.json` (written by the sidecar under its own TODO_SESSION_ID).
+const PROTECTED_PATHS: &[&str] = &[
+    "tasks/history.json",
+    "mail/accounts.json",
+    "calendar/accounts.json",
+    "settings/settings.json",
+];
+
+fn is_trusted_session(session_id: &str) -> bool {
+    matches!(session_id, "user" | "mail" | "calendar" | "settings")
+}
+
+/// Paths hidden from agent sessions (`&[]` for trusted first-party sessions).
+fn excluded_for(session_id: &str) -> &'static [&'static str] {
+    if is_trusted_session(session_id) {
+        &[]
+    } else {
+        PROTECTED_PATHS
+    }
+}
+
+/// Reject agent access to protected paths; trusted sessions pass through.
+fn protected_guard(session_id: &str, relnorm: &str) -> Result<(), VaultError> {
+    if is_trusted_session(session_id) || !PROTECTED_PATHS.contains(&relnorm) {
+        return Ok(());
+    }
+    Err(VaultError::Escape(
+        "access to credential/private files is denied".to_string(),
+    ))
+}
+
 #[derive(Clone)]
 struct RootPair {
     /// Canonicalized root; all candidates are built from this path.
@@ -401,6 +440,10 @@ impl Vault {
 
     pub fn read_file(&self, session_id: &str, rel: &str) -> Result<ReadFileResult, VaultError> {
         let audit_path = normalize(rel).unwrap_or_else(|_| rel.to_string());
+        if let Err(error) = protected_guard(session_id, &audit_path) {
+            self.record_audit(session_id, Op::Read, &audit_path, Err(&error));
+            return Err(error);
+        }
         let result = self.read_file_inner(rel);
         self.record_audit(
             session_id,
@@ -419,6 +462,10 @@ impl Vault {
     /// `op: "read"` like a text read.
     pub fn read_binary(&self, session_id: &str, rel: &str) -> Result<ReadBinaryResult, VaultError> {
         let audit_path = normalize(rel).unwrap_or_else(|_| rel.to_string());
+        if let Err(error) = protected_guard(session_id, &audit_path) {
+            self.record_audit(session_id, Op::Read, &audit_path, Err(&error));
+            return Err(error);
+        }
         let result = self.read_binary_inner(rel);
         self.record_audit(
             session_id,
@@ -438,6 +485,10 @@ impl Vault {
         content: &str,
     ) -> Result<WriteFileResult, VaultError> {
         let audit_path = normalize(rel).unwrap_or_else(|_| rel.to_string());
+        if let Err(error) = protected_guard(session_id, &audit_path) {
+            self.record_audit(session_id, Op::Write, &audit_path, Err(&error));
+            return Err(error);
+        }
         let result = self.write_file_inner(rel, content);
         self.record_audit(
             session_id,
@@ -460,6 +511,10 @@ impl Vault {
         data_base64: &str,
     ) -> Result<WriteFileResult, VaultError> {
         let audit_path = normalize(rel).unwrap_or_else(|_| rel.to_string());
+        if let Err(error) = protected_guard(session_id, &audit_path) {
+            self.record_audit(session_id, Op::Write, &audit_path, Err(&error));
+            return Err(error);
+        }
         let result = self.write_binary_inner(rel, data_base64);
         self.record_audit(
             session_id,
@@ -474,7 +529,11 @@ impl Vault {
 
     pub fn list_dir(&self, session_id: &str, rel: &str) -> Result<ListDirResult, VaultError> {
         let audit_path = normalize(rel).unwrap_or_else(|_| rel.to_string());
-        let result = self.list_dir_inner(rel);
+        if let Err(error) = protected_guard(session_id, &audit_path) {
+            self.record_audit(session_id, Op::List, &audit_path, Err(&error));
+            return Err(error);
+        }
+        let result = self.list_dir_inner(rel, excluded_for(session_id));
         self.record_audit(
             session_id,
             Op::List,
@@ -485,7 +544,7 @@ impl Vault {
     }
 
     pub fn search_files(&self, session_id: &str, query: &str) -> Result<SearchResult, VaultError> {
-        let result = self.search_files_inner(query);
+        let result = self.search_files_inner(query, excluded_for(session_id));
         self.record_audit(
             session_id,
             Op::Search,
@@ -497,6 +556,10 @@ impl Vault {
 
     pub fn delete_file(&self, session_id: &str, rel: &str) -> Result<(), VaultError> {
         let audit_path = normalize(rel).unwrap_or_else(|_| rel.to_string());
+        if let Err(error) = protected_guard(session_id, &audit_path) {
+            self.record_audit(session_id, Op::Delete, &audit_path, Err(&error));
+            return Err(error);
+        }
         let result = self.delete_file_inner(rel);
         self.record_audit(
             session_id,
@@ -509,6 +572,10 @@ impl Vault {
 
     pub fn stat(&self, session_id: &str, rel: &str) -> Result<StatResult, VaultError> {
         let audit_path = normalize(rel).unwrap_or_else(|_| rel.to_string());
+        if let Err(error) = protected_guard(session_id, &audit_path) {
+            self.record_audit(session_id, Op::Stat, &audit_path, Err(&error));
+            return Err(error);
+        }
         let result = self.stat_inner(rel);
         self.record_audit(
             session_id,
@@ -533,7 +600,31 @@ impl Vault {
             .and_then(|path| normalize(path).ok())
             .or_else(|| normalize(source_rel).ok())
             .unwrap_or_else(|| source_rel.to_string());
-        let result = self.compress_inner(source_rel, archive_rel);
+        if let Err(error) = protected_guard(session_id, &fallback_path) {
+            self.record_audit(session_id, Op::Write, &fallback_path, Err(&error));
+            return Err(error);
+        }
+        if let Some(archive) = archive_rel {
+            if let Ok(rel) = normalize(archive) {
+                if let Err(error) = protected_guard(session_id, &rel) {
+                    self.record_audit(session_id, Op::Write, &rel, Err(&error));
+                    return Err(error);
+                }
+            }
+        }
+        let excluded: Vec<PathBuf> = if is_trusted_session(session_id) {
+            Vec::new()
+        } else {
+            self.root_pair()
+                .map(|pair| {
+                    PROTECTED_PATHS
+                        .iter()
+                        .map(|p| pair.root.join(p))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+        let result = self.compress_inner(source_rel, archive_rel, &excluded);
         let audit_path = result
             .as_ref()
             .map(|value| value.archive.clone())
@@ -630,8 +721,8 @@ impl Vault {
         })
     }
 
-    fn list_dir_inner(&self, rel: &str) -> Result<ListDirResult, VaultError> {
-        let (path, _) = self.resolve_existing(rel)?;
+    fn list_dir_inner(&self, rel: &str, excluded: &[&str]) -> Result<ListDirResult, VaultError> {
+        let (path, relnorm) = self.resolve_existing(rel)?;
         if !fs::metadata(&path)?.is_dir() {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a directory").into());
         }
@@ -639,8 +730,14 @@ impl Vault {
         for entry in fs::read_dir(&path)? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            // The audit log is invisible to all vault operations.
-            if name == AUDIT_FILE_NAME {
+            // The audit log is invisible to all vault operations; protected
+            // files are also hidden from agent sessions.
+            let entry_rel = if relnorm.is_empty() {
+                name.clone()
+            } else {
+                format!("{relnorm}/{name}")
+            };
+            if name == AUDIT_FILE_NAME || excluded.contains(&entry_rel.as_str()) {
                 continue;
             }
             // Follow symlinks to classify; skip anything that cannot be
@@ -666,10 +763,10 @@ impl Vault {
         Ok(ListDirResult { entries })
     }
 
-    fn search_files_inner(&self, query: &str) -> Result<SearchResult, VaultError> {
+    fn search_files_inner(&self, query: &str, excluded: &[&str]) -> Result<SearchResult, VaultError> {
         let pair = self.root_pair()?;
         let mut matches = Vec::new();
-        search_dir(&pair.root, &pair.root, query, &mut matches);
+        search_dir(&pair.root, &pair.root, query, &mut matches, excluded);
         Ok(SearchResult { matches })
     }
 
@@ -712,6 +809,7 @@ impl Vault {
         &self,
         source_rel: &str,
         archive_rel: Option<&str>,
+        excluded: &[PathBuf],
     ) -> Result<CompressResult, VaultError> {
         let (source_path, source_norm) = self.resolve_existing(source_rel)?;
         let source_meta = fs::symlink_metadata(&source_path)?;
@@ -797,6 +895,7 @@ impl Vault {
                 &temp_path,
                 &mut files,
                 &mut bytes,
+                excluded,
             )?;
             let encoder = builder.into_inner()?;
             encoder.finish()?;
@@ -833,6 +932,7 @@ fn append_archive_entries(
     temp_path: &Path,
     files: &mut usize,
     bytes: &mut u64,
+    excluded: &[PathBuf],
 ) -> Result<(), VaultError> {
     let file_type = fs::symlink_metadata(path)?.file_type();
     if file_type.is_symlink() {
@@ -842,6 +942,7 @@ fn append_archive_entries(
         if path == archive_path
             || path == temp_path
             || path.file_name().is_some_and(|n| n == AUDIT_FILE_NAME)
+            || excluded.iter().any(|candidate| candidate == path)
         {
             return Ok(());
         }
@@ -882,6 +983,7 @@ fn append_archive_entries(
             temp_path,
             files,
             bytes,
+            excluded,
         )?;
     }
     Ok(())
@@ -890,7 +992,13 @@ fn append_archive_entries(
 /// Recursive content search. Never follows symlinks (a symlinked directory
 /// could point outside the root), skips the audit log, oversized files and
 /// non-UTF-8 files, and stops at `MAX_SEARCH_MATCHES`.
-fn search_dir(dir: &Path, root: &Path, query: &str, matches: &mut Vec<SearchMatch>) {
+fn search_dir(
+    dir: &Path,
+    root: &Path,
+    query: &str,
+    matches: &mut Vec<SearchMatch>,
+    excluded: &[&str],
+) {
     if matches.len() >= MAX_SEARCH_MATCHES {
         return;
     }
@@ -912,7 +1020,7 @@ fn search_dir(dir: &Path, root: &Path, query: &str, matches: &mut Vec<SearchMatc
         }
         let path = entry.path();
         if ft.is_dir() {
-            search_dir(&path, root, query, matches);
+            search_dir(&path, root, query, matches, excluded);
         } else if ft.is_file() {
             let Ok(meta) = entry.metadata() else {
                 continue;
@@ -933,6 +1041,11 @@ fn search_dir(dir: &Path, root: &Path, query: &str, matches: &mut Vec<SearchMatc
                 })
                 .collect::<Vec<_>>()
                 .join("/");
+            // Credential files are excluded from agent searches even though
+            // the audit log itself is skipped above.
+            if excluded.contains(&rel.as_str()) {
+                continue;
+            }
             for (idx, line) in text.lines().enumerate() {
                 if line.contains(query) {
                     let snippet: String = line.trim().chars().take(MAX_SNIPPET_CHARS).collect();
@@ -1095,6 +1208,82 @@ mod tests {
         assert_eq!(e.code(), -32001);
         let e = v.delete_file("user", "sub/.vault-audit.jsonl").unwrap_err();
         assert_eq!(e.code(), -32001);
+    }
+
+    #[test]
+    fn credential_files_denied_to_agent_sessions() {
+        let (_dir, v) = setup();
+        for p in PROTECTED_PATHS {
+            v.write_file("user", p, r#"{"secret": true}"#).unwrap();
+        }
+
+        // Agent sessions are denied every operation on credential files...
+        for p in PROTECTED_PATHS {
+            assert_eq!(
+                v.read_file("agent-1", p).unwrap_err().code(),
+                -32001,
+                "read {p}"
+            );
+            assert_eq!(
+                v.write_file("agent-1", p, "x").unwrap_err().code(),
+                -32001,
+                "write {p}"
+            );
+            assert_eq!(
+                v.stat("agent-1", p).unwrap_err().code(),
+                -32001,
+                "stat {p}"
+            );
+            assert_eq!(
+                v.delete_file("agent-1", p).unwrap_err().code(),
+                -32001,
+                "delete {p}"
+            );
+            // ...and the file is hidden from directory listings.
+            let parent = p.rsplit_once('/').map(|(d, _)| d).unwrap();
+            let name = p.rsplit('/').next().unwrap();
+            let list = v.list_dir("agent-1", parent).unwrap();
+            assert!(
+                !list.entries.iter().any(|e| e.name == name),
+                "listed {p}"
+            );
+        }
+
+        // Agent searches never expose credential content.
+        let results = v.search_files("agent-1", "secret").unwrap();
+        assert!(
+            results.matches.is_empty(),
+            "agent search leaked credential matches"
+        );
+
+        // Trusted first-party sessions keep full access.
+        for p in PROTECTED_PATHS {
+            let r = v.read_file("user", p).unwrap();
+            assert!(r.content.contains("secret"), "trusted read {p}");
+        }
+    }
+
+    #[test]
+    fn compress_excludes_credential_files_for_agent_sessions() {
+        let (_dir, v) = setup();
+        v.write_file("user", "mail/accounts.json", r#"{"imap": "secret"}"#)
+            .unwrap();
+        v.write_file("user", "docs/a.txt", "hello").unwrap();
+
+        // Trusted sessions may package the credential file.
+        let trusted = v.compress("user", "mail", None).unwrap();
+        assert_eq!(
+            trusted.files, 1,
+            "trusted archive should include accounts.json"
+        );
+        std::fs::remove_file(v.root().unwrap().join(&trusted.archive)).unwrap();
+
+        // Agent sessions get a filtered archive.
+        let agent = v.compress("agent-1", "mail", None).unwrap();
+        assert_eq!(
+            agent.files, 0,
+            "agent archive should exclude accounts.json"
+        );
     }
 
     #[test]

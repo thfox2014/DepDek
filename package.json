@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port 1420 --strictPort",
+    "dev:preview": "node scripts/dev-preview.mjs",
     "build": "npm run version:check && tsc && vite build",
     "build:sidecar": "npm --prefix sidecar run build",
     "prepare:bundle": "npm run build && npm run build:sidecar && node scripts/prepare-sidecar.mjs",

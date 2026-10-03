@@ -389,7 +389,7 @@ async function readAccounts(vault: VaultClient): Promise<MailAccountsFile> {
     if (err instanceof RpcError && err.code === ERR_PATH_NOT_FOUND) {
       throw new RpcError(
         ERR_PATH_NOT_FOUND,
-        "no mail accounts configured: ask an agent to write mail/accounts.json first",
+        "no mail accounts configured: ask the user to add an account in Settings (mail/accounts.json)",
       );
     }
     throw err;

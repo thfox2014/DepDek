@@ -18,6 +18,17 @@ const ERR_PATH = -32001;
 const ERR_TOO_LARGE = -32003;
 const MAX_BYTES = 10 * 1024 * 1024;
 
+/** Credential / private files that agent sessions may not touch. */
+const PROTECTED_PATHS = [
+  "tasks/history.json",
+  "mail/accounts.json",
+  "calendar/accounts.json",
+  "settings/settings.json",
+];
+
+/** First-party sessions (UI + connectors) that may access protected files. */
+const TRUSTED_SESSIONS = new Set(["user", "mail", "calendar", "settings"]);
+
 export class LocalVault implements VaultClient {
   private readonly prefix: string;
 
@@ -26,7 +37,16 @@ export class LocalVault implements VaultClient {
   }
 
   async request<T = unknown>(method: string, params?: unknown): Promise<T> {
-    const args = (params ?? {}) as { path?: string; content?: string };
+    const args = (params ?? {}) as { path?: string; content?: string; session_id?: string };
+    const sessionId = args.session_id ?? "";
+    const rel = String(args.path ?? "")
+      .trim()
+      .replaceAll("\\", "/")
+      .replace(/^\.\/+/, "")
+      .replace(/\/+$/, "");
+    if (!TRUSTED_SESSIONS.has(sessionId) && PROTECTED_PATHS.includes(rel)) {
+      throw new RpcError(ERR_PATH, "access to credential/private files is denied");
+    }
     switch (method) {
       case "vault/read_file":
         return (await this.read(args.path)) as T;

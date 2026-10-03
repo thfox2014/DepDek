@@ -74,6 +74,8 @@ type AgentEngine = "pi" | "deepseek-harness";
 
 所有方法 params 均含 `session_id`（用于审计归属，前端用户操作记为 `"user"`）。`path` 一律为**相对数据文件夹根**的 POSIX 风格相对路径（`.` 表示根）。
 
+**凭据保护（按 session）**：trusted session 集合为 `"user" | "mail" | "calendar" | "settings"`；agent session（其余任何 id）对受保护路径（`tasks/history.json`、`mail/accounts.json`、`calendar/accounts.json`、`settings/settings.json`）的全部操作（read/write/binary/list/search/stat/delete/compress）一律拒绝 -32001，且这些文件对 agent 的目录列举与全文搜索不可见、目录压缩时被排除。trusted session 不受此限制。`myinfo/profile.json`（agent 上下文有意读取的用户自述）与 `todo/queue.json`（sidecar 以 TODO_SESSION_ID 维护）不在此列。
+
 | 方法 | params | result |
 |---|---|---|
 | `vault/read_file` | `{session_id, path}` | `{content: string, size: number, sha256: string}` |
@@ -88,7 +90,7 @@ type AgentEngine = "pi" | "deepseek-harness";
 
 `vault/read_binary` 说明：为前端图片/视频/邮件附件预览与下载提供；MIME 按扩展名推断（未知为 `application/octet-stream`）；上限 64 MiB（超出 -32003）；审计记 `op: "read"`。`vault/write_binary` 供邮件 sidecar 导入和用户显式保存发件附件副本，使用相同的 64 MiB 上限并审计为 `op: "write"`。**两者均不注册为 agent 工具**。
 
-`vault/compress` 是唯一的内置压缩动作：在数据文件夹内生成 `.tar.gz`，跳过符号链接和审计文件，最多处理 10,000 个文件、512 MiB 未压缩内容；不调用 shell，审计为 `op: "write"`。sidecar 将其注册为 `compress` 工具，前端输入 `/compress <相对路径>` 时直接走同一 RPC。
+`vault/compress` 是唯一的内置压缩动作：在数据文件夹内生成 `.tar.gz`，跳过符号链接和审计文件，最多处理 10,000 个文件、512 MiB 未压缩内容；不调用 shell，审计为 `op: "write"`。agent session 的压缩会额外排除受保护凭据文件（见 2.3 凭据保护）。sidecar 将其注册为 `compress` 工具，前端输入 `/compress <相对路径>` 时直接走同一 RPC。
 
 sidecar 另注册 `propose_memory` 工具（必须提供 `source_refs`），它只调用
 `memory/propose` 写入候选，不会直接改变 Agent 上下文；确认动作只能由用户界面执行。
@@ -97,7 +99,7 @@ sidecar 另注册 `propose_memory` 工具（必须提供 `source_refs`），它�
 
 | code | 含义 |
 |---|---|
-| -32001 | 路径越出数据文件夹根（含 `..`、绝对路径、逃逸 symlink） |
+| -32001 | 路径越出数据文件夹根（含 `..`、绝对路径、逃逸 symlink），或 agent session 触碰受保护凭据文件 |
 | -32002 | 路径不存在 |
 | -32003 | 超过大小限制（单文件读/写上限 10 MiB） |
 | -32004 | 数据文件夹根未设置 |
@@ -111,7 +113,7 @@ sidecar 级致命错误（不归属于某个会话）用 `session_id: "system"` 
 
 ### 2.5 邮件收取（`mail/fetch`）
 
-- 邮箱账号配置存放在 vault 的 `mail/accounts.json`（schema 见第 7 节），由 agent 用 `write_file` 工具按用户提供的 邮箱地址/授权码/IMAP 服务器 写入，或用户手工编辑。
+- 邮箱账号配置存放在 vault 的 `mail/accounts.json`（schema 见第 7 节）。该文件属于受保护路径（2.3 凭据保护）：由用户在 Settings UI 中管理（或手工编辑文件），sidecar 以 `session_id: "mail"` 读写；agent 工具无法读取或写入任何受保护文件，避免凭据进入模型上下文。
 - sidecar 收到 `mail/fetch` 后：读 `mail/accounts.json` → 逐账号走 IMAP 增量拉取 INBOX 新邮件 → 附件经 `vault/write_binary` 落盘到 `mail/<name>/attachments/<uid>/` → 每封邮件渲染为 Markdown 经 `vault/write_file` 落盘到 `mail/<name>/` → 回写 `accounts.json` 更新 `last_uid`。
 - sidecar 收取时的所有 vault 读写操作审计 session_id 记为 `"mail"`。每封本地 Markdown 副本写入 `Folder` 元数据：默认收件箱为 `inbox`，非默认收件箱配置写为 `remote:<mailbox>`；前端以该字段和 `mail/index.json` 的 UI 状态索引合并判定唯一所属文件夹，避免同一副本被误显示到多个主文件夹。
 - 单账号失败只在其结果项记 `error`，不中断其他账号；未配置邮箱（`mail/accounts.json` 不存在）返回 -32002。
@@ -295,10 +297,11 @@ type AgentSkill = "documents" | "photos" | "music" | "videos" | "mail" | "memory
 3. 文本 read/write 单文件上限 10 MiB（-32003）；binary read/write 上限 64 MiB。
 4. 文本接口仅处理 UTF-8（-32005）；二进制接口通过 base64 传输。
 5. 每个 vault 操作无论成功失败都写审计。
+6. 凭据保护名单：`tasks/history.json`、`mail/accounts.json`、`calendar/accounts.json`、`settings/settings.json` 仅对 trusted session（`user`/`mail`/`calendar`/`settings`）开放；agent session 对名单内文件的任何操作返回 -32001 并照常审计，名单内文件同时从目录列举、内容搜索和 agent 压缩中排除。`myinfo/profile.json`（agent 上下文有意读取）与 `todo/queue.json`（sidecar 自管）不在名单内。
 
 ## 7. 邮件存储约定
 
-- 配置文件：`mail/accounts.json`，由 agent 按用户口述信息写入（或用户手工编辑）。
+- 配置文件：`mail/accounts.json`，仅由用户在 Settings UI 管理（或手工编辑），sidecar 内部以 `session_id: "mail"` 读写；agent 工具不能访问该文件（凭据保护，见 2.3）。
 
 ```ts
 type MailAccountsFile = { accounts: MailAccount[] };
@@ -365,3 +368,20 @@ type TodoQueueFile = { version: 1; updatedAt: string; items: TodoItem[] };
 `calendar/events.json` 是本地中枢的当前聚合视图；事件先落本地，外部写回永远是显式动作。连接凭据仍属于 V0.2 明文兼容债务，后续迁移到 Credential Broker/OS Keychain。
 
 `todo/queue.json` 是待办中枢的当前队列；来源记录不覆盖原始邮件或日历事件，移动泳道只更新待办本身。
+
+## 9. 浏览器预览 HTTP 服务（standalone sidecar）
+
+浏览器无法调用 Tauri commands，standalone sidecar 提供一个最小 HTTP API（仅绑定 `127.0.0.1`）承载浏览器预览；所有读写都经 `vault/*`（settings 落盘在数据文件夹内，不进入浏览器存储）：
+
+| 路由 | 说明 | 鉴权 |
+|---|---|---|
+| `GET /v1/health` | `{ok: true}` | 无 |
+| `GET /v1/settings` | 当前 Settings；返回前所有 provider 的 `api_key` 脱敏为 `********` | `x-depdek-token` |
+| `PUT /v1/settings` | 补丁合并：`********`/空/缺失的 `api_key` 保留旧值，其余字段覆盖，`agents` 数组整体替换 | `x-depdek-token` |
+
+安全模型：
+
+1. 服务只监听 `127.0.0.1`。
+2. CORS 只对 `http://localhost:1420`（Vite dev origin）放行；其余 origin 不返回 `access-control-allow-origin`，浏览器会阻断响应读取。
+3. 每次启动生成随机 per-launch token（`randomBytes(24).toString("hex")`），settings 读写必须携带 `x-depdek-token`（恒定时间比较），缺失或错误返回 401。
+4. token 由 `scripts/dev-preview.mjs` 从 sidecar stderr 捕获并写入 `.preview-token`（0600），Vite proxy 在转发 `/v1/*` 时注入该请求头；浏览器 JS 永远接触不到 token。

@@ -5,6 +5,7 @@
  * stdout carries protocol lines only; all logging goes to stderr.
  */
 
+import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -125,8 +126,14 @@ if (process.argv.slice(2).some((arg) => arg === "--http" || arg.startsWith("--ht
   const home = resolve(
     cliValue("--home") ?? process.env["DEPDEK_HOME"] ?? join(homedir(), "DepDek-Home"),
   );
-  const service = await startAgentHttpServer(new LocalVault(home), port);
+  // The per-launch token gates settings reads/writes; the dev preview script
+  // picks it up from stderr and hands it to the Vite proxy, which injects it
+  // as a header so browser JS never sees it.
+  const token =
+    cliValue("--token") ?? process.env["DEPDEK_PREVIEW_TOKEN"] ?? randomBytes(24).toString("hex");
+  const service = await startAgentHttpServer(new LocalVault(home), port, { token });
   console.error(`[sidecar] agent HTTP service: http://127.0.0.1:${service.port} (home: ${home})`);
+  console.error(`[sidecar] preview token: ${token}`);
 }
 
 console.error("[sidecar] ready");
