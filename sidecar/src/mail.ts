@@ -10,6 +10,7 @@
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 import nodemailer from "nodemailer";
+import { createCredentialsAccess, isSecretRef } from "./credentials.js";
 import { RpcError } from "./rpc.js";
 import type { VaultClient } from "./tools.js";
 
@@ -389,7 +390,7 @@ async function readAccounts(vault: VaultClient): Promise<MailAccountsFile> {
     if (err instanceof RpcError && err.code === ERR_PATH_NOT_FOUND) {
       throw new RpcError(
         ERR_PATH_NOT_FOUND,
-        "no mail accounts configured: ask an agent to write mail/accounts.json first",
+        "no mail accounts configured: ask the user to add an account in Settings (mail/accounts.json)",
       );
     }
     throw err;
@@ -401,9 +402,44 @@ async function readAccounts(vault: VaultClient): Promise<MailAccountsFile> {
   return config;
 }
 
+/**
+ * Resolve the effective IMAP/SMTP password for one account. A `$secret:`
+ * reference is decrypted from `secrets/mail.enc.json`; a legacy plaintext
+ * password is returned as-is (migrate with scripts/migrate-credentials.mjs).
+ * The account object itself is never mutated, so persisting `last_uid` back
+ * to the config file keeps the original (non-secret) shape untouched.
+ */
+async function resolveAccountPassword(
+  vault: VaultClient,
+  account: MailAccount,
+): Promise<string> {
+  if (isSecretRef(account.password)) {
+    const key = `${account.name}.password`;
+    const access = await createCredentialsAccess(vault, SESSION_ID);
+    const secret = await access.getSecret("mail", key);
+    if (secret === undefined) {
+      throw new RpcError(
+        ERR_PATH_NOT_FOUND,
+        `隐藏的凭据 ${key} 不存在：请先在设置页重新保存该邮箱密码或运行迁移脚本`,
+      );
+    }
+    return secret;
+  }
+  return account.password;
+}
+
+/** Shallow copy with the password resolved; the original stays untouched. */
+async function withResolvedPassword(
+  vault: VaultClient,
+  account: MailAccount,
+): Promise<MailAccount> {
+  return { ...account, password: await resolveAccountPassword(vault, account) };
+}
+
 async function fetchAccount(
   vault: VaultClient,
   account: MailAccount,
+  password: string,
   factory: ImapFactory,
   refreshBody: boolean,
   report: MailProgressReporter,
@@ -411,7 +447,7 @@ async function fetchAccount(
   if (!account.name || account.name.includes("/") || account.name.includes("..")) {
     throw new Error(`invalid account name for a vault directory: ${JSON.stringify(account.name)}`);
   }
-  const client = factory(account);
+  const client = factory({ ...account, password });
   report({ account: account.name, phase: "connecting", message: `正在连接 ${account.host}:${account.port ?? 993}` });
   await withTimeout(client.connect(), IMAP_CONNECT_TIMEOUT_MS, `连接 IMAP 超时（${IMAP_CONNECT_TIMEOUT_MS / 1000} 秒）`);
   report({ account: account.name, phase: "connected", message: "IMAP 连接成功，准备读取新邮件" });
@@ -542,7 +578,8 @@ export async function fetchMail(
   let fetched = 0;
   for (const account of targets) {
     try {
-      const n = await fetchAccount(vault, account, factory, opts.refresh_body === true, report);
+      const password = await resolveAccountPassword(vault, account);
+      const n = await fetchAccount(vault, account, password, factory, opts.refresh_body === true, report);
       results.push({ name: account.name, new_messages: n });
       fetched += n;
     } catch (err) {
@@ -580,7 +617,7 @@ export async function deleteMail(
   const uids = [...new Set(opts.uids)].filter((uid) => Number.isSafeInteger(uid) && uid > 0);
   if (uids.length === 0) return { account: account.name, deleted: 0 };
 
-  const client = factory(account);
+  const client = factory(await withResolvedPassword(vault, account));
   await client.connect();
   try {
     const lock = await client.getMailboxLock(account.mailbox ?? "INBOX");
@@ -616,7 +653,7 @@ export async function listMailboxes(
   const config = await readAccounts(vault);
   const account = config.accounts.find((item) => item.name === opts.account);
   if (!account) throw new RpcError(ERR_PATH_NOT_FOUND, `unknown mail account: ${opts.account}`);
-  const client = factory(account);
+  const client = factory(await withResolvedPassword(vault, account));
   await withTimeout(client.connect(), IMAP_CONNECT_TIMEOUT_MS, `连接 IMAP 超时（${IMAP_CONNECT_TIMEOUT_MS / 1000} 秒）`);
   try {
     if (!client.list) throw new Error("当前 IMAP 客户端不支持列出邮箱文件夹");
@@ -661,7 +698,7 @@ export async function applyMailAction(
   const uids = [...new Set(input.uids)].filter((uid) => Number.isSafeInteger(uid) && uid > 0);
   if (!uids.length) return { account: account.name, action: input.action, processed: 0 };
 
-  const client = factory(account);
+  const client = factory(await withResolvedPassword(vault, account));
   await withTimeout(client.connect(), IMAP_CONNECT_TIMEOUT_MS, `连接 IMAP 超时（${IMAP_CONNECT_TIMEOUT_MS / 1000} 秒）`);
   let destination = input.destination;
   try {
@@ -730,7 +767,7 @@ export async function sendMail(
   if (!input.to.trim()) throw new Error("收件人不能为空");
   const attachments = decodeOutboundAttachments(input.attachments);
 
-  const transport = factory(account);
+  const transport = factory(await withResolvedPassword(vault, account));
   try {
     const result = await transport.sendMail({
       from: account.user,

@@ -1,6 +1,6 @@
 [package]
 name = "depdekd"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "AgentOS R1 local read-only command service and CLI"
 

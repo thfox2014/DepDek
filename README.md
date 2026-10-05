@@ -143,9 +143,13 @@ npm run tauri build   # 在目标系统上执行；产出平台安装包（Linux
 2. 单文件读写上限 10 MiB（-32003）；仅 UTF-8 文本（-32005）。
 3. 审计日志 `<根>/.vault-audit.jsonl` append-only，记录时间/session/操作/路径/结果/sha256；该文件对 agent 不可见。
 4. MVP 不向 agent 提供 shell/bash 工具。
+5. **凭据不再明文落盘**：API key、邮箱/日历密码与 access_token 加密到 `<根>/secrets/<scope>.enc.json`（AES-256-GCM，主密钥 `secrets/master.key` 32 字节随机、Unix 权限 0600），配置中只保留 `$secret:<scope>.<key>` 引用。桌面端（Rust `credentials.rs`）、浏览器预览（Node `credentials.ts`）与迁移脚本 `scripts/migrate-credentials.mjs` 共用同一加密格式，可互相解密；`secrets/` 整棵子树对 agent 会话不可见（同凭据保护名单 `tasks/history.json`、`mail/accounts.json`、`calendar/accounts.json`、`settings/settings.json`）。
+6. Tauri 桌面端启用 CSP（`default-src 'self'`，仅自域脚本；连接仅 ipc/localhost/https），浏览器预览的 settings 与会话历史读写需 per-launch token + 恒定时间比较。
+7. 会话历史以 `agent/<id>/conversations.json` 落盘 Vault（800ms 节流写入），localStorage 仅作崩溃缓存。
 
 ## 后续路线
 
 - sidecar 单文件打包进安装包（Tauri sidecar/SEA 机制）
 - shell 工具（默认关闭，需用户逐次确认）
-- agent 间消息互通、会话持久化
+- agent 间消息互通
+- 凭据迁移到系统钥匙串（作为 `secrets/` 加密存储的补充）

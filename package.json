@@ -1,10 +1,11 @@
 {
   "name": "agent-workbench",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "scripts": {
     "dev": "vite --port 1420 --strictPort",
+    "dev:preview": "node scripts/dev-preview.mjs",
     "build": "npm run version:check && tsc && vite build",
     "build:sidecar": "npm --prefix sidecar run build",
     "space:test": "cargo test --manifest-path space-service/Cargo.toml",

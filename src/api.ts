@@ -383,8 +383,79 @@ export const agentAnalyze = (provider: ProviderConfig, text: string, systemPromp
 export const agentAbort = (sessionId: string) => invoke<void>("agent_abort", { sessionId });
 export const agentClose = (sessionId: string) => invoke<void>("agent_close", { sessionId });
 
-export const settingsGet = () => invoke<Settings>("settings_get");
-export const settingsSet = (settings: Settings) => invoke<void>("settings_set", { settings });
+// Browser-only UX preview: Tauri commands are unavailable in Vite. Settings
+// are then read and written through the standalone agent HTTP service, which
+// persists them as files in the local data folder (never in browser storage).
+const AGENT_HTTP_BASE = "/v1";
+const isBrowserPreview = () => typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
+
+async function agentService<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${AGENT_HTTP_BASE}${path}`, init);
+  if (!response.ok) {
+    throw new Error(
+      `agent 服务请求失败：${init?.method ?? "GET"} ${path} → HTTP ${response.status}`,
+    );
+  }
+  if (response.status === 204) return undefined as T;
+  return (await response.json()) as T;
+}
+
+export const settingsGet = async (): Promise<Settings> => {
+  if (isBrowserPreview()) return agentService<Settings>("/settings");
+  return invoke<Settings>("settings_get");
+};
+
+export const settingsSet = async (settings: Settings): Promise<void> => {
+  if (isBrowserPreview()) {
+    await agentService<void>("/settings", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(settings),
+    });
+    return;
+  }
+  return invoke<void>("settings_set", { settings });
+};
+
+// Conversation history (contract 6.2): the authoritative copy lives in the
+// vault as `agent/<id>/conversations.json`. Desktop reads it through the Rust
+// vault commands; the browser preview goes through the agent HTTP service
+// (vault route, same path pattern). Returns null when no history exists yet.
+export const conversationRead = async (agentId: string): Promise<string | null> => {
+  const path = `agent/${agentId}/conversations.json`;
+  if (isBrowserPreview()) {
+    try {
+      const result = await agentService<{ content: string; size: number }>(
+        `/vault/read?path=${encodeURIComponent(path)}`,
+      );
+      return result.content;
+    } catch (err) {
+      if (String(err).includes("404") || String(err).includes("not found")) return null;
+      throw err;
+    }
+  }
+  try {
+    const result = await invoke<ReadFileResult>("vault_read_file", { path });
+    return result.content;
+  } catch (err) {
+    // -32002 = path does not exist (no history yet).
+    if (String(err).includes("-32002") || String(err).toLowerCase().includes("not found")) return null;
+    throw err;
+  }
+};
+
+export const conversationWrite = async (agentId: string, content: string): Promise<void> => {
+  const path = `agent/${agentId}/conversations.json`;
+  if (isBrowserPreview()) {
+    await agentService<void>("/vault/write", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path, content }),
+    });
+    return;
+  }
+  await invoke<WriteFileResult>("vault_write_file", { path, content });
+};
 export const obsidianSetRoot = (path: string) => invoke<string>("obsidian_set_root", { path });
 export const obsidianGetRoot = () => invoke<string | null>("obsidian_get_root");
 export const obsidianClearRoot = () => invoke<void>("obsidian_clear_root");

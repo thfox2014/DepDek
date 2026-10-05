@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { applyMailAction, deleteMail, fetchMail, listMailboxes, renderMessageMarkdown, sendMail, type ImapFactory, type MailAccount, type SmtpFactory } from "../src/mail.js";
+import { createCredentialsAccess } from "../src/credentials.js";
 import { RpcError } from "../src/rpc.js";
 import type { VaultClient } from "../src/tools.js";
 
@@ -22,6 +23,11 @@ function fakeVault(initial: Record<string, string> = {}) {
         const content = Buffer.from(params.data_base64, "base64");
         binaryFiles.set(params.path, content);
         return { size: content.length, sha256: "binary-x" };
+      }
+      if (method === "vault/read_binary") {
+        const data = binaryFiles.get(params.path);
+        if (data === undefined) throw new RpcError(-32002, "path not found");
+        return { data_base64: data.toString("base64"), size: data.length, mime: "application/octet-stream" };
       }
       if (method === "vault/list_dir") {
         const prefix = params.path === "." ? "" : `${params.path}/`;
@@ -193,6 +199,56 @@ describe("fetchMail", () => {
     const { vault } = fakeVault({ "mail/accounts.json": JSON.stringify(CONFIG) });
     const err = await fetchMail(vault, { account: "nope" }, fakeImap([])).catch((e) => e);
     expect(err.code).toBe(-32002);
+  });
+
+  it("resolves a $secret password reference and keeps the config untouched", async () => {
+    const { vault, files, binaryFiles } = fakeVault({
+      "mail/accounts.json": JSON.stringify({
+        accounts: [{ name: "secret-mail", host: "imap.example.com", user: "a@b.com", password: "$secret:mail.secret-mail.password" }],
+      }),
+    });
+    // Seed the encrypted store through the same access API the connector uses.
+    const access = await createCredentialsAccess(vault, "mail");
+    await access.setSecret("mail", "secret-mail.password", "hidden-pw");
+
+    let resolvedPassword = "";
+    const result = await fetchMail(vault, {}, (account) => {
+      resolvedPassword = account.password;
+      return fakeImap([{ uid: 1, source: MIME("hello", "secret body") }])(account);
+    });
+    expect(result).toEqual({ fetched: 1, accounts: [{ name: "secret-mail", new_messages: 1 }] });
+    expect(resolvedPassword).toBe("hidden-pw");
+    // Config file still carries the reference, never the plaintext.
+    const saved = JSON.parse(files.get("mail/accounts.json")!);
+    expect(saved.accounts[0].password).toBe("$secret:mail.secret-mail.password");
+    expect(files.get("mail/accounts.json")!).not.toContain("hidden-pw");
+    expect(binaryFiles.get("secrets/master.key")?.length).toBe(32);
+  });
+
+  it("falls back to a legacy plaintext password", async () => {
+    const { vault } = fakeVault({
+      "mail/accounts.json": JSON.stringify({
+        accounts: [{ name: "legacy", host: "imap.example.com", user: "a@b.com", password: "plain-old" }],
+      }),
+    });
+    let resolvedPassword = "";
+    const result = await fetchMail(vault, {}, (account) => {
+      resolvedPassword = account.password;
+      return fakeImap([{ uid: 1, source: MIME("hello", "legacy") }])(account);
+    });
+    expect(result.fetched).toBe(1);
+    expect(resolvedPassword).toBe("plain-old");
+  });
+
+  it("errors clearly when a $secret reference is missing", async () => {
+    const { vault } = fakeVault({
+      "mail/accounts.json": JSON.stringify({
+        accounts: [{ name: "x", host: "imap.example.com", user: "u@x.com", password: "$secret:mail.x.password" }],
+      }),
+    });
+    const result = await fetchMail(vault, {}, fakeImap([]));
+    expect(result.fetched).toBe(0);
+    expect(result.accounts[0]!.error).toContain("隐藏的凭据");
   });
 
   it("rejects account names that are unsafe as vault directories", async () => {

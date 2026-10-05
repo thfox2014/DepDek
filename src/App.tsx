@@ -123,15 +123,97 @@ export default function App() {
   const [mediaError, setMediaError] = useState<string | null>(null);
   const blockId = useRef(1);
 
+  // Per-agent snapshots already written to the vault; identical snapshots skip
+  // the debounced writer. Conversation history persistence (contract 6.2): the
+  // authoritative copy is `agent/<id>/conversations.json` in the vault.
+  const lastPersistedRef = useRef<Record<string, string>>({});
+  const persistTimer = useRef<number | null>(null);
+
   const nextId = () => blockId.current++;
 
+  // Crash cache (immediate, cheap) + debounced vault write (800ms). localStorage
+  // is NOT the source of truth anymore — it only survives a hard crash until the
+  // next vault write happens.
   useEffect(() => {
     try {
       window.localStorage.setItem(CONVERSATION_HISTORY_STORAGE_KEY, JSON.stringify(conversationHistory));
     } catch {
       // A full browser quota must not block the live Agent session.
     }
+    if (persistTimer.current !== null) {
+      window.clearTimeout(persistTimer.current);
+      persistTimer.current = null;
+    }
+    persistTimer.current = window.setTimeout(() => {
+      persistTimer.current = null;
+      const entries = Object.entries(conversationHistory).filter(([, records]) => records.length > 0);
+      if (entries.length === 0) return;
+      for (const [agentId, records] of entries) {
+        let serialized: string;
+        try {
+          serialized = JSON.stringify(records);
+        } catch {
+          continue;
+        }
+        if (lastPersistedRef.current[agentId] === serialized) continue;
+        lastPersistedRef.current[agentId] = serialized;
+        void api.conversationWrite(agentId, serialized).catch(() => {
+          // Vault/sidecar temporarily unavailable: the crash cache still holds
+          // this snapshot and the next conversation change retries the write.
+        });
+      }
+    }, 800);
+    return () => {
+      if (persistTimer.current !== null) {
+        window.clearTimeout(persistTimer.current);
+        persistTimer.current = null;
+      }
+    };
   }, [conversationHistory]);
+
+  // Restore history from the vault on boot; localStorage acts only as a crash
+  // cache fallback (and is synced back up to the vault by the debounced writer).
+  const restoreConversationHistory = async (agentIds: string[]) => {
+    const local = loadConversationHistory();
+    const merged: Record<string, ConversationRecord[]> = {};
+    const fromVault = new Set<string>();
+    for (const agentId of agentIds) {
+      let records: ConversationRecord[] | null = null;
+      try {
+        const content = await api.conversationRead(agentId);
+        if (content) {
+          const parsed = JSON.parse(content) as unknown;
+          if (Array.isArray(parsed)) {
+            records = parsed
+              .filter((r) => r && typeof r.id === "string" && Array.isArray(r.blocks))
+              .slice(-30);
+          }
+        }
+      } catch {
+        // Vault unavailable: fall back to the crash cache below.
+      }
+      if (records && records.length) {
+        merged[agentId] = records;
+        fromVault.add(agentId);
+      } else if (local[agentId]?.length) {
+        merged[agentId] = local[agentId];
+      }
+    }
+    // Sessions that only exist in the crash cache (agent removed from settings).
+    for (const [agentId, records] of Object.entries(local)) {
+      if (!merged[agentId] && records.length) merged[agentId] = records;
+    }
+    setConversationHistory((prev) => (Object.keys(merged).length ? { ...prev, ...merged } : prev));
+    // Vault-loaded snapshots are already persisted; crash-cache fallbacks stay
+    // unseeded so the debounced writer syncs them up to the vault.
+    for (const [agentId, records] of Object.entries(merged)) {
+      if (fromVault.has(agentId)) {
+        lastPersistedRef.current[agentId] = JSON.stringify(records);
+      } else {
+        delete lastPersistedRef.current[agentId];
+      }
+    }
+  };
 
   useEffect(() => {
     try { window.localStorage.setItem(AGENT_METRICS_STORAGE_KEY, JSON.stringify(agentMetrics)); }
@@ -153,11 +235,23 @@ export default function App() {
     bootstrapped.current = true;
     (async () => {
       try {
-        // Browser-only UX preview: Tauri commands are unavailable in Vite,
-        // so provide a clearly local sample Home for visual/product QA.
+        // Browser-only UX preview: Tauri commands are unavailable in Vite, so
+        // settings come from the standalone agent service (they live in the
+        // local data folder). When that service is not running, fall back to
+        // the embedded sample Home for visual/product QA.
         if (!("__TAURI_INTERNALS__" in window)) {
-          setSettings({ providers: { [INITIAL_PROVIDER_NAME]: INITIAL_DEEPSEEK_PROVIDER }, agents: INITIAL_AGENTS });
-          setRoot("~/DepDek-Home · 浏览器 UX 预览");
+          const fromService = await api.settingsGet().catch(() => null);
+          const served = Boolean(
+            fromService &&
+              (Object.keys(fromService.providers ?? {}).length > 0 || (fromService.agents ?? []).length > 0),
+          );
+          const preview: api.Settings =
+            served && fromService
+              ? fromService
+              : { providers: { [INITIAL_PROVIDER_NAME]: INITIAL_DEEPSEEK_PROVIDER }, agents: INITIAL_AGENTS };
+          setSettings(preview);
+          setRoot(preview.last_root || "~/DepDek-Home · 浏览器 UX 预览");
+          await restoreConversationHistory((preview.agents ?? []).map((a) => a.id));
           return;
         }
         const loaded = await api.settingsGet().catch(() => ({ providers: {} }) as api.Settings);
@@ -191,6 +285,9 @@ export default function App() {
         let r = await api.vaultGetRoot().catch(() => null);
         if (agentOsMode && !r) r = await api.vaultInitHome();
         setRoot(r);
+        // Restore conversation history from the vault (localStorage is only a
+        // crash-cache fallback and gets synced back up by the debounced writer).
+        await restoreConversationHistory((nextSettings.agents ?? []).map((a) => a.id));
       } catch (error) {
         setRootError(String(error));
       } finally {

@@ -72,13 +72,26 @@ function normalizedPath(value: string): string {
   return value.replaceAll("\\", "/").replace(/^\.\/+/, "").replace(/\/+$/, "");
 }
 
-function isProtectedContextPath(value: string): boolean {
-  return normalizedPath(value) === "tasks/history.json";
+/** Credential / private files that must never enter AI context. */
+const PROTECTED_PATHS = [
+  "tasks/history.json",
+  "mail/accounts.json",
+  "calendar/accounts.json",
+  "settings/settings.json",
+];
+
+function isProtectedPath(value: string): boolean {
+  return PROTECTED_PATHS.includes(normalizedPath(value));
 }
 
-const PROTECTED_CONTEXT_MESSAGE =
-  "tasks/history.json is an internal task log and is excluded from AI context. " +
-  "Use the task center for task status and summaries instead.";
+function protectedMessage(path: string): string {
+  if (normalizedPath(path) === "tasks/history.json") {
+    return "tasks/history.json is an internal task log and is excluded from AI context. " +
+      "Use the task center for task status and summaries instead.";
+  }
+  return "This file holds private account credentials and is excluded from AI context. " +
+    "Ask the user to manage accounts in Settings.";
+}
 
 const MEMORY_NOTE =
   "Memory is shared by the Agent Team but remains local. Propose only a concise, " +
@@ -86,13 +99,11 @@ const MEMORY_NOTE =
   "it before it can enter any Agent context. Never include passwords, tokens or secrets.";
 
 const MAIL_CONFIG_NOTE =
-  "Mail accounts live in the data folder at mail/accounts.json with shape " +
-  '{accounts: [{name, host, user, password, port?, secure?, mailbox?}]} ' +
-  "(defaults: port 993, secure true, mailbox INBOX). " +
-  "To configure an account for the user, ask for the email address, its IMAP " +
-  "authorization code/password, and the IMAP server (common ones: QQ imap.qq.com, " +
-  "163 imap.163.com, Gmail imap.gmail.com, Outlook outlook.office365.com), " +
-  "then write that file with the write_file tool (create or update the accounts array).";
+  "Mail accounts live in the data folder at mail/accounts.json and are managed by " +
+  "the user in Settings (the file is private and excluded from AI context). " +
+  "To fetch mail from a new account, ask the user to add it in Settings, or ask for " +
+  "the email address, its IMAP authorization code, and the IMAP server (common ones: " +
+  "QQ imap.qq.com, 163 imap.163.com, Gmail imap.gmail.com, Outlook outlook.office365.com).";
 
 /** Create the vault tools plus fetch_mail bound to a session id (contract 2.3, 2.5). */
 const DOCUMENT_TOOLS = new Set(["read_file", "write_file", "list_files", "search_files", "compress"]);
@@ -147,7 +158,7 @@ function mediaTools(client: VaultClient, sessionId: string, allowedKinds?: Reado
           } catch { continue; }
           for (const entry of entries) {
             const path = normalizedPath(current.path === "." ? entry.name : `${current.path}/${entry.name}`);
-            if (isProtectedContextPath(path)) continue;
+            if (isProtectedPath(path)) continue;
             if (entry.kind === "dir") {
               if (current.depth < 8) pending.push({ path, depth: current.depth + 1 });
               continue;
@@ -196,7 +207,7 @@ export function createVaultTools(client: VaultClient, sessionId: string, enabled
       method: "vault/read_file",
       toParams: (args) => ({ path: args.path }),
       format: (result) => result.content,
-      guard: (args) => isProtectedContextPath(args.path) ? PROTECTED_CONTEXT_MESSAGE : undefined,
+      guard: (args) => isProtectedPath(args.path) ? protectedMessage(args.path) : undefined,
     }),
     vaultTool(client, sessionId, {
       name: "write_file",
@@ -210,6 +221,7 @@ export function createVaultTools(client: VaultClient, sessionId: string, enabled
       ),
       method: "vault/write_file",
       toParams: (args) => ({ path: args.path, content: args.content }),
+      guard: (args) => isProtectedPath(args.path) ? protectedMessage(args.path) : undefined,
       format: (result) => `Wrote ${result.size} bytes (sha256 ${result.sha256}).`,
     }),
     vaultTool(client, sessionId, {
@@ -220,7 +232,7 @@ export function createVaultTools(client: VaultClient, sessionId: string, enabled
       toParams: (args) => ({ path: args.path }),
       format: (result, args) =>
         (result.entries as { name: string; kind: string; size: number }[])
-          .filter((entry) => !isProtectedContextPath(`${args.path}/${entry.name}`))
+          .filter((entry) => !isProtectedPath(`${args.path}/${entry.name}`))
           .map((entry) => `${entry.kind === "dir" ? "d" : "f"} ${String(entry.size).padStart(10)} ${entry.name}`)
           .join("\n") || "(empty directory)",
     }),
@@ -235,7 +247,7 @@ export function createVaultTools(client: VaultClient, sessionId: string, enabled
       toParams: (args) => ({ query: args.query }),
       format: (result) =>
         (result.matches as { path: string; line: number; snippet: string }[])
-          .filter((match) => !isProtectedContextPath(match.path))
+          .filter((match) => !isProtectedPath(match.path))
           .map((match) => `${match.path}:${match.line}: ${match.snippet}`)
           .join("\n") || "(no matches)",
     }),
@@ -245,6 +257,7 @@ export function createVaultTools(client: VaultClient, sessionId: string, enabled
       parameters: Type.Object({ path: pathParam }, { additionalProperties: false }),
       method: "vault/delete_file",
       toParams: (args) => ({ path: args.path }),
+      guard: (args) => isProtectedPath(args.path) ? protectedMessage(args.path) : undefined,
       format: () => "Deleted.",
     }),
     vaultTool(client, sessionId, {
@@ -264,6 +277,10 @@ export function createVaultTools(client: VaultClient, sessionId: string, enabled
       ),
       method: "vault/compress",
       toParams: (args) => ({ path: args.path, archive_path: args.archive_path }),
+      guard: (args) =>
+        isProtectedPath(args.path) || (args.archive_path != null && isProtectedPath(args.archive_path))
+          ? protectedMessage(args.path)
+          : undefined,
       format: (result) =>
         `Compressed ${result.source} into ${result.archive} (${result.files} file(s), ${result.bytes} bytes).`,
     }),

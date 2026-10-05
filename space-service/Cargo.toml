@@ -1,6 +1,6 @@
 [package]
 name = "depdek-space"
-version = "0.2.0"
+version = "0.2.1"
 description = "DepDek logical storage space service"
 edition = "2021"
 

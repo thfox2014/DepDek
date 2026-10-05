@@ -12,6 +12,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_store::StoreExt;
 
 use crate::audit::AuditEntry;
+use crate::credentials::{is_secret_ref, CredentialStore};
 use crate::obsidian::{ObsidianListResult, ObsidianReadResult, ObsidianStore};
 use crate::rpc::Sidecar;
 use crate::settings::{ProviderConfig, Settings};
@@ -43,6 +44,74 @@ fn load_settings(app: &AppHandle) -> Settings {
         .and_then(|store| store.get("settings"))
         .and_then(|value| serde_json::from_value(value).ok())
         .unwrap_or_default()
+}
+
+/// Replace plaintext API keys in an incoming `Settings` with encrypted
+/// `$secret:` references (writing ciphertext to `secrets/providers.enc.json`)
+/// and keep the stored value for redacted/empty placeholders, so a round-trip
+/// through the settings UI can never wipe or leak a real key.
+fn migrate_provider_secrets_to_store(
+    state: &AppState,
+    current: Settings,
+    incoming: Settings,
+) -> Result<Settings, String> {
+    let mut providers = incoming.providers;
+    let needs_store = providers.iter().any(|(_, p)| {
+        p.api_key()
+            .map(|k| !k.is_empty() && k != "********" && !is_secret_ref(k))
+            .unwrap_or(false)
+    });
+    let store = if needs_store {
+        let root = state
+            .vault
+            .root()
+            .ok_or("数据目录尚未设置，请先选择 DepDek Home")?;
+        Some(CredentialStore::open(&root).map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+    for (name, provider) in providers.iter_mut() {
+        let Some(api_key) = provider.api_key_mut() else {
+            continue;
+        };
+        let legacy = current.providers.get(name).and_then(ProviderConfig::api_key);
+        let result = match &store {
+            Some(store) => crate::credentials::migrate_provider_key(store, name, api_key, legacy)
+                .map_err(|e| e.to_string()),
+            None => Ok(api_key.clone()),
+        }?;
+        *api_key = result;
+    }
+    Ok(Settings {
+        providers,
+        agents: incoming.agents,
+        last_root: incoming.last_root,
+        obsidian_root: incoming.obsidian_root,
+    })
+}
+
+/// Resolve `$secret:` provider keys back to plaintext right before they are
+/// forwarded to the sidecar, so model calls keep working while settings.json
+/// and any UI payload never carry the real key.
+fn resolve_provider_secrets(
+    state: &AppState,
+    provider: ProviderConfig,
+) -> Result<ProviderConfig, String> {
+    let needs_store = provider.api_key().map(is_secret_ref).unwrap_or(false);
+    if !needs_store {
+        return Ok(provider);
+    }
+    let root = state
+        .vault
+        .root()
+        .ok_or("数据目录尚未设置，请先选择 DepDek Home")?;
+    let store = CredentialStore::open(&root).map_err(|e| e.to_string())?;
+    let mut provider = provider;
+    if let Some(api_key) = provider.api_key_mut() {
+        *api_key = crate::credentials::resolve_provider_key(&store, api_key)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(provider)
 }
 
 // ---------------------------------------------------------------------
@@ -372,7 +441,7 @@ async fn agent_create_session(
     engine: Option<String>,
     enabled_skills: Option<Vec<String>>,
 ) -> Result<Value, String> {
-    let mut params = json!({ "session_id": session_id, "provider": provider });
+    let mut params = json!({ "session_id": session_id, "provider": resolve_provider_secrets(&state, provider)? });
     if let Some(prompt) = system_prompt {
         params["system_prompt"] = json!(prompt);
     }
@@ -409,6 +478,8 @@ async fn agent_analyze(
     system_prompt: Option<String>,
     engine: Option<String>,
 ) -> Result<Value, String> {
+    let provider: ProviderConfig = serde_json::from_value(provider).map_err(|e| format!("invalid provider: {e}"))?;
+    let provider = resolve_provider_secrets(&state, provider)?;
     state
         .sidecar
         .request(
@@ -596,9 +667,53 @@ fn settings_get(state: State<AppState>) -> Settings {
 
 #[tauri::command]
 fn settings_set(state: State<AppState>, app: AppHandle, settings: Settings) -> Result<(), String> {
+    // Real API keys are encrypted before they reach the settings store; see
+    // migrate_provider_secrets_to_store.
+    let current = state.settings.lock().unwrap().clone();
+    let settings = migrate_provider_secrets_to_store(&state, current, settings)?;
     persist_settings(&app, &settings)?;
     *state.settings.lock().unwrap() = settings;
     Ok(())
+}
+
+// ---------------------------------------------------------------------
+// Credentials (encrypted secret store, contract sections 7 and 9). These
+// commands are deliberately user-UI-only: agents guide users to the settings
+// page instead of writing secrets themselves.
+// ---------------------------------------------------------------------
+
+#[tauri::command]
+fn credentials_set(
+    state: State<AppState>,
+    scope: String,
+    key: String,
+    value: String,
+) -> Result<(), String> {
+    let root = state
+        .vault
+        .root()
+        .ok_or("数据目录尚未设置，请先选择 DepDek Home")?;
+    let store = CredentialStore::open(&root).map_err(|e| e.to_string())?;
+    if value.is_empty() {
+        store.delete_entry(&scope, &key).map_err(|e| e.to_string())
+    } else {
+        store
+            .set_entry(&scope, &key, &value)
+            .map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command]
+fn credentials_has(state: State<AppState>, scope: String, key: String) -> Result<bool, String> {
+    let root = state
+        .vault
+        .root()
+        .ok_or("数据目录尚未设置，请先选择 DepDek Home")?;
+    if !CredentialStore::has_key(&root) {
+        return Ok(false);
+    }
+    let store = CredentialStore::open(&root).map_err(|e| e.to_string())?;
+    store.has_entry(&scope, &key).map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------
@@ -732,6 +847,8 @@ pub fn run() {
             agent_close,
             settings_get,
             settings_set,
+            credentials_set,
+            credentials_has,
             obsidian_set_root,
             obsidian_get_root,
             obsidian_clear_root,

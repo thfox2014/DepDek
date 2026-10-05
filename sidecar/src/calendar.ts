@@ -8,6 +8,7 @@
  * configured.
  */
 
+import { createCredentialsAccess, isSecretRef } from "./credentials.js";
 import { RpcError } from "./rpc.js";
 import type { VaultClient } from "./tools.js";
 
@@ -159,6 +160,29 @@ function authHeaders(account: CalendarAccount): Record<string, string> {
   return {};
 }
 
+/**
+ * Resolve `$secret:` references (calendar scope) to plaintext for one
+ * account. Legacy plaintext values are returned untouched. The returned copy
+ * is only used for network auth; account config files stay unmodified.
+ */
+async function resolveAccountSecrets(
+  vault: VaultClient,
+  account: CalendarAccount,
+): Promise<CalendarAccount> {
+  let password = account.password;
+  let accessToken = account.access_token;
+  if (isSecretRef(account.password) || isSecretRef(account.access_token)) {
+    const access = await createCredentialsAccess(vault, CALENDAR_SESSION_ID);
+    if (isSecretRef(account.password)) {
+      password = (await access.getSecret("calendar", `${account.id}.password`)) ?? "";
+    }
+    if (isSecretRef(account.access_token)) {
+      accessToken = (await access.getSecret("calendar", `${account.id}.access_token`)) ?? "";
+    }
+  }
+  return { ...account, password, access_token: accessToken };
+}
+
 function decodeXml(value: string): string {
   return value
     .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 16)))
@@ -262,11 +286,12 @@ export async function syncCalendar(
       continue;
     }
     try {
+      const resolved = await resolveAccountSecrets(vault, account);
       const endpoint = normalizeCalendarEndpoint(account.endpoint);
       const importedEvents = isCalDavAppleEndpoint(account)
-        ? await syncAppleCalDav(account, fetchImpl)
+        ? await syncAppleCalDav(resolved, fetchImpl)
         : await (async () => {
-          const response = await fetchImpl(endpoint, { headers: { Accept: "text/calendar, text/plain", ...authHeaders(account) } });
+          const response = await fetchImpl(endpoint, { headers: { Accept: "text/calendar, text/plain", ...authHeaders(resolved) } });
           if (!response.ok) throw new Error(`日历服务返回 HTTP ${response.status}`);
           return parseIcsEvents(await response.text(), account);
         })();
@@ -301,11 +326,12 @@ export async function pushCalendarEvent(
   const account = config.accounts.find((item) => item.id === opts.account);
   if (!account) throw new RpcError(-32002, `unknown calendar account: ${opts.account}`);
   if (account.provider !== "caldav") throw new Error("Google、Microsoft 和 Apple 账户需要 OAuth 授权后才能写回；当前可直接写回 CalDAV 日历");
+  const resolved = await resolveAccountSecrets(vault, account);
   const endpoint = account.write_endpoint || account.endpoint;
   if (!endpoint) throw new Error("未配置 CalDAV 写入地址");
   const remoteId = opts.event.remote_id || opts.event.id;
   const url = `${endpoint.replace(/\/$/, "")}/${encodeURIComponent(remoteId)}.ics`;
-  const response = await fetchImpl(url, { method: "PUT", headers: { "Content-Type": "text/calendar; charset=utf-8", ...authHeaders(account) }, body: renderIcsEvent(opts.event) });
+  const response = await fetchImpl(url, { method: "PUT", headers: { "Content-Type": "text/calendar; charset=utf-8", ...authHeaders(resolved) }, body: renderIcsEvent(opts.event) });
   if (!response.ok) throw new Error(`CalDAV 写回失败：HTTP ${response.status}`);
   return { account: account.name, event_id: opts.event.id, remote_id: remoteId };
 }

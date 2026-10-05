@@ -1,6 +1,6 @@
 [package]
 name = "agent-workbench"
-version = "0.2.0"
+version = "0.2.1"
 description = "DepDek - local-first personal data workbench"
 edition = "2021"
 
@@ -47,6 +47,10 @@ sysinfo = "0.39.6"
 tauri = { version = "2", optional = true , features = [] }
 tauri-plugin-dialog = { version = "2", optional = true }
 tauri-plugin-store = { version = "2", optional = true }
+
+# P1: encrypted credential store (secrets/<scope>.enc.json, AES-256-GCM)
+aes-gcm = "0.10"
+rand = "0.8"
 
 [build-dependencies]
 tauri-build = { version = "2", optional = true , features = [] }
