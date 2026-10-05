@@ -161,7 +161,7 @@ impl LoginThrottle {
         let guard = self.attempts.lock().expect("throttle mutex");
         let entry = guard.get(ip)?;
         if entry.blocked_until_ms > now {
-            return Some((entry.blocked_until_ms - now + 999) / 1000);
+            return Some((entry.blocked_until_ms - now).div_ceil(1000));
         }
         None
     }

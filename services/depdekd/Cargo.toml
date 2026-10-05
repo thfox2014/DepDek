@@ -1,0 +1,26 @@
+[package]
+name = "depdekd"
+version = "0.2.0"
+edition = "2021"
+description = "AgentOS R1 local read-only command service and CLI"
+
+[dependencies]
+agent-workbench = { path = "../../src-tauri", default-features = false }
+anyhow = "1"
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+zeroize = "1.9"
+rpassword = "7.5"
+
+[dev-dependencies]
+tempfile = "3"
+
+[[bin]]
+name = "depdekd"
+path = "src/main.rs"
+
+[[bin]]
+name = "depdek"
+path = "src/bin/depdek.rs"

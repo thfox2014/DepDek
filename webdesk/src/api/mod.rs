@@ -1,6 +1,7 @@
 //! HTTP routing.
 
 pub mod agent;
+pub mod business;
 pub mod files;
 pub mod processes;
 pub mod session;
@@ -20,6 +21,12 @@ use crate::web;
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/health", get(system::health))
+        .route("/api/v2/auth/login", post(business::login))
+        .route("/api/v2/auth/session", get(business::current))
+        .route("/api/v2/auth/logout", post(business::logout))
+        .route("/api/v2/workspaces", get(business::workspaces))
+        .route("/api/v2/commands", get(business::commands))
+        .route("/api/v2/commands/invoke", post(business::invoke))
         .route("/api/session", get(session::current))
         .route("/api/login", post(session::login))
         .route("/api/logout", post(session::logout))

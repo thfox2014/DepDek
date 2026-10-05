@@ -1,9 +1,9 @@
 //! Tauri application wiring: plugins, commands and events
 //! (contract sections 3 and 4). Only compiled with the `tauri-app` feature.
 
+use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::io::Write;
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
@@ -80,7 +80,10 @@ fn vault_init_home(state: State<AppState>, app: AppHandle) -> Result<String, Str
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
     let path = home.join("DepDek-Home");
     std::fs::create_dir_all(&path).map_err(|e| format!("创建 DepDek Home 失败：{e}"))?;
-    let canonical = state.vault.set_root(&path).map_err(|e| e.to_command_string())?;
+    let canonical = state
+        .vault
+        .set_root(&path)
+        .map_err(|e| e.to_command_string())?;
     let root = canonical.to_string_lossy().into_owned();
     let mut settings = state.settings.lock().unwrap();
     settings.last_root = Some(root.clone());
@@ -124,8 +127,8 @@ async fn voice_transcribe(app: AppHandle, audio_base64: String) -> Result<String
                 format!("本地语音识别失败：{detail}")
             });
         }
-        let transcript = String::from_utf8(output.stdout)
-            .map_err(|_| "语音识别返回了无效文本".to_string())?;
+        let transcript =
+            String::from_utf8(output.stdout).map_err(|_| "语音识别返回了无效文本".to_string())?;
         let transcript = transcript.trim();
         if transcript.chars().count() > 4_096 {
             return Err("识别文本超过长度限制".into());
@@ -333,7 +336,10 @@ async fn memory_reject(state: State<'_, AppState>, id: String) -> Result<Value, 
 async fn memory_tombstone(state: State<'_, AppState>, id: String) -> Result<Value, String> {
     state
         .sidecar
-        .request("memory/tombstone", json!({ "session_id": "user", "id": id }))
+        .request(
+            "memory/tombstone",
+            json!({ "session_id": "user", "id": id }),
+        )
         .await
 }
 

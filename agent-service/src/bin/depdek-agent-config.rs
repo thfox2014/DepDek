@@ -18,16 +18,19 @@ use tokio::process::Command;
 const MAX_REQUEST_BYTES: usize = 16 * 1024;
 const MAX_RESPONSE_BYTES: usize = 16 * 1024;
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static LOCAL_CONFIGURATION: std::sync::OnceLock<agent_workbench_lib::vault::LocalAgentEnvFile> =
+    std::sync::OnceLock::new();
+static CONFIG_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-#[derive(Debug, Deserialize)]
-#[serde(tag = "op", rename_all = "snake_case")]
+#[derive(Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 enum Request {
     List,
     Save { provider: SaveProvider },
     Activate { id: String },
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SaveProvider {
     id: String,
@@ -56,16 +59,61 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let env_path = std::env::var_os("DEPDEK_AGENT_ENV_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/etc/depdek/agent.env"));
+    match std::env::var("DEPDEK_AGENT_CONFIG_MODE")
+        .as_deref()
+        .unwrap_or("systemd")
+    {
+        "systemd" if unsafe { libc::geteuid() } == 0 => {}
+        "local-private" => {
+            let file = agent_workbench_lib::vault::LocalAgentEnvFile::open(&env_path, true)?;
+            file.read()?;
+            LOCAL_CONFIGURATION
+                .set(file)
+                .map_err(|_| "local config already initialized")?;
+        }
+        _ => {
+            return Err(
+                "use the root systemd broker, or explicitly opt into non-root local-private mode"
+                    .into(),
+            )
+        }
+    }
+    if LOCAL_CONFIGURATION.get().is_some() {
+        let parent = socket.parent().ok_or("private socket directory required")?;
+        // Runtime transport validation also uses Vault's private directory guard.
+        agent_workbench_lib::vault::validate_private_service_directory(parent)?;
+        if std::fs::symlink_metadata(&socket).is_ok() {
+            return Err("local config socket already exists; explicit recovery required".into());
+        }
+    }
     prepare_socket(&socket)?;
     let listener = UnixListener::bind(&socket)?;
+    let _local_socket = if LOCAL_CONFIGURATION.get().is_some() {
+        Some(agent_workbench_lib::vault::PrivateServiceSocketGuard::attach(&socket)?)
+    } else {
+        None
+    };
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o660))?;
+        std::fs::set_permissions(
+            &socket,
+            std::fs::Permissions::from_mode(if LOCAL_CONFIGURATION.get().is_some() {
+                0o600
+            } else {
+                0o660
+            }),
+        )?;
     }
     eprintln!("[depdek-agent-config] listening on {}", socket.display());
+    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     loop {
-        let (stream, _) = listener.accept().await?;
+        let accepted = tokio::select! {
+            accepted = listener.accept() => accepted,
+            _ = tokio::signal::ctrl_c() => break,
+            _ = term.recv() => break,
+        };
+        let (stream, _) = accepted?;
         let env_path = env_path.clone();
         tokio::spawn(async move {
             if let Err(error) = handle(stream, &env_path).await {
@@ -73,6 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
+    Ok(())
 }
 
 fn prepare_socket(socket: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -102,11 +151,16 @@ fn prepare_socket(socket: &Path) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn handle(mut stream: UnixStream, env_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let mut line = Vec::with_capacity(1024);
-    let mut chunk = [0u8; 2048];
+    if LOCAL_CONFIGURATION.get().is_some()
+        && stream.peer_cred()?.uid() != unsafe { libc::geteuid() }
+    {
+        return Ok(());
+    }
+    let mut line = zeroize::Zeroizing::new(Vec::with_capacity(1024));
+    let mut chunk = zeroize::Zeroizing::new([0u8; 2048]);
     loop {
         let count =
-            tokio::time::timeout(std::time::Duration::from_secs(5), stream.read(&mut chunk))
+            tokio::time::timeout(std::time::Duration::from_secs(5), stream.read(&mut *chunk))
                 .await??;
         if count == 0 {
             return Ok(());
@@ -125,6 +179,7 @@ async fn handle(mut stream: UnixStream, env_path: &Path) -> Result<(), Box<dyn s
         Ok(value) => value,
         Err(_) => return write_reply(&mut stream, error_reply("配置请求格式无效")).await,
     };
+    let _serial = CONFIG_LOCK.lock().await;
     let reply = match request {
         Request::List => list_reply(env_path),
         Request::Save { provider } => save_provider(env_path, provider).await,
@@ -194,7 +249,7 @@ async fn save_provider(env_path: &Path, submitted: SaveProvider) -> Reply {
     if write_configuration(env_path, &encoded, &active_id, &profiles).is_err() {
         return error_reply("无法安全写入 /etc/depdek/agent.env");
     }
-    let restart_ok = restart_agent().await;
+    let restart_ok = restart_agent(&active_id).await;
     Reply {
         ok: true,
         providers: profiles
@@ -204,7 +259,7 @@ async fn save_provider(env_path: &Path, submitted: SaveProvider) -> Reply {
         active_id,
         restart_ok,
         message: if restart_ok {
-            "Provider 已安全保存并生效".into()
+            "Provider 已安全保存并由执行器加载；可发送测试消息验证连接".into()
         } else {
             "Provider 已保存，但 Agent 服务重启未确认；请检查 depdek-agent 服务状态".into()
         },
@@ -216,7 +271,7 @@ async fn activate_provider(env_path: &Path, id: &str) -> Reply {
         Ok(value) => value,
         Err(message) => return error_reply(message),
     };
-    let restart_ok = restart_agent().await;
+    let restart_ok = restart_agent(id).await;
     Reply {
         ok: true,
         providers: profiles
@@ -255,7 +310,43 @@ fn set_active_provider(
     Ok((profiles, id.to_string()))
 }
 
-async fn restart_agent() -> bool {
+async fn restart_agent(expected_id: &str) -> bool {
+    if LOCAL_CONFIGURATION.get().is_some() {
+        let Some(socket) = std::env::var_os("DEPDEK_AGENT_CONFIG_APPLY_SOCKET").map(PathBuf::from)
+        else {
+            return false;
+        };
+        let check = async {
+            let mut stream = UnixStream::connect(socket).await.ok()?;
+            if stream.peer_cred().ok()?.uid() != unsafe { libc::geteuid() } {
+                return None;
+            }
+            stream.write_all(b"{\"op\":\"status\"}\n").await.ok()?;
+            let mut bytes = Vec::new();
+            let mut buffer = [0u8; 2048];
+            loop {
+                let n = stream.read(&mut buffer).await.ok()?;
+                if n == 0 {
+                    return None;
+                }
+                let end = buffer[..n].iter().position(|b| *b == b'\n').unwrap_or(n);
+                if bytes.len() + end > MAX_RESPONSE_BYTES {
+                    return None;
+                }
+                bytes.extend_from_slice(&buffer[..end]);
+                if end < n {
+                    break;
+                }
+            }
+            let reply: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+            Some(reply["ok"] == true && reply["provider_id"] == expected_id)
+        };
+        return tokio::time::timeout(std::time::Duration::from_secs(5), check)
+            .await
+            .ok()
+            .flatten()
+            == Some(true);
+    }
     Command::new("/usr/bin/systemctl")
         .args(["restart", "depdek-agent.service"])
         .stdin(Stdio::null())
@@ -338,6 +429,10 @@ fn write_configuration(
     }
     let mut body = retained.join("\n");
     body.push('\n');
+    if let Some(file) = LOCAL_CONFIGURATION.get() {
+        file.write(body.as_bytes())?;
+        return Ok(());
+    }
     let temp = parent.join(format!(
         ".agent.env.{}.{}.tmp",
         std::process::id(),
@@ -373,6 +468,13 @@ fn write_configuration(
 }
 
 fn read_env_file(path: &Path) -> Result<String, std::io::Error> {
+    if let Some(file) = LOCAL_CONFIGURATION.get() {
+        let bytes = file
+            .read()
+            .map_err(|_| std::io::Error::other("private local configuration unavailable"))?;
+        return String::from_utf8(bytes.to_vec())
+            .map_err(|_| std::io::Error::other("private local config encoding invalid"));
+    }
     match std::fs::read_to_string(path) {
         Ok(contents) => Ok(contents),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
@@ -498,7 +600,7 @@ mod tests {
             model: "example".into(),
             api_key: "secret-for-root-only".into(),
         };
-        let encoded = encode_profiles(&[profile.clone()]).unwrap();
+        let encoded = encode_profiles(std::slice::from_ref(&profile)).unwrap();
         write_configuration(&path, &encoded, "custom", &[profile]).unwrap();
         let contents = std::fs::read_to_string(&path).unwrap();
         assert!(contents.contains("DEPDEK_DSH_COMMAND=/usr/local/bin/dsh"));

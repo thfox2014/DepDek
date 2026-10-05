@@ -10,7 +10,7 @@ pub const MAX_PROVIDERS: usize = 24;
 pub const MAX_KEY_BYTES: usize = 2048;
 pub const MAX_PROVIDERS_JSON_BYTES: usize = 56 * 1024;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct ProviderProfile {
     pub id: String,
     pub name: String,
@@ -18,6 +18,21 @@ pub struct ProviderProfile {
     pub protocol: ApiProtocol,
     pub model: String,
     pub api_key: String,
+}
+impl std::fmt::Debug for ProviderProfile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProviderProfile")
+            .field("id", &self.id)
+            .field("model", &self.model)
+            .field("api_key", &"[REDACTED]")
+            .finish()
+    }
+}
+impl Drop for ProviderProfile {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.api_key.zeroize();
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -179,7 +194,7 @@ mod tests {
     #[test]
     fn profile_round_trip_is_write_only_in_descriptor() {
         let profile = profile();
-        let encoded = encode_profiles(&[profile.clone()]).unwrap();
+        let encoded = encode_profiles(std::slice::from_ref(&profile)).unwrap();
         let decoded = decode_profiles(&encoded).unwrap();
         assert_eq!(decoded[0].api_key, profile.api_key);
         let descriptor = serde_json::to_string(&profile.descriptor(&profile.id)).unwrap();

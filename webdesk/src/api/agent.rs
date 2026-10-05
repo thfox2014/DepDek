@@ -117,6 +117,13 @@ async fn config_rpc(state: &AppState, payload: &[u8]) -> Result<ConfigReply, Api
                 .map_err(|_| {
                     ApiError::unavailable("Provider 安全配置服务未连接；请检查 depdek-agent-config")
                 })?;
+            let uid = stream
+                .peer_cred()
+                .map_err(|_| ApiError::unavailable("无法验证 Provider 配置服务身份"))?
+                .uid();
+            if uid != 0 && uid != unsafe { libc::geteuid() } {
+                return Err(ApiError::unavailable("Provider 配置服务身份不匹配"));
+            }
             stream
                 .write_all(payload)
                 .await
@@ -182,7 +189,7 @@ pub async fn providers(
     Ok(Json(json!({ "providers": reply.providers, "active_id": reply.active_id })).into_response())
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SaveProviderRequest {
     pub id: String,
@@ -192,6 +199,12 @@ pub struct SaveProviderRequest {
     pub model: String,
     #[serde(default)]
     pub api_key: String,
+}
+impl Drop for SaveProviderRequest {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.api_key.zeroize();
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -217,9 +230,9 @@ pub async fn save_provider(
     // Use the transport peer, not X-Forwarded-For, for the secret transport
     // check; that header may be spoofable unless a trusted proxy is configured.
     let is_loopback = peer.ip().is_loopback();
-    if !state.config.tls_enabled() && !is_loopback {
+    if !is_loopback {
         return Err(ApiError::forbidden(
-            "远程配置 API Key 需要启用 TLS；本机回环连接可直接配置",
+            "当前服务没有直接 TLS 监听；请经本机回环的受信 TLS 反向代理配置 API Key",
         ));
     }
     if body.id.len() > 48
@@ -231,7 +244,7 @@ pub async fn save_provider(
         return Err(ApiError::bad_request("Provider 配置超过安全上限"));
     }
     let provider_id = body.id.clone();
-    let payload = serde_json::to_vec(&json!({
+    let mut submission = json!({
         "op": "save",
         "provider": {
             "id": provider_id.clone(),
@@ -241,8 +254,15 @@ pub async fn save_provider(
             "model": body.model,
             "api_key": body.api_key,
         }
-    }))
-    .map_err(|_| ApiError::bad_request("Provider 配置格式无效"))?;
+    });
+    let serialized = serde_json::to_vec(&submission);
+    if let Some(serde_json::Value::String(secret)) = submission.pointer_mut("/provider/api_key") {
+        use zeroize::Zeroize;
+        secret.zeroize();
+    }
+    let payload = zeroize::Zeroizing::new(
+        serialized.map_err(|_| ApiError::bad_request("Provider 配置格式无效"))?,
+    );
     let reply = match config_rpc(&state, &payload).await {
         Ok(reply) => reply,
         Err(error) => {
@@ -525,6 +545,205 @@ pub async fn chat(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{
+        body::{to_bytes, Body},
+        http::{Request, StatusCode},
+        Router,
+    };
+    use tower::ServiceExt;
+
+    fn state(temp: &std::path::Path, insecure: bool, fake_tls: bool) -> Arc<AppState> {
+        let mut config = crate::config::Config::from_toml("").unwrap();
+        config.agent_config_socket = temp.join("config.sock");
+        if fake_tls {
+            config.tls_cert = Some(temp.join("unused-cert"));
+            config.tls_key = Some(temp.join("unused-key"));
+        }
+        Arc::new(AppState {
+            config,
+            audit: crate::audit::AuditLog::new(&temp.join("audit.jsonl")),
+            sessions: crate::auth::SessionStore::new(3600, 600),
+            throttle: crate::auth::LoginThrottle::new(5),
+            metrics: crate::metrics::Sampler::new(2000, 60).shared(),
+            version: "test".into(),
+            started_ms: 0,
+            insecure_no_auth: insecure,
+        })
+    }
+    async fn http(
+        router: &Router,
+        method: &str,
+        path: &str,
+        session: Option<&crate::auth::Session>,
+        csrf: bool,
+        peer: &str,
+        body: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value) {
+        let mut request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("content-type", "application/json")
+            .extension(ConnectInfo(peer.parse::<std::net::SocketAddr>().unwrap()));
+        if let Some(session) = session {
+            request = request.header(
+                "cookie",
+                format!("{}={}", crate::auth::SESSION_COOKIE, session.id),
+            );
+            if csrf {
+                request = request.header(crate::auth::CSRF_HEADER, &session.csrf);
+            }
+        }
+        let response = router
+            .clone()
+            .oneshot(request.body(Body::from(body.to_string())).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        assert!(!String::from_utf8_lossy(&bytes).contains("SYNTHETIC_PROVIDER_KEY"));
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn admin_provider_http_save_list_activate_are_redacted_and_guarded() {
+        let temp = tempfile::Builder::new()
+            .prefix("depdek-provider-http-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let state = state(temp.path(), false, true);
+        let session = state.sessions.create("127.0.0.1");
+        let router = crate::api::router(state.clone());
+        let input = json!({"id":"synthetic","name":"Synthetic","base_url":"https://example.invalid/v1","protocol":"openai-completions","model":"model-test","api_key":"SYNTHETIC_PROVIDER_KEY_NOT_REAL"});
+        for (auth, csrf, peer, expected) in [
+            (None, false, "127.0.0.1:1234", StatusCode::UNAUTHORIZED),
+            (
+                Some(&session),
+                false,
+                "127.0.0.1:1234",
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                Some(&session),
+                true,
+                "192.0.2.1:1234",
+                StatusCode::FORBIDDEN,
+            ),
+        ] {
+            assert_eq!(
+                http(
+                    &router,
+                    "POST",
+                    "/api/agent/providers",
+                    auth,
+                    csrf,
+                    peer,
+                    input.clone()
+                )
+                .await
+                .0,
+                expected
+            );
+        }
+        assert_eq!(
+            http(
+                &router,
+                "POST",
+                "/api/agent/providers",
+                Some(&session),
+                true,
+                "127.0.0.1:1234",
+                input.clone()
+            )
+            .await
+            .0,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        let listener = tokio::net::UnixListener::bind(&state.config.agent_config_socket).unwrap();
+        let broker = tokio::spawn(async move {
+            for expected in ["save", "list", "activate"] {
+                let (stream, _) = listener.accept().await.unwrap();
+                use tokio::io::AsyncBufReadExt;
+                let mut reader = tokio::io::BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).await.unwrap();
+                let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(request["op"], expected);
+                if expected == "save" {
+                    assert_eq!(
+                        request["provider"]["api_key"],
+                        "SYNTHETIC_PROVIDER_KEY_NOT_REAL"
+                    );
+                }
+                let reply = json!({"ok":true,"restart_ok":true,"active_id":"synthetic","message":"loaded","providers":[{"id":"synthetic","name":"Synthetic","base_url":"https://example.invalid/v1","protocol":"openai-completions","model":"model-test","active":true,"configured":true}]});
+                reader
+                    .get_mut()
+                    .write_all(format!("{reply}\n").as_bytes())
+                    .await
+                    .unwrap();
+            }
+        });
+        for (method, path, input) in [
+            ("POST", "/api/agent/providers", input),
+            ("GET", "/api/agent/providers", json!(null)),
+            (
+                "POST",
+                "/api/agent/providers/activate",
+                json!({"id":"synthetic"}),
+            ),
+        ] {
+            let (status, reply) = http(
+                &router,
+                method,
+                path,
+                Some(&session),
+                true,
+                "127.0.0.1:1234",
+                input,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(reply["active_id"], "synthetic");
+            assert!(reply["providers"][0].get("api_key").is_none());
+        }
+        broker.await.unwrap();
+        let audit = std::fs::read_to_string(temp.path().join("audit.jsonl")).unwrap();
+        assert!(!audit.contains("SYNTHETIC_PROVIDER_KEY"));
+    }
+
+    #[tokio::test]
+    async fn insecure_mode_cannot_save_or_activate_provider() {
+        let temp = tempfile::tempdir().unwrap();
+        let router = crate::api::router(state(temp.path(), true, false));
+        let body = json!({"id":"synthetic","name":"Synthetic","base_url":"https://example.invalid/v1","protocol":"openai-completions","model":"model-test","api_key":"SYNTHETIC_PROVIDER_KEY_NOT_REAL"});
+        assert_eq!(
+            http(
+                &router,
+                "POST",
+                "/api/agent/providers",
+                None,
+                false,
+                "127.0.0.1:1234",
+                body
+            )
+            .await
+            .0,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            http(
+                &router,
+                "POST",
+                "/api/agent/providers/activate",
+                None,
+                false,
+                "127.0.0.1:1234",
+                json!({"id":"synthetic"})
+            )
+            .await
+            .0,
+            StatusCode::FORBIDDEN
+        );
+    }
 
     #[test]
     fn chat_defaults_to_wukong_and_accepts_only_known_room_members() {

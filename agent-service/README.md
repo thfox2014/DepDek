@@ -45,7 +45,7 @@ Webdesk 使用 `DynamicUser`，通过 `depdek-agent` 组访问聊天 socket，�
 ## 信任边界
 
 - 聊天服务监听本机 Unix socket，不暴露 TCP 端口；Provider 配置 broker 使用另一只本机 socket，仅 Webdesk 专属组可访问。
-- `/etc/depdek/agent.env` 为 root-only；API Key 经登录和 CSRF 校验、TLS（或本机回环）后由 Webdesk 短暂转发至配置 broker，日志、列表和 API 响应均不含密钥。
+- `/etc/depdek/agent.env` 为 root-only；API Key 经登录和 CSRF 校验后由 Webdesk 短暂转发至配置 broker，日志、列表和 API 响应均不含密钥。当前监听器不直接提供 TLS，远端配置密钥须使用受信 HTTPS 反向代理连接本机回环；不能仅填写 TLS 配置字段就认为 HTTP 已加密。
 - 每个请求用短生命周期、`0700` 临时工作目录；dsh 子进程只获得当前 Provider 的 API Key、模型、隔离目录和代理网络环境。
 - dsh 以 `--profile headless` 启动，并应用禁用 fs/bash/web/sub-agent/workflow 的 patch；工作目录之外的 DepDek 数据不可用。
 - Harness 的隐藏链式思维不回传。Webdesk 显示的是执行中状态和最终 Markdown 回复。
@@ -54,10 +54,25 @@ Webdesk 使用 `DynamicUser`，通过 `depdek-agent` 组访问聊天 socket，�
 
 ## 本地调试
 
+macOS 等没有 systemd 的环境，可显式启用非 root 私有配置模式。先创建两个当前用户拥有、权限为 `0700` 的目录（例如用 `mktemp -d` 得到路径）。设 `DEPDEK_LOCAL_CONFIG_DIR` 为配置目录、`DEPDEK_LOCAL_RUNTIME_DIR` 为 socket 目录；配置文件名固定为 `agent.env`，不存在时允许从空列表启动：
+
 ```bash
-DEPDEK_AGENT_SOCKET=/tmp/depdek-agent/agent.sock \
-DEEPSEEK_API_KEY=... DEPDEK_DSH_COMMAND="$(command -v dsh)" \
-cargo run --release
+DEPDEK_AGENT_LOCAL_ENV_PATH="$DEPDEK_LOCAL_CONFIG_DIR/agent.env" \
+DEPDEK_AGENT_SOCKET="$DEPDEK_LOCAL_RUNTIME_DIR/agent.sock" \
+DEPDEK_DSH_COMMAND="$(command -v dsh)" \
+agent-service/target/release/depdek-agent
 ```
 
-Webdesk `webdesk.toml` 可设置 `agent_socket = "/tmp/depdek-agent/agent.sock"`；如需以同一 Unix 用户访问，开发模式可直接运行二者。切勿使用 `--insecure-no-auth` 将开发实例暴露至局域网。
+另一个终端启动写入服务：
+
+```bash
+DEPDEK_AGENT_CONFIG_MODE=local-private \
+DEPDEK_AGENT_ENV_PATH="$DEPDEK_LOCAL_CONFIG_DIR/agent.env" \
+DEPDEK_AGENT_CONFIG_SOCKET="$DEPDEK_LOCAL_RUNTIME_DIR/config.sock" \
+DEPDEK_AGENT_CONFIG_APPLY_SOCKET="$DEPDEK_LOCAL_RUNTIME_DIR/agent.sock" \
+agent-service/target/release/depdek-agent-config
+```
+
+Webdesk 的 `agent_socket`、`agent_config_socket` 分别填写上述两个实际 socket 的绝对路径，并启用管理员登录。三项服务以同一 Unix 用户运行，Webdesk 绑定 `127.0.0.1`。保存后配置服务仅用固定的 `status` 请求确认执行器已载入所选 Provider，不发起模型测试或产生云端费用。执行器每轮读取最新快照，不需要 `systemctl restart`。
+
+本机模式的固定文件读写与权限、别名和审计校验在 Rust Vault 边界中完成；`agent.env` 为 `0600`，符号链接、硬链接、宽松权限或不可写审计均拒绝。它是旧执行器的私有明文/base64 配置兼容模式，**不是加密 Secret Store**，也不会自动迁移现有凭据。正常 SIGTERM/Ctrl+C 会清理本实例 socket；异常终止留下 socket 时需显式确认进程已停止后恢复，不能覆盖其他文件。生产 Linux 仍使用 root broker + systemd，不要将本机开发模式暴露到局域网。

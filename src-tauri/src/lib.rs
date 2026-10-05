@@ -9,6 +9,8 @@ pub mod audit;
 pub mod memory;
 pub mod obsidian;
 pub mod rpc;
+#[cfg(unix)]
+pub mod secrets;
 pub mod settings;
 pub mod storage;
 pub mod vault;
@@ -24,7 +26,5 @@ pub fn run() {
 
 #[cfg(not(feature = "tauri-app"))]
 pub fn run() {
-    eprintln!(
-        "agent-workbench: built without the `tauri-app` feature (library/test build only)"
-    );
+    eprintln!("agent-workbench: built without the `tauri-app` feature (library/test build only)");
 }

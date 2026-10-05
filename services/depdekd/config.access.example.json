@@ -1,0 +1,13 @@
+{
+  "workspace_id": "family-demo",
+  "root": "/srv/depdek/demo-workspace",
+  "read_paths": ["documents"],
+  "socket": "/run/user/1000/depdekd/command.sock",
+  "access_users": [
+    {
+      "principal_id": "alice",
+      "password_hash": "<replace-with-PHC-output-of-depdek-auth-hash-password>",
+      "read_paths": ["documents/alice"]
+    }
+  ]
+}

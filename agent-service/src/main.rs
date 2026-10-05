@@ -24,6 +24,8 @@ const MAX_HISTORY_CHARS: usize = 14_000;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static RUN_LIMIT: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+static LOCAL_CONFIGURATION: std::sync::OnceLock<agent_workbench_lib::vault::LocalAgentEnvFile> =
+    std::sync::OnceLock::new();
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -72,16 +74,41 @@ struct Reply {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if let Some(path) = depdek_agent::local_config::local_path() {
+        let file = agent_workbench_lib::vault::LocalAgentEnvFile::open(&path, false)?;
+        depdek_agent::local_config::parse_snapshot(&file.read()?).map_err(anyhow::Error::msg)?;
+        LOCAL_CONFIGURATION
+            .set(file)
+            .map_err(|_| anyhow::anyhow!("local config already initialized"))?;
+    }
     let socket = std::env::var_os("DEPDEK_AGENT_SOCKET")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/run/depdek-agent/agent.sock"));
+    let local = LOCAL_CONFIGURATION.get().is_some();
+    if local {
+        agent_workbench_lib::vault::validate_private_service_directory(
+            socket
+                .parent()
+                .context("private socket directory required")?,
+        )?;
+        if std::fs::symlink_metadata(&socket).is_ok() {
+            bail!("local agent socket already exists; explicit recovery required");
+        }
+    }
     prepare_socket(&socket)?;
     let listener = UnixListener::bind(&socket)
         .with_context(|| format!("无法监听 Agent socket：{}", socket.display()))?;
+    let _local_socket = if local {
+        Some(agent_workbench_lib::vault::PrivateServiceSocketGuard::attach(&socket)?)
+    } else {
+        None
+    };
     eprintln!("[depdek-agent] listening on {}", socket.display());
 
     let shutdown = async {
-        let _ = tokio::signal::ctrl_c().await;
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("SIGTERM handler");
+        tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = term.recv() => {} }
     };
     tokio::pin!(shutdown);
     loop {
@@ -98,7 +125,9 @@ async fn main() -> Result<()> {
         }
     }
     drop(listener);
-    let _ = std::fs::remove_file(socket);
+    if !local {
+        let _ = std::fs::remove_file(socket);
+    }
     Ok(())
 }
 
@@ -129,6 +158,11 @@ fn prepare_socket(socket: &Path) -> Result<()> {
 }
 
 async fn handle_connection(mut stream: UnixStream) -> Result<()> {
+    if LOCAL_CONFIGURATION.get().is_some()
+        && stream.peer_cred()?.uid() != unsafe { libc::geteuid() }
+    {
+        return Ok(());
+    }
     let mut line = Vec::with_capacity(2048);
     let mut chunk = [0u8; 2048];
     loop {
@@ -168,8 +202,19 @@ async fn write_reply(stream: &mut UnixStream, reply: Reply) -> Result<()> {
 }
 
 async fn dispatch(request: Request) -> Reply {
-    let profiles = provider_profiles();
-    let active_id = active_provider_id(&profiles);
+    let (profiles, active_id) =
+        if let Some(file) = LOCAL_CONFIGURATION.get() {
+            match file.read().map_err(|_| ()).and_then(|bytes| {
+                depdek_agent::local_config::parse_snapshot(&bytes).map_err(|_| ())
+            }) {
+                Ok(snapshot) => snapshot,
+                Err(_) => return error_reply("本机 Provider 私有配置不可用；请检查配置服务与权限"),
+            }
+        } else {
+            let profiles = provider_profiles();
+            let active = active_provider_id(&profiles);
+            (profiles, active)
+        };
     let active = profiles.iter().find(|profile| profile.id == active_id);
     let model = active
         .map(|profile| profile.model.clone())

@@ -450,7 +450,7 @@ export default function Agent() {
               </div>
               <div className="agent-provider-form__actions"><button className="agent-provider-cancel" onClick={() => { setProviderFormOpen(false); setProviderDraft({ ...EMPTY_PROVIDER }); setEditingProviderId(null); }}>取消</button><button className="agent-provider-save" disabled={savingProvider || !providerDraft.id.trim() || !providerDraft.name.trim() || !providerDraft.model.trim() || !providerDraft.base_url.trim() || (!editingProviderId && !providerDraft.api_key)} onClick={() => void saveProvider()}>{savingProvider ? "安全保存中…" : "保存并启用"}</button></div>
             </div> : <button className="agent-config__copy" onClick={() => editProvider()}><span>添加模型 Provider</span><b>＋ 新增</b></button>}
-            <div className="agent-config__security"><span>盾</span><p>密钥由专用配置服务写入 <code>/etc/depdek/agent.env</code>（仅 root 可读），Webdesk 不持有文件写权限。仅显示已配置状态；密钥保存后立即清空表单。</p></div>
+            <div className="agent-config__security"><span>盾</span><p>管理员登录后由专用配置服务保存密钥；Webdesk 不直接写密钥文件，不提供读取接口。保存成功后密钥立即从表单清空。</p></div>
           </div>}
         </section>
       </div>}

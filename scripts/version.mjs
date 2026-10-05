@@ -37,6 +37,8 @@ const paths = {
   spaceCargoLock: join(repoRoot, "space-service", "Cargo.lock"),
   agentCargoToml: join(repoRoot, "agent-service", "Cargo.toml"),
   agentCargoLock: join(repoRoot, "agent-service", "Cargo.lock"),
+  daemonCargoToml: join(repoRoot, "services", "depdekd", "Cargo.toml"),
+  daemonCargoLock: join(repoRoot, "services", "depdekd", "Cargo.lock"),
 };
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/;
@@ -44,6 +46,7 @@ const CARGO_PACKAGE_NAME = "agent-workbench";
 const WEBDESK_CARGO_PACKAGE_NAME = "depdek-webdesk";
 const SPACE_CARGO_PACKAGE_NAME = "depdek-space";
 const AGENT_CARGO_PACKAGE_NAME = "depdek-agent";
+const DAEMON_CARGO_PACKAGE_NAME = "depdekd";
 
 function fail(message) {
   console.error(`✗ ${message}`);
@@ -86,10 +89,16 @@ function collectManifests() {
     { label: "src-tauri/Cargo.lock", current: cargoLockVersion(paths.cargoLock, CARGO_PACKAGE_NAME) },
     { label: "webdesk/Cargo.toml", current: cargoTomlVersion(paths.webdeskCargoToml, "webdesk/Cargo.toml") },
     { label: "webdesk/Cargo.lock", current: cargoLockVersion(paths.webdeskCargoLock, WEBDESK_CARGO_PACKAGE_NAME) },
+    { label: "webdesk/Cargo.lock (test Rust core)", current: cargoLockVersion(paths.webdeskCargoLock, CARGO_PACKAGE_NAME) },
+    { label: "webdesk/Cargo.lock (test daemon)", current: cargoLockVersion(paths.webdeskCargoLock, DAEMON_CARGO_PACKAGE_NAME) },
     { label: "space-service/Cargo.toml", current: cargoTomlVersion(paths.spaceCargoToml, "space-service/Cargo.toml") },
     { label: "space-service/Cargo.lock", current: cargoLockVersion(paths.spaceCargoLock, SPACE_CARGO_PACKAGE_NAME) },
     { label: "agent-service/Cargo.toml", current: cargoTomlVersion(paths.agentCargoToml, "agent-service/Cargo.toml") },
     { label: "agent-service/Cargo.lock", current: cargoLockVersion(paths.agentCargoLock, AGENT_CARGO_PACKAGE_NAME) },
+    { label: "agent-service/Cargo.lock (Rust core)", current: cargoLockVersion(paths.agentCargoLock, CARGO_PACKAGE_NAME) },
+    { label: "services/depdekd/Cargo.toml", current: cargoTomlVersion(paths.daemonCargoToml, "services/depdekd/Cargo.toml") },
+    { label: "services/depdekd/Cargo.lock", current: cargoLockVersion(paths.daemonCargoLock, DAEMON_CARGO_PACKAGE_NAME) },
+    { label: "services/depdekd/Cargo.lock (Rust core)", current: cargoLockVersion(paths.daemonCargoLock, CARGO_PACKAGE_NAME) },
   ];
 }
 
@@ -154,10 +163,16 @@ function writeVersion(version, dryRun) {
   writeCargoLockVersion(paths.cargoLock, CARGO_PACKAGE_NAME, version, dryRun);
   writeCargoTomlVersion(paths.webdeskCargoToml, version, dryRun);
   writeCargoLockVersion(paths.webdeskCargoLock, WEBDESK_CARGO_PACKAGE_NAME, version, dryRun);
+  writeCargoLockVersion(paths.webdeskCargoLock, CARGO_PACKAGE_NAME, version, dryRun);
+  writeCargoLockVersion(paths.webdeskCargoLock, DAEMON_CARGO_PACKAGE_NAME, version, dryRun);
   writeCargoTomlVersion(paths.spaceCargoToml, version, dryRun);
   writeCargoLockVersion(paths.spaceCargoLock, SPACE_CARGO_PACKAGE_NAME, version, dryRun);
   writeCargoTomlVersion(paths.agentCargoToml, version, dryRun);
   writeCargoLockVersion(paths.agentCargoLock, AGENT_CARGO_PACKAGE_NAME, version, dryRun);
+  writeCargoLockVersion(paths.agentCargoLock, CARGO_PACKAGE_NAME, version, dryRun);
+  writeCargoTomlVersion(paths.daemonCargoToml, version, dryRun);
+  writeCargoLockVersion(paths.daemonCargoLock, DAEMON_CARGO_PACKAGE_NAME, version, dryRun);
+  writeCargoLockVersion(paths.daemonCargoLock, CARGO_PACKAGE_NAME, version, dryRun);
 }
 
 function commandCheck() {
@@ -203,27 +218,40 @@ function prependChangelog(version, notes, dryRun) {
 }
 
 function commandBump(args) {
-  const level = args.find((arg) => !arg.startsWith("--"));
-  if (!level) fail("用法：npm run version:bump -- <patch|minor|major|X.Y.Z> [--note \"说明\"]");
-
+  let level;
+  let dryRun = false;
   const notes = [];
   for (let index = 0; index < args.length; index++) {
-    if (args[index] === "--note") {
+    const arg = args[index];
+    if (arg === "--note") {
       const value = args[index + 1];
-      if (!value) fail("--note 需要一个参数");
+      if (!value || value.startsWith("--")) fail("--note 需要一个参数");
       notes.push(value);
       index++;
+    } else if (arg === "--dry-run" && !dryRun) {
+      dryRun = true;
+    } else if (arg.startsWith("--")) {
+      fail(`未知或重复选项：${arg}`);
+    } else if (level === undefined) {
+      level = arg;
+    } else {
+      fail("只能指定一个版本级别");
     }
   }
+  if (!level) fail("用法：npm run version:bump -- <patch|minor|major|X.Y.Z> [--note \"说明\"] [--dry-run]");
 
   const current = readVersion();
   const next = nextVersion(current, level);
   if (next === current) fail(`新版本与当前版本相同：${current}`);
 
   console.log(`版本 ${current} → ${next}`);
-  writeVersion(next, false);
-  prependChangelog(next, notes, false);
+  writeVersion(next, dryRun);
+  prependChangelog(next, notes, dryRun);
   commandCheck();
+  if (dryRun) {
+    console.log("预览完成；未修改 VERSION、manifest、Cargo.lock 或 CHANGELOG。");
+    return;
+  }
   console.log("\n下一步：提交改动并打标签，例如 git commit -am \"release: v" + next + "\" && git tag v" + next);
 }
 

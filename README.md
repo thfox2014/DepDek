@@ -26,14 +26,20 @@ Node sidecar (sidecar/)  ──► pi-agent-core / pi-ai：多 agent 会话、�
 | `sidecar/` | Node sidecar：rpc.ts、tools.ts（vault 工具）、providers.ts、sessions.ts（pi-agent-core 会话管理） |
 | `src/` | React 前端：FolderPicker / FileTree / SessionList / ChatPanel / AuditViewer / SettingsPanel |
 | `webdesk/` | 远程 Web 管理控制台（独立 Rust 服务 + 内嵌 React 桌面）：系统性能监控、每应用资源占用、审计 |
+| `services/depdekd/` | V2 重构第一批：独立本机只读业务服务与 depdek CLI，复用 Rust Vault；尚未切换旧客户端 |
 | `docs/contract.md` | 三方接口契约 |
 | `docs/webdesk-design.md` | Webdesk 设计：架构、HTTP API、安全模型、指标归并规则、部署与路线图 |
 | `docs/workbench-ontology-design.md` | 企业与个人工作台本体设计：数据接入清洗、业务对象、关联解析、来源与治理（提案） |
 | `docs/agentos-product-definition.md` | DepDek AgentOS 产品定义：Debian NAS appliance、语音优先 Agent Shell、共享业务命令与系统路线 |
+| `docs/agentos-v2/README.md` | V2.0 工程设计包与实施记录：整体架构、接口/数据、重构计划及 R1 只读/可选加密凭据契约 |
 
 企业与个人统一数据层的后续方案见 [工作台本体与业务关联设计](docs/workbench-ontology-design.md)。该文档是架构提案，运行时接口仍以 `docs/contract.md` 为准。
 
 DepDek 后续产品方向、设备 OS 形态和 Shell 交互以 [AgentOS 产品定义](docs/agentos-product-definition.md) 为准；现有 V0.x 文档保留其兼容与实现历史。
+
+在现有代码基础上演进的工程方案见 [V2.0 AgentOS 架构设计包](docs/agentos-v2/README.md)。它保留 Vault 信任边界与本体语义，以家庭物品凭证/维修资料包为首发闭环；设计附件不是已发布接口。本批在契约 §9 登记增量只读入口，不改变旧桌面/sidecar 接口或软件版本。
+
+第一批重构已新增独立 `depdekd` + CLI，支持本机 owner 的受限文件查询与严格审计；尚无业务写入、模型调用或用户数据迁移。构建/测试见 [服务说明](services/depdekd/README.md)，完整进度见 [实施记录](docs/agentos-v2/implementation-status.md)。
 
 ### AI-OS 主页面（`VITE_DEPDEK_OS=1`）
 
@@ -77,6 +83,8 @@ npm run tauri dev           # 启动开发窗口（需已安装 webkit 系统依
 cd src-tauri && cargo test --no-default-features   # Rust：vault 安全 + 审计 + RPC 集成（无需 webkit）
 cd sidecar && npm test                             # sidecar：36 个测试（rpc/tools/events/sessions）
 npm run build                                      # 前端：版本校验 + tsc 类型检查 + vite 构建
+npm run daemon:test                                # R1 本机只读/凭据服务、真实 daemon + CLI 验收
+npm run daemon:build                               # release daemon + CLI（当前系统产物）
 ```
 
 ## 版本管理
@@ -99,6 +107,7 @@ npm run version:bump -- patch --note "修复…" --note "新增…"
 版本号同时会注入前端（`__APP_VERSION__`，见 `vite.config.ts`），显示在 AI-OS 主页面顶栏与
 右侧上下文面板、以及 DepDekHome 侧栏底部。发布流程：`version:bump` → 提交 → `git tag v<版本>`。
 `webdesk/Cargo.toml`、`webdesk/Cargo.lock`、`webdesk/web/package.json` 也由同一脚本同步。
+`space-service/`、`agent-service/` 与新增 `services/depdekd/` 的 manifest/lock 同样纳入该脚本；产品 V2 目标不意味着当前软件已发布为 2.0。
 
 ## Webdesk 远程管理
 

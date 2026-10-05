@@ -4,7 +4,7 @@
 //! console is a single file to deploy. During frontend work, `web_root` in the
 //! config serves the same tree from disk instead.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -81,7 +81,7 @@ async fn read_asset(web_root: Option<&PathBuf>, path: &str) -> Option<Response> 
 }
 
 /// Reject `..` traversal when serving from a development `web_root`.
-fn safe_join(root: &PathBuf, path: &str) -> Option<PathBuf> {
+fn safe_join(root: &Path, path: &str) -> Option<PathBuf> {
     if path.contains("..") {
         return None;
     }

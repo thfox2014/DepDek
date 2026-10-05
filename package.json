@@ -11,6 +11,8 @@
     "space:build": "cargo build --manifest-path space-service/Cargo.toml --release",
     "agent:test": "cargo test --manifest-path agent-service/Cargo.toml",
     "agent:build": "cargo build --manifest-path agent-service/Cargo.toml --release",
+    "daemon:test": "cargo test --manifest-path services/depdekd/Cargo.toml",
+    "daemon:build": "cargo build --manifest-path services/depdekd/Cargo.toml --release",
     "prepare:bundle": "npm run build && npm run build:sidecar && node scripts/prepare-sidecar.mjs",
     "preview": "vite preview",
     "tauri": "tauri",

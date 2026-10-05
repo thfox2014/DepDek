@@ -52,15 +52,11 @@ async fn wait_event(
     }
 }
 
-fn event_channel() -> (
-    agent_workbench_lib::rpc::EmitFn,
-    EventRx,
-) {
+fn event_channel() -> (agent_workbench_lib::rpc::EmitFn, EventRx) {
     let (tx, rx) = mpsc::channel::<(String, Value)>();
-    let emit: agent_workbench_lib::rpc::EmitFn =
-        Arc::new(move |event: &str, payload: Value| {
-            let _ = tx.send((event.to_string(), payload));
-        });
+    let emit: agent_workbench_lib::rpc::EmitFn = Arc::new(move |event: &str, payload: Value| {
+        let _ = tx.send((event.to_string(), payload));
+    });
     (emit, Mutex::new(rx))
 }
 
@@ -79,11 +75,7 @@ async fn mock_sidecar_vault_roundtrip() {
     vault.set_root(dir.path()).unwrap();
 
     let (emit, rx) = event_channel();
-    let sidecar = Sidecar::with_sidecar_path(
-        vault.clone(),
-        emit,
-        fixture_path("mock_sidecar.mjs"),
-    );
+    let sidecar = Sidecar::with_sidecar_path(vault.clone(), emit, fixture_path("mock_sidecar.mjs"));
     sidecar.start().await.expect("mock sidecar should spawn");
     assert!(sidecar.is_alive());
 
@@ -146,7 +138,10 @@ async fn mock_sidecar_vault_roundtrip() {
     while sidecar.is_alive() && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    assert!(!sidecar.is_alive(), "sidecar should be marked dead after exit");
+    assert!(
+        !sidecar.is_alive(),
+        "sidecar should be marked dead after exit"
+    );
 }
 
 /// Against the real built sidecar: unknown-session errors come back as
@@ -220,13 +215,16 @@ async fn real_sidecar_agent_flow() {
             && payload.get("type").and_then(Value::as_str) == Some("error")
     })
     .await;
-    let (_, payload) = ev
-        .unwrap_or_else(|| panic!("expected an agent error event for {session_id} within 90s"));
+    let (_, payload) =
+        ev.unwrap_or_else(|| panic!("expected an agent error event for {session_id} within 90s"));
     let message = payload
         .pointer("/data/message")
         .and_then(Value::as_str)
         .unwrap_or("");
-    assert!(!message.is_empty(), "error event without message: {payload}");
+    assert!(
+        !message.is_empty(),
+        "error event without message: {payload}"
+    );
 
     let _ = sidecar
         .request("agent/close_session", json!({"session_id": session_id}))

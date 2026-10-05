@@ -348,12 +348,14 @@ mod tests {
 
     #[test]
     fn top_processes_respects_sort_key() {
-        let mut metrics = Metrics::default();
-        metrics.processes = vec![
-            test_process(1, 5.0, 900),
-            test_process(2, 80.0, 10),
-            test_process(3, 1.0, 5_000),
-        ];
+        let metrics = Metrics {
+            processes: vec![
+                test_process(1, 5.0, 900),
+                test_process(2, 80.0, 10),
+                test_process(3, 1.0, 5_000),
+            ],
+            ..Metrics::default()
+        };
         assert_eq!(metrics.top_processes(SortKey::Cpu, 1)[0].pid, 2);
         assert_eq!(metrics.top_processes(SortKey::Memory, 1)[0].pid, 3);
         assert_eq!(

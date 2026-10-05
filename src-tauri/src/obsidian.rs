@@ -91,7 +91,7 @@ impl ObsidianStore {
             self.record(Op::List, "obsidian", false, None, None, Some(error.clone()));
             return Err(error);
         }
-        notes.sort_by(|a, b| a.path.to_lowercase().cmp(&b.path.to_lowercase()));
+        notes.sort_by_key(|note| note.path.to_lowercase());
         self.record(Op::List, "obsidian", true, None, None, None);
         Ok(ObsidianListResult { notes })
     }

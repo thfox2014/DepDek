@@ -41,7 +41,11 @@ pub fn validate_pcm_wav(wav: &[u8]) -> Result<(), String> {
         return Err("仅支持 16 kHz 单声道 PCM 录音".into());
     }
     let data_len = u32_at(40) as usize;
-    if data_len == 0 || data_len % 2 != 0 || data_len + 44 != wav.len() || u32_at(4) as usize + 8 != wav.len() {
+    if data_len == 0
+        || !data_len.is_multiple_of(2)
+        || data_len + 44 != wav.len()
+        || u32_at(4) as usize + 8 != wav.len()
+    {
         return Err("录音 WAV 长度不一致".into());
     }
     Ok(())

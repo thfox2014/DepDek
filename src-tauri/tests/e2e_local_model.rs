@@ -44,12 +44,8 @@ fn endpoint_reachable() -> bool {
     let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_secs(3)) else {
         return false;
     };
-    stream
-        .set_read_timeout(Some(Duration::from_secs(3)))
-        .ok();
-    stream
-        .set_write_timeout(Some(Duration::from_secs(3)))
-        .ok();
+    stream.set_read_timeout(Some(Duration::from_secs(3))).ok();
+    stream.set_write_timeout(Some(Duration::from_secs(3))).ok();
     if stream
         .write_all(b"GET /v1/models HTTP/1.0\r\nHost: localhost:8080\r\n\r\n")
         .is_err()
@@ -192,16 +188,16 @@ async fn e2e_local_model_agent_reads_and_writes() {
     for entry in &entries {
         eprintln!("[audit] {entry:?}");
     }
-    let read_entry = entries.iter().find(|e| {
-        e.session_id == SESSION_ID && e.op == Op::Read && e.path == "poem.txt"
-    });
+    let read_entry = entries
+        .iter()
+        .find(|e| e.session_id == SESSION_ID && e.op == Op::Read && e.path == "poem.txt");
     assert!(
         read_entry.is_some_and(|e| e.ok),
         "missing successful audit entry for read poem.txt: {entries:?}"
     );
-    let write_entry = entries.iter().find(|e| {
-        e.session_id == SESSION_ID && e.op == Op::Write && e.path == "summary.txt"
-    });
+    let write_entry = entries
+        .iter()
+        .find(|e| e.session_id == SESSION_ID && e.op == Op::Write && e.path == "summary.txt");
     assert!(
         write_entry.is_some_and(|e| e.ok && e.sha256.is_some()),
         "missing successful audit entry (with sha256) for write summary.txt: {entries:?}"

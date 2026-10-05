@@ -950,6 +950,1526 @@ fn search_dir(dir: &Path, root: &Path, query: &str, matches: &mut Vec<SearchMatc
     }
 }
 
+// ----------------------------------------------------------------------
+// AgentOS R1: a deliberately narrow, descriptor-relative read capability.
+// It is separate from the v1 API so stronger rules do not break legacy Home
+// operations. All managed data checks remain in this Vault module.
+// ----------------------------------------------------------------------
+
+#[cfg(unix)]
+pub const MANAGED_MAX_TEXT_BYTES: usize = 128 * 1024;
+#[cfg(unix)]
+pub const MANAGED_MAX_LIST_ENTRIES: usize = 100;
+#[cfg(unix)]
+const MANAGED_MAX_DIRECTORY_SCAN: usize = 5_000;
+
+#[cfg(unix)]
+#[derive(Debug, Error)]
+pub enum ManagedReadError {
+    #[error("resource is not visible in this read capability")]
+    Forbidden,
+    #[error("resource not found")]
+    NotFound,
+    #[error("policy revision changed")]
+    PolicyChanged,
+    #[error("managed read limit exceeded")]
+    TooLarge,
+    #[error("resource is not UTF-8 text")]
+    NotUtf8,
+    #[error("invalid read parameters")]
+    InvalidInput,
+    #[error("durable audit unavailable; no data released")]
+    AuditUnavailable,
+    #[error("resource I/O unavailable")]
+    Io,
+}
+
+/// Constructed by the trusted transport from its peer identity, not decoded
+/// from client JSON. The authority is checked again at the Vault boundary.
+#[cfg(unix)]
+pub struct ReadAuthority {
+    principal_id: String,
+    workspace_id: String,
+    policy_revision: u64,
+    request_id: String,
+}
+
+#[cfg(unix)]
+impl ReadAuthority {
+    pub fn new(principal: &str, workspace: &str, policy_revision: u64, request_id: &str) -> Self {
+        Self {
+            principal_id: principal.into(),
+            workspace_id: workspace.into(),
+            policy_revision,
+            request_id: request_id.into(),
+        }
+    }
+}
+
+#[cfg(unix)]
+pub enum ManagedReadOperation {
+    Read { path: String },
+    List { path: String, limit: usize },
+    Stat { path: String },
+}
+
+/// Only the service-owned registered directories are visible; this type has
+/// no write, root mutation, binary read, search-all, or raw filesystem method.
+#[cfg(unix)]
+pub struct ManagedReadVault {
+    root: fs::File,
+    root_path: PathBuf,
+    workspace_id: String,
+    principal_id: String,
+    read_paths: Vec<String>,
+    audit: AuditLog,
+    access: std::sync::Mutex<access::AccessState>,
+}
+
+#[cfg(unix)]
+#[path = "vault/access.rs"]
+mod access;
+#[cfg(unix)]
+pub use access::{hash_business_password, AccessError, AccessUser, LoginInput};
+
+#[cfg(unix)]
+impl ManagedReadVault {
+    pub fn open(
+        root: &Path,
+        workspace_id: &str,
+        principal_id: &str,
+        read_paths: &[String],
+    ) -> Result<Self, ManagedReadError> {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        if !managed_id(workspace_id)
+            || !managed_id(principal_id)
+            || read_paths.is_empty()
+            || read_paths.len() > 32
+        {
+            return Err(ManagedReadError::InvalidInput);
+        }
+        let canonical = fs::canonicalize(root).map_err(managed_io_error)?;
+        let root_file = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&canonical)
+            .map_err(managed_io_error)?;
+        let mut paths = Vec::new();
+        for path in read_paths {
+            let norm = managed_normalize(path)?;
+            if norm.is_empty() || managed_protected(&norm) {
+                return Err(ManagedReadError::Forbidden);
+            }
+            let directory = managed_open_beneath(&root_file, &norm)?;
+            if !directory.metadata().map_err(managed_io_error)?.is_dir() {
+                return Err(ManagedReadError::InvalidInput);
+            }
+            paths.push(norm);
+        }
+        paths.sort();
+        paths.dedup();
+        // Opening via the held directory fd also protects the audit path
+        // from symlink substitutions between checking and opening it.
+        let audit_file = managed_open_at(
+            &root_file,
+            AUDIT_FILE_NAME,
+            libc::O_RDWR | libc::O_APPEND | libc::O_CREAT,
+            0o600,
+        )?;
+        let meta = audit_file.metadata().map_err(managed_io_error)?;
+        if !meta.is_file()
+            || meta.nlink() != 1
+            || meta.uid() != unsafe { libc::geteuid() }
+            || meta.mode() & 0o077 != 0
+        {
+            return Err(ManagedReadError::Forbidden);
+        }
+        managed_check_audit_tail(&audit_file, meta.len())?;
+        // Persist a newly-created audit directory entry before the first read
+        // can be released. Each record subsequently synchronizes its file.
+        root_file
+            .sync_all()
+            .map_err(|_| ManagedReadError::AuditUnavailable)?;
+        let audit = AuditLog::new();
+        audit.set_file(canonical.join(AUDIT_FILE_NAME), audit_file);
+        Ok(Self {
+            root: root_file,
+            root_path: canonical,
+            workspace_id: workspace_id.into(),
+            principal_id: principal_id.into(),
+            read_paths: paths,
+            audit,
+            access: std::sync::Mutex::new(access::AccessState::default()),
+        })
+    }
+
+    pub fn open_secret_files(&self, directory: &Path) -> Result<SecretFiles, SecretFileError> {
+        SecretFiles::open(
+            directory,
+            &self.root_path,
+            &self.workspace_id,
+            &self.principal_id,
+        )
+    }
+
+    pub fn execute(
+        &self,
+        authority: &ReadAuthority,
+        operation: ManagedReadOperation,
+    ) -> Result<serde_json::Value, ManagedReadError> {
+        self.execute_scoped(authority, operation, &self.read_paths, false)
+    }
+
+    fn execute_scoped(
+        &self,
+        authority: &ReadAuthority,
+        operation: ManagedReadOperation,
+        scopes: &[String],
+        delegated: bool,
+    ) -> Result<serde_json::Value, ManagedReadError> {
+        let (op, path) = match &operation {
+            ManagedReadOperation::Read { path } => (Op::Read, path.as_str()),
+            ManagedReadOperation::List { path, .. } => (Op::List, path.as_str()),
+            ManagedReadOperation::Stat { path } => (Op::Stat, path.as_str()),
+        };
+        let result = (|| {
+            if (!delegated && authority.principal_id != self.principal_id)
+                || authority.workspace_id != self.workspace_id
+                || !managed_id(&authority.request_id)
+            {
+                return Err(ManagedReadError::Forbidden);
+            }
+            if authority.policy_revision != 1 {
+                return Err(ManagedReadError::PolicyChanged);
+            }
+            let norm = self.visible_scoped(path, scopes)?;
+            let file = managed_open_beneath(&self.root, &norm)?;
+            match &operation {
+                ManagedReadOperation::Read { .. } => self.read_text(file),
+                ManagedReadOperation::List { limit, .. } => self.list(file, &norm, *limit, scopes),
+                ManagedReadOperation::Stat { .. } => {
+                    let meta = managed_regular_metadata(&file)?;
+                    let modified_ms = meta
+                        .modified()
+                        .map_err(managed_io_error)?
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+                    Ok((
+                        serde_json::json!({"kind": if meta.is_dir() {"dir"} else {"file"},
+                        "size": if meta.is_dir() {0} else {meta.len()}, "modified_ms": modified_ms}),
+                        None,
+                        None,
+                    ))
+                }
+            }
+        })();
+        let mut entry = AuditEntry::new(
+            &format!("v2:{}:{}", authority.principal_id, authority.request_id),
+            op,
+            &path.chars().take(1024).collect::<String>(),
+        );
+        match &result {
+            Ok((_, sha, size)) => {
+                entry.ok = true;
+                entry.sha256 = sha.clone();
+                entry.size = *size;
+            }
+            Err(error) => entry.error = Some(error.to_string()),
+        }
+        self.audit
+            .record_durable(entry)
+            .map_err(|_| ManagedReadError::AuditUnavailable)?;
+        result.map(|(value, _, _)| value)
+    }
+
+    fn visible_path(&self, path: &str) -> Result<String, ManagedReadError> {
+        let norm = managed_normalize(path)?;
+        if managed_protected(&norm)
+            || !self
+                .read_paths
+                .iter()
+                .any(|prefix| norm == *prefix || norm.starts_with(&format!("{prefix}/")))
+        {
+            return Err(ManagedReadError::Forbidden);
+        }
+        Ok(norm)
+    }
+
+    fn visible_scoped(&self, path: &str, scopes: &[String]) -> Result<String, ManagedReadError> {
+        let norm = self.visible_path(path)?;
+        if !scopes
+            .iter()
+            .any(|scope| norm == *scope || norm.starts_with(&format!("{scope}/")))
+        {
+            return Err(ManagedReadError::Forbidden);
+        }
+        Ok(norm)
+    }
+
+    fn read_text(
+        &self,
+        file: fs::File,
+    ) -> Result<(serde_json::Value, Option<String>, Option<u64>), ManagedReadError> {
+        use std::io::Read;
+        let meta = managed_regular_metadata(&file)?;
+        if !meta.is_file() {
+            return Err(ManagedReadError::InvalidInput);
+        }
+        if meta.len() > MANAGED_MAX_TEXT_BYTES as u64 {
+            return Err(ManagedReadError::TooLarge);
+        }
+        let mut bytes = Vec::new();
+        file.take((MANAGED_MAX_TEXT_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .map_err(managed_io_error)?;
+        if bytes.len() > MANAGED_MAX_TEXT_BYTES {
+            return Err(ManagedReadError::TooLarge);
+        }
+        let size = bytes.len() as u64;
+        let sha = sha256_hex(&bytes);
+        let content = String::from_utf8(bytes).map_err(|_| ManagedReadError::NotUtf8)?;
+        Ok((
+            serde_json::json!({"content":content,"size":size,"sha256":sha}),
+            Some(sha),
+            Some(size),
+        ))
+    }
+
+    fn list(
+        &self,
+        file: fs::File,
+        norm: &str,
+        limit: usize,
+        scopes: &[String],
+    ) -> Result<(serde_json::Value, Option<String>, Option<u64>), ManagedReadError> {
+        use std::ffi::CStr;
+        use std::os::fd::{FromRawFd, IntoRawFd};
+        if limit == 0 || limit > MANAGED_MAX_LIST_ENTRIES {
+            return Err(ManagedReadError::InvalidInput);
+        }
+        if !file.metadata().map_err(managed_io_error)?.is_dir() {
+            return Err(ManagedReadError::InvalidInput);
+        }
+        let fd = file.try_clone().map_err(managed_io_error)?.into_raw_fd();
+        let ptr = unsafe { libc::fdopendir(fd) };
+        if ptr.is_null() {
+            unsafe {
+                drop(fs::File::from_raw_fd(fd));
+            }
+            return Err(ManagedReadError::Io);
+        }
+        struct Directory(*mut libc::DIR);
+        impl Drop for Directory {
+            fn drop(&mut self) {
+                unsafe {
+                    libc::closedir(self.0);
+                }
+            }
+        }
+        let directory = Directory(ptr);
+        let mut entries = Vec::new();
+        let mut scanned = 0usize;
+        let mut truncated = false;
+        loop {
+            errno::set_errno(errno::Errno(0));
+            let next = unsafe { libc::readdir(directory.0) };
+            if next.is_null() {
+                if errno::errno().0 != 0 {
+                    return Err(ManagedReadError::Io);
+                }
+                break;
+            }
+            scanned += 1;
+            if scanned > MANAGED_MAX_DIRECTORY_SCAN {
+                truncated = true;
+                break;
+            }
+            let name = unsafe { CStr::from_ptr((*next).d_name.as_ptr()) };
+            let Ok(name) = name.to_str() else {
+                continue;
+            };
+            if self
+                .visible_scoped(&format!("{norm}/{name}"), scopes)
+                .is_err()
+                || name == "."
+                || name == ".."
+            {
+                continue;
+            }
+            let Ok(child) = managed_open_at(&file, name, libc::O_RDONLY | libc::O_NONBLOCK, 0)
+            else {
+                continue;
+            };
+            let Ok(meta) = managed_regular_metadata(&child) else {
+                continue;
+            };
+            entries.push(DirEntryInfo {
+                name: name.into(),
+                kind: if meta.is_dir() {
+                    EntryKind::Dir
+                } else {
+                    EntryKind::File
+                },
+                size: if meta.is_dir() { 0 } else { meta.len() },
+            });
+        }
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        truncated |= entries.len() > limit;
+        entries.truncate(limit);
+        Ok((
+            serde_json::json!({"entries":entries,"truncated":truncated,"coverage":"bounded_live_directory"}),
+            None,
+            None,
+        ))
+    }
+}
+
+#[cfg(unix)]
+fn managed_check_audit_tail(file: &fs::File, length: u64) -> Result<(), ManagedReadError> {
+    use std::os::unix::fs::FileExt;
+    if length == 0 {
+        return Ok(());
+    }
+    // A previous partial append must not be silently continued after restart.
+    // Inspect only the last bounded record; this is not historical validation.
+    let size = length.min(64 * 1024) as usize;
+    let offset = length - size as u64;
+    let mut tail = vec![0u8; size];
+    file.read_exact_at(&mut tail, offset)
+        .map_err(|_| ManagedReadError::AuditUnavailable)?;
+    if tail.last() != Some(&b'\n') {
+        return Err(ManagedReadError::AuditUnavailable);
+    }
+    let start = match tail[..size - 1].iter().rposition(|b| *b == b'\n') {
+        Some(index) => index + 1,
+        None if offset == 0 => 0,
+        None => return Err(ManagedReadError::AuditUnavailable),
+    };
+    serde_json::from_slice::<AuditEntry>(&tail[start..size - 1])
+        .map_err(|_| ManagedReadError::AuditUnavailable)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn managed_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_.:".contains(&b))
+}
+
+#[cfg(unix)]
+fn managed_normalize(path: &str) -> Result<String, ManagedReadError> {
+    if path.len() > 1024 || path.contains('\0') || path.contains('\\') {
+        return Err(ManagedReadError::InvalidInput);
+    }
+    normalize(path).map_err(|_| ManagedReadError::Forbidden)
+}
+
+#[cfg(unix)]
+fn managed_protected(norm: &str) -> bool {
+    if norm.is_empty() {
+        return true;
+    }
+    norm.split('/').any(|part| {
+        let part = part.to_ascii_lowercase();
+        part.starts_with('.')
+            || matches!(
+                part.as_str(),
+                "mydata"
+                    | "myinfo"
+                    | "agents"
+                    | "mail"
+                    | "calendar"
+                    | "todo"
+                    | "tasks"
+                    | "memory"
+                    | "audit"
+                    | "indexes"
+                    | "staging"
+                    | "originals"
+                    | "accounts.json"
+                    | "settings.json"
+                    | "credentials.json"
+                    | "agent.env"
+                    | "credentials.enc"
+                    | "secret-store"
+                    | "secrets"
+            )
+            || [
+                ".sqlite",
+                ".sqlite3",
+                ".db",
+                ".sqlite-wal",
+                ".sqlite-shm",
+                ".sqlite-journal",
+                ".db-wal",
+                ".db-shm",
+                ".env",
+                ".pem",
+                ".key",
+            ]
+            .iter()
+            .any(|suffix| part.ends_with(suffix))
+    })
+}
+
+#[cfg(unix)]
+fn managed_io_error(error: io::Error) -> ManagedReadError {
+    match error.raw_os_error() {
+        Some(libc::ENOENT) => ManagedReadError::NotFound,
+        Some(libc::ELOOP) | Some(libc::EMLINK) | Some(libc::EACCES) | Some(libc::EPERM) => {
+            ManagedReadError::Forbidden
+        }
+        _ => ManagedReadError::Io,
+    }
+}
+
+#[cfg(unix)]
+fn managed_open_at(
+    directory: &fs::File,
+    name: &str,
+    flags: i32,
+    mode: u32,
+) -> Result<fs::File, ManagedReadError> {
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    let name = CString::new(name).map_err(|_| ManagedReadError::InvalidInput)?;
+    // Every component is opened relative to a held descriptor. No full path
+    // is reopened after validation, including the last read/stat/list step.
+    let fd = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            flags | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
+            mode as libc::c_uint,
+        )
+    };
+    if fd < 0 {
+        return Err(managed_io_error(io::Error::last_os_error()));
+    }
+    Ok(unsafe { fs::File::from_raw_fd(fd) })
+}
+
+#[cfg(unix)]
+fn managed_open_beneath(root: &fs::File, norm: &str) -> Result<fs::File, ManagedReadError> {
+    let mut directory = root.try_clone().map_err(managed_io_error)?;
+    let parts: Vec<_> = norm.split('/').collect();
+    for (i, name) in parts.iter().enumerate() {
+        if name.is_empty() || *name == "." || *name == ".." {
+            return Err(ManagedReadError::Forbidden);
+        }
+        let flags = libc::O_RDONLY
+            | if i + 1 < parts.len() {
+                libc::O_DIRECTORY
+            } else {
+                0
+            };
+        directory = managed_open_at(&directory, name, flags, 0)?;
+    }
+    Ok(directory)
+}
+
+#[cfg(unix)]
+fn managed_regular_metadata(file: &fs::File) -> Result<fs::Metadata, ManagedReadError> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = file.metadata().map_err(managed_io_error)?;
+    if !meta.is_file() && !meta.is_dir() {
+        return Err(ManagedReadError::Forbidden);
+    }
+    if meta.is_file() && meta.nlink() != 1 {
+        return Err(ManagedReadError::Forbidden);
+    }
+    Ok(meta)
+}
+
+// Secret Store has its own, disjoint private directory. All filesystem and
+// authority checks stay here; secrets.rs receives only opaque bounded bytes.
+#[cfg(unix)]
+pub const MAX_SECRET_FILE_BYTES: usize = 2 * 1024 * 1024;
+
+#[cfg(unix)]
+#[derive(Debug, Error)]
+pub enum SecretFileError {
+    #[error("private credential storage is not authorized")]
+    Forbidden,
+    #[error("private credential storage is already in use")]
+    Busy,
+    #[error("private credential storage unavailable")]
+    Unavailable,
+    #[error("credential commit outcome requires verification")]
+    CommitUnknown,
+    #[error("credential audit unavailable")]
+    AuditUnavailable,
+}
+
+#[cfg(unix)]
+pub struct SecretFiles {
+    directory: fs::File,
+    _lock: fs::File,
+    workspace_id: String,
+    principal_id: String,
+    audit: AuditLog,
+    #[cfg(test)]
+    save_fault: std::sync::atomic::AtomicU8,
+    #[cfg(test)]
+    audit_fail_after: std::sync::atomic::AtomicU8,
+}
+
+#[cfg(unix)]
+impl SecretFiles {
+    fn open(
+        path: &Path,
+        data_root: &Path,
+        workspace: &str,
+        principal: &str,
+    ) -> Result<Self, SecretFileError> {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::OpenOptionsExt;
+        if !path.is_absolute() || !managed_id(workspace) || !managed_id(principal) {
+            return Err(SecretFileError::Forbidden);
+        }
+        let leaf = fs::symlink_metadata(path).map_err(|_| SecretFileError::Unavailable)?;
+        private_directory_meta(&leaf)?;
+        let canonical = fs::canonicalize(path).map_err(|_| SecretFileError::Unavailable)?;
+        if canonical.starts_with(data_root) || data_root.starts_with(&canonical) {
+            return Err(SecretFileError::Forbidden);
+        }
+        let directory = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&canonical)
+            .map_err(|_| SecretFileError::Unavailable)?;
+        private_directory_meta(
+            &directory
+                .metadata()
+                .map_err(|_| SecretFileError::Unavailable)?,
+        )?;
+        let lock = private_open(
+            &directory,
+            ".secret-store.lock",
+            libc::O_RDWR | libc::O_CREAT,
+        )?;
+        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            return Err(SecretFileError::Busy);
+        }
+        let audit_file = private_open(
+            &directory,
+            ".secret-audit.jsonl",
+            libc::O_RDWR | libc::O_APPEND | libc::O_CREAT,
+        )?;
+        managed_check_audit_tail(
+            &audit_file,
+            audit_file
+                .metadata()
+                .map_err(|_| SecretFileError::Unavailable)?
+                .len(),
+        )
+        .map_err(|_| SecretFileError::AuditUnavailable)?;
+        directory
+            .sync_all()
+            .map_err(|_| SecretFileError::Unavailable)?;
+        let audit = AuditLog::new();
+        audit.set_file(canonical.join(".secret-audit.jsonl"), audit_file);
+        Ok(Self {
+            directory,
+            _lock: lock,
+            workspace_id: workspace.into(),
+            principal_id: principal.into(),
+            audit,
+            #[cfg(test)]
+            save_fault: std::sync::atomic::AtomicU8::new(0),
+            #[cfg(test)]
+            audit_fail_after: std::sync::atomic::AtomicU8::new(0),
+        })
+    }
+
+    pub(crate) fn authorize(&self, authority: &ReadAuthority) -> Result<(), SecretFileError> {
+        if authority.workspace_id != self.workspace_id
+            || authority.principal_id != self.principal_id
+            || authority.policy_revision != 1
+            || !managed_id(&authority.request_id)
+        {
+            return Err(SecretFileError::Forbidden);
+        }
+        self.check_directory()
+    }
+
+    fn check_directory(&self) -> Result<(), SecretFileError> {
+        private_directory_meta(
+            &self
+                .directory
+                .metadata()
+                .map_err(|_| SecretFileError::Unavailable)?,
+        )
+    }
+
+    pub(crate) fn read_encrypted(&self) -> Result<Option<Vec<u8>>, SecretFileError> {
+        use std::io::Read;
+        self.check_directory()?;
+        let file = match private_open(&self.directory, "credentials.enc", libc::O_RDONLY) {
+            Ok(file) => file,
+            Err(SecretFileError::Unavailable) => {
+                // Check ENOENT independently, not by treating all failures as
+                // an empty store. Never overwrite corrupt/unauthorized data.
+                match managed_open_at(&self.directory, "credentials.enc", libc::O_RDONLY, 0) {
+                    Err(ManagedReadError::NotFound) => return Ok(None),
+                    _ => return Err(SecretFileError::Unavailable),
+                }
+            }
+            Err(error) => return Err(error),
+        };
+        if file
+            .metadata()
+            .map_err(|_| SecretFileError::Unavailable)?
+            .len()
+            > MAX_SECRET_FILE_BYTES as u64
+        {
+            return Err(SecretFileError::Unavailable);
+        }
+        let mut bytes = Vec::new();
+        file.take((MAX_SECRET_FILE_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .map_err(|_| SecretFileError::Unavailable)?;
+        if bytes.len() > MAX_SECRET_FILE_BYTES {
+            return Err(SecretFileError::Unavailable);
+        }
+        Ok(Some(bytes))
+    }
+
+    pub(crate) fn save_encrypted(&self, bytes: &[u8]) -> Result<(), SecretFileError> {
+        use std::ffi::CString;
+        use std::io::Write;
+        use std::os::fd::AsRawFd;
+        self.check_directory()?;
+        if bytes.is_empty() || bytes.len() > MAX_SECRET_FILE_BYTES {
+            return Err(SecretFileError::Unavailable);
+        }
+        match managed_open_at(&self.directory, "credentials.enc", libc::O_RDONLY, 0) {
+            Ok(file) => {
+                private_file_meta(&file.metadata().map_err(|_| SecretFileError::Unavailable)?)?
+            }
+            Err(ManagedReadError::NotFound) => {}
+            Err(_) => return Err(SecretFileError::Forbidden),
+        }
+        let mut random = [0u8; 16];
+        getrandom::fill(&mut random).map_err(|_| SecretFileError::Unavailable)?;
+        let suffix: String = random.iter().map(|b| format!("{b:02x}")).collect();
+        let name = format!(".encrypted-stage-{suffix}");
+        let mut file = private_open(
+            &self.directory,
+            &name,
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL,
+        )?;
+        file.write_all(bytes)
+            .and_then(|_| file.sync_all())
+            .map_err(|_| SecretFileError::Unavailable)?;
+        // Failed staging files contain ciphertext only and are preserved for
+        // explicit recovery; no broad cleanup or silent evidence deletion.
+        #[cfg(test)]
+        if self.save_fault.load(std::sync::atomic::Ordering::SeqCst) == 1 {
+            return Err(SecretFileError::Unavailable);
+        }
+        let src = CString::new(name).map_err(|_| SecretFileError::Unavailable)?;
+        let dst = CString::new("credentials.enc").unwrap();
+        if unsafe {
+            libc::renameat(
+                self.directory.as_raw_fd(),
+                src.as_ptr(),
+                self.directory.as_raw_fd(),
+                dst.as_ptr(),
+            )
+        } != 0
+        {
+            return Err(SecretFileError::Unavailable);
+        }
+        #[cfg(test)]
+        if self.save_fault.load(std::sync::atomic::Ordering::SeqCst) == 2 {
+            return Err(SecretFileError::CommitUnknown);
+        }
+        self.directory
+            .sync_all()
+            .map_err(|_| SecretFileError::CommitUnknown)
+    }
+
+    pub(crate) fn audit(
+        &self,
+        authority: &ReadAuthority,
+        action: &'static str,
+        ok: bool,
+        code: Option<&'static str>,
+    ) -> Result<(), SecretFileError> {
+        self.check_directory()?;
+        #[cfg(test)]
+        if self.audit_fail_after.fetch_update(
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+            |n| if n > 0 { Some(n - 1) } else { None },
+        ) == Ok(1)
+        {
+            let read_only = private_open(&self.directory, ".secret-audit.jsonl", libc::O_RDONLY)?;
+            self.audit.set_file(PathBuf::new(), read_only);
+        }
+        let mut entry = AuditEntry::new(
+            &format!("v2:{}:{}", self.principal_id, authority.request_id),
+            Op::Write,
+            action,
+        );
+        entry.ok = ok;
+        entry.error = code.map(str::to_owned);
+        self.audit
+            .record_durable(entry)
+            .map_err(|_| SecretFileError::AuditUnavailable)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_save_fault(&self, point: u8) {
+        self.save_fault
+            .store(point, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_audit_failure(&self, after: u8) {
+        self.audit_fail_after
+            .store(after, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[cfg(unix)]
+fn private_directory_meta(meta: &fs::Metadata) -> Result<(), SecretFileError> {
+    use std::os::unix::fs::MetadataExt;
+    if !meta.is_dir()
+        || meta.file_type().is_symlink()
+        || meta.uid() != unsafe { libc::geteuid() }
+        || meta.mode() & 0o077 != 0
+    {
+        return Err(SecretFileError::Forbidden);
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+pub fn validate_private_service_directory(path: &Path) -> Result<(), SecretFileError> {
+    if !path.is_absolute() {
+        return Err(SecretFileError::Forbidden);
+    }
+    private_directory_meta(&fs::symlink_metadata(path).map_err(|_| SecretFileError::Unavailable)?)
+}
+
+/// Remove only the private Unix socket created by this service instance.
+#[cfg(unix)]
+pub struct PrivateServiceSocketGuard {
+    path: PathBuf,
+    identity: (u64, u64),
+}
+#[cfg(unix)]
+impl PrivateServiceSocketGuard {
+    pub fn attach(path: &Path) -> Result<Self, SecretFileError> {
+        use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+        validate_private_service_directory(path.parent().ok_or(SecretFileError::Forbidden)?)?;
+        let meta = fs::symlink_metadata(path).map_err(|_| SecretFileError::Unavailable)?;
+        if !meta.file_type().is_socket() || meta.uid() != unsafe { libc::geteuid() } {
+            return Err(SecretFileError::Forbidden);
+        }
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .map_err(|_| SecretFileError::Unavailable)?;
+        Ok(Self {
+            path: path.to_owned(),
+            identity: (meta.dev(), meta.ino()),
+        })
+    }
+}
+#[cfg(unix)]
+impl Drop for PrivateServiceSocketGuard {
+    fn drop(&mut self) {
+        use std::os::unix::fs::{FileTypeExt, MetadataExt};
+        if let Ok(meta) = fs::symlink_metadata(&self.path) {
+            if meta.file_type().is_socket() && (meta.dev(), meta.ino()) == self.identity {
+                let _ = fs::remove_file(&self.path);
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn private_file_meta(meta: &fs::Metadata) -> Result<(), SecretFileError> {
+    use std::os::unix::fs::MetadataExt;
+    if !meta.is_file()
+        || meta.nlink() != 1
+        || meta.uid() != unsafe { libc::geteuid() }
+        || meta.mode() & 0o077 != 0
+    {
+        return Err(SecretFileError::Forbidden);
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn private_open(directory: &fs::File, name: &str, flags: i32) -> Result<fs::File, SecretFileError> {
+    let file = managed_open_at(directory, name, flags, 0o600).map_err(|error| match error {
+        ManagedReadError::Forbidden => SecretFileError::Forbidden,
+        _ => SecretFileError::Unavailable,
+    })?;
+    private_file_meta(&file.metadata().map_err(|_| SecretFileError::Unavailable)?)?;
+    Ok(file)
+}
+
+/// Fixed legacy env file for the independent non-root development broker.
+/// Never registered as a general file/Agent tool or a SecretStore getter.
+#[cfg(unix)]
+pub struct LocalAgentEnvFile {
+    directory: fs::File,
+    audit: AuditLog,
+    writer: bool,
+    _lock: Option<fs::File>,
+}
+#[cfg(unix)]
+impl LocalAgentEnvFile {
+    pub fn open(path: &Path, writer: bool) -> Result<Self, SecretFileError> {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::OpenOptionsExt;
+        if unsafe { libc::geteuid() } == 0
+            || !path.is_absolute()
+            || path.file_name().and_then(|s| s.to_str()) != Some("agent.env")
+        {
+            return Err(SecretFileError::Forbidden);
+        }
+        let parent = path.parent().ok_or(SecretFileError::Forbidden)?;
+        private_directory_meta(
+            &fs::symlink_metadata(parent).map_err(|_| SecretFileError::Unavailable)?,
+        )?;
+        let directory = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(parent)
+            .map_err(|_| SecretFileError::Unavailable)?;
+        private_directory_meta(
+            &directory
+                .metadata()
+                .map_err(|_| SecretFileError::Unavailable)?,
+        )?;
+        let lock = if writer {
+            let file = private_open(&directory, ".agent-env.lock", libc::O_RDWR | libc::O_CREAT)?;
+            if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+                return Err(SecretFileError::Busy);
+            }
+            Some(file)
+        } else {
+            None
+        };
+        let audit_name = if writer {
+            ".agent-env-write-audit.jsonl"
+        } else {
+            ".agent-env-read-audit.jsonl"
+        };
+        let audit_file = private_open(
+            &directory,
+            audit_name,
+            libc::O_RDWR | libc::O_APPEND | libc::O_CREAT,
+        )?;
+        managed_check_audit_tail(
+            &audit_file,
+            audit_file
+                .metadata()
+                .map_err(|_| SecretFileError::Unavailable)?
+                .len(),
+        )
+        .map_err(|_| SecretFileError::AuditUnavailable)?;
+        directory
+            .sync_all()
+            .map_err(|_| SecretFileError::Unavailable)?;
+        let audit = AuditLog::new();
+        audit.set_file(parent.join(audit_name), audit_file);
+        Ok(Self {
+            directory,
+            audit,
+            writer,
+            _lock: lock,
+        })
+    }
+    fn check(&self) -> Result<(), SecretFileError> {
+        private_directory_meta(
+            &self
+                .directory
+                .metadata()
+                .map_err(|_| SecretFileError::Unavailable)?,
+        )
+    }
+    fn record<T>(
+        &self,
+        action: &str,
+        result: &Result<T, SecretFileError>,
+    ) -> Result<(), SecretFileError> {
+        let mut entry = AuditEntry::new("agent-local-config", Op::Write, action);
+        entry.ok = result.is_ok();
+        if result.is_err() {
+            entry.error = Some("private configuration unavailable".into());
+        }
+        self.audit
+            .record_durable(entry)
+            .map_err(|_| SecretFileError::AuditUnavailable)
+    }
+    pub fn read(&self) -> Result<zeroize::Zeroizing<Vec<u8>>, SecretFileError> {
+        use std::io::Read;
+        let result = (|| {
+            self.check()?;
+            let file = match private_open(&self.directory, "agent.env", libc::O_RDONLY) {
+                Ok(file) => file,
+                Err(SecretFileError::Unavailable) => {
+                    match managed_open_at(&self.directory, "agent.env", libc::O_RDONLY, 0) {
+                        Err(ManagedReadError::NotFound) => {
+                            return Ok(zeroize::Zeroizing::new(vec![]))
+                        }
+                        _ => return Err(SecretFileError::Unavailable),
+                    }
+                }
+                Err(error) => return Err(error),
+            };
+            let mut bytes = zeroize::Zeroizing::new(Vec::new());
+            file.take(128 * 1024 + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|_| SecretFileError::Unavailable)?;
+            if bytes.len() > 128 * 1024 {
+                return Err(SecretFileError::Unavailable);
+            }
+            Ok(bytes)
+        })();
+        self.record("agent.env.read", &result)?;
+        result
+    }
+    pub fn write(&self, bytes: &[u8]) -> Result<(), SecretFileError> {
+        use std::ffi::CString;
+        use std::io::Write;
+        use std::os::fd::AsRawFd;
+        let result = (|| {
+            self.check()?;
+            if !self.writer || bytes.len() > 128 * 1024 {
+                return Err(SecretFileError::Forbidden);
+            }
+            // Validate an existing target before replacement; never follow aliases.
+            match private_open(&self.directory, "agent.env", libc::O_RDONLY) {
+                Ok(_) => {}
+                Err(SecretFileError::Unavailable) => {
+                    match managed_open_at(&self.directory, "agent.env", libc::O_RDONLY, 0) {
+                        Err(ManagedReadError::NotFound) => {}
+                        _ => return Err(SecretFileError::Unavailable),
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+            self.record("agent.env.write.intent", &Ok::<_, SecretFileError>(()))?;
+            let mut random = [0u8; 16];
+            getrandom::fill(&mut random).map_err(|_| SecretFileError::Unavailable)?;
+            let name = format!(
+                ".agent-env-stage-{}",
+                random
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>()
+            );
+            let mut file = private_open(
+                &self.directory,
+                &name,
+                libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL,
+            )?;
+            file.write_all(bytes)
+                .and_then(|_| file.sync_all())
+                .map_err(|_| SecretFileError::Unavailable)?;
+            let src = CString::new(name).map_err(|_| SecretFileError::Unavailable)?;
+            let dst = CString::new("agent.env").unwrap();
+            if unsafe {
+                libc::renameat(
+                    self.directory.as_raw_fd(),
+                    src.as_ptr(),
+                    self.directory.as_raw_fd(),
+                    dst.as_ptr(),
+                )
+            } != 0
+            {
+                return Err(SecretFileError::Unavailable);
+            }
+            self.directory
+                .sync_all()
+                .map_err(|_| SecretFileError::CommitUnknown)
+        })();
+        self.record("agent.env.write", &result)?;
+        result
+    }
+}
+
+#[cfg(all(test, unix))]
+mod local_agent_env_tests {
+    use super::*;
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    fn fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        dir
+    }
+
+    #[test]
+    fn local_env_private_atomic_reload_and_exclusive_writer() {
+        let dir = fixture();
+        let path = dir.path().join("agent.env");
+        let writer = LocalAgentEnvFile::open(&path, true).unwrap();
+        assert!(matches!(
+            LocalAgentEnvFile::open(&path, true),
+            Err(SecretFileError::Busy)
+        ));
+        let reader = LocalAgentEnvFile::open(&path, false).unwrap();
+        assert!(reader.read().unwrap().is_empty());
+        writer.write(b"synthetic-key-first").unwrap();
+        assert_eq!(&*reader.read().unwrap(), b"synthetic-key-first");
+        writer.write(b"synthetic-key-second").unwrap();
+        assert_eq!(&*reader.read().unwrap(), b"synthetic-key-second");
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(reader.write(b"forbidden").is_err());
+        assert!(writer.write(&vec![0; 128 * 1024 + 1]).is_err());
+        for name in [
+            ".agent-env-write-audit.jsonl",
+            ".agent-env-read-audit.jsonl",
+        ] {
+            assert!(!fs::read_to_string(dir.path().join(name))
+                .unwrap()
+                .contains("synthetic-key"));
+        }
+    }
+
+    #[test]
+    fn local_env_alias_escape_and_permission_changes_fail_closed() {
+        let dir = fixture();
+        let outside = fixture();
+        let original = outside.path().join("private-original");
+        fs::write(&original, b"must-not-change").unwrap();
+        fs::set_permissions(&original, fs::Permissions::from_mode(0o600)).unwrap();
+        let path = dir.path().join("agent.env");
+        let writer = LocalAgentEnvFile::open(&path, true).unwrap();
+        symlink(&original, &path).unwrap();
+        assert!(writer.read().is_err());
+        assert!(writer.write(b"escape").is_err());
+        fs::remove_file(&path).unwrap();
+        fs::hard_link(&original, &path).unwrap();
+        assert!(writer.read().is_err());
+        assert!(writer.write(b"alias").is_err());
+        assert_eq!(fs::read(&original).unwrap(), b"must-not-change");
+        fs::remove_file(&path).unwrap();
+        writer.write(b"private").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(writer.read().is_err());
+        assert!(writer.write(b"public").is_err());
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(writer.read().is_err());
+        assert!(LocalAgentEnvFile::open(&path, false).is_err());
+        assert!(LocalAgentEnvFile::open(&outside.path().join("other.env"), false).is_err());
+    }
+
+    #[test]
+    fn local_env_failed_audit_never_releases_contents_or_commits_write() {
+        let dir = fixture();
+        let path = dir.path().join("agent.env");
+        let writer = LocalAgentEnvFile::open(&path, true).unwrap();
+        writer.write(b"original").unwrap();
+        // A read-only audit FD injects a durable append failure without touching user files.
+        let audit = dir.path().join(".agent-env-write-audit.jsonl");
+        writer
+            .audit
+            .set_file(audit.clone(), fs::File::open(audit).unwrap());
+        assert!(matches!(
+            writer.read(),
+            Err(SecretFileError::AuditUnavailable)
+        ));
+        assert!(writer.write(b"must-not-commit").is_err());
+        assert_eq!(fs::read(path).unwrap(), b"original");
+    }
+
+    #[test]
+    fn private_socket_cleanup_does_not_remove_a_replacement() {
+        let dir = fixture();
+        let path = dir.path().join("test.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let guard = PrivateServiceSocketGuard::attach(&path).unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        fs::remove_file(&path).unwrap();
+        fs::write(&path, b"replacement").unwrap();
+        drop(listener);
+        drop(guard);
+        assert_eq!(fs::read(path).unwrap(), b"replacement");
+    }
+}
+
+/// Opt-in identity configuration is a private control asset, not business data.
+/// Bootstrap callers compare these bounded bytes with their parsed config.
+#[cfg(unix)]
+pub fn read_private_runtime_config(
+    path: &Path,
+    data_root: &Path,
+) -> Result<Vec<u8>, SecretFileError> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    if !path.is_absolute() {
+        return Err(SecretFileError::Forbidden);
+    }
+    let canonical = fs::canonicalize(path).map_err(|_| SecretFileError::Unavailable)?;
+    let root = fs::canonicalize(data_root).map_err(|_| SecretFileError::Unavailable)?;
+    if canonical.starts_with(root) {
+        return Err(SecretFileError::Forbidden);
+    }
+    let parent = path.parent().ok_or(SecretFileError::Forbidden)?;
+    let name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or(SecretFileError::Forbidden)?;
+    private_directory_meta(
+        &fs::symlink_metadata(parent).map_err(|_| SecretFileError::Unavailable)?,
+    )?;
+    let directory = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(parent)
+        .map_err(|_| SecretFileError::Unavailable)?;
+    private_directory_meta(
+        &directory
+            .metadata()
+            .map_err(|_| SecretFileError::Unavailable)?,
+    )?;
+    let file = private_open(&directory, name, libc::O_RDONLY)?;
+    let mut bytes = Vec::new();
+    file.take(64 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| SecretFileError::Unavailable)?;
+    if bytes.len() > 64 * 1024 {
+        return Err(SecretFileError::Unavailable);
+    }
+    Ok(bytes)
+}
+
+#[cfg(all(test, unix))]
+mod managed_tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    fn setup() -> (tempfile::TempDir, ManagedReadVault) {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("documents")).unwrap();
+        fs::create_dir(root.path().join("private")).unwrap();
+        fs::write(
+            root.path().join("documents/hello.md"),
+            "你好\nforms@support.empf.org.hk",
+        )
+        .unwrap();
+        fs::write(root.path().join("private/secret.txt"), "do not expose").unwrap();
+        let vault =
+            ManagedReadVault::open(root.path(), "w1", "local:test", &["documents".into()]).unwrap();
+        (root, vault)
+    }
+
+    fn owner() -> ReadAuthority {
+        ReadAuthority::new("local:test", "w1", 1, "req-test")
+    }
+    fn read(path: &str) -> ManagedReadOperation {
+        ManagedReadOperation::Read { path: path.into() }
+    }
+
+    #[test]
+    fn managed_reads_preserve_unicode_hash_and_durable_audit() {
+        let (_root, vault) = setup();
+        let value = vault.execute(&owner(), read("documents/hello.md")).unwrap();
+        assert_eq!(value["content"], "你好\nforms@support.empf.org.hk");
+        assert_eq!(
+            value["sha256"],
+            sha256_hex(value["content"].as_str().unwrap().as_bytes())
+        );
+        let (entries, total) = vault.audit.read(0, 10);
+        assert_eq!(total, 1);
+        assert!(entries[0].ok);
+        assert_eq!(entries[0].session_id, "v2:local:test:req-test");
+        assert_eq!(entries[0].sha256.as_deref(), value["sha256"].as_str());
+    }
+
+    #[test]
+    fn scope_workspace_actor_and_policy_are_checked_and_denied_audited() {
+        let (_root, vault) = setup();
+        for authority in [
+            ReadAuthority::new("another", "w1", 1, "r1"),
+            ReadAuthority::new("local:test", "w2", 1, "r2"),
+            ReadAuthority::new("local:test", "w1", 2, "r3"),
+        ] {
+            assert!(vault
+                .execute(&authority, read("documents/hello.md"))
+                .is_err());
+        }
+        assert!(matches!(
+            vault.execute(&owner(), read("private/secret.txt")),
+            Err(ManagedReadError::Forbidden)
+        ));
+        let (entries, total) = vault.audit.read(0, 10);
+        assert_eq!(total, 4);
+        assert!(entries.iter().all(|e| !e.ok));
+    }
+
+    #[test]
+    fn traversal_absolute_empty_and_prefix_confusion_are_rejected() {
+        let (_root, vault) = setup();
+        for path in [
+            "../outside",
+            "/etc/passwd",
+            "",
+            ".",
+            "documents/../../outside",
+            "documents/../private/secret.txt",
+            "documents-other/a",
+            "documents\\hello.md",
+        ] {
+            assert!(vault.execute(&owner(), read(path)).is_err(), "path: {path}");
+        }
+    }
+
+    #[test]
+    fn symlink_and_hardlink_aliases_cannot_bypass_scope_or_reserved_paths() {
+        let (root, vault) = setup();
+        symlink(
+            root.path().join("private/secret.txt"),
+            root.path().join("documents/alias.txt"),
+        )
+        .unwrap();
+        symlink(
+            root.path().join("documents/hello.md"),
+            root.path().join("documents/inside-link.txt"),
+        )
+        .unwrap();
+        symlink(
+            root.path().join("private"),
+            root.path().join("documents/dir-link"),
+        )
+        .unwrap();
+        fs::hard_link(
+            root.path().join("private/secret.txt"),
+            root.path().join("documents/hard.txt"),
+        )
+        .unwrap();
+        for path in [
+            "documents/alias.txt",
+            "documents/inside-link.txt",
+            "documents/dir-link/secret.txt",
+            "documents/hard.txt",
+        ] {
+            assert!(vault.execute(&owner(), read(path)).is_err(), "path: {path}");
+        }
+        let value = vault
+            .execute(
+                &owner(),
+                ManagedReadOperation::List {
+                    path: "documents".into(),
+                    limit: 100,
+                },
+            )
+            .unwrap();
+        assert_eq!(value["entries"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn listings_hide_internal_files_and_reserved_directories() {
+        let (root, vault) = setup();
+        for name in [
+            ".hidden",
+            "settings.json",
+            "workspace.sqlite",
+            "control.db",
+            "agent.env",
+        ] {
+            fs::write(root.path().join("documents").join(name), "sensitive").unwrap();
+            assert!(vault
+                .execute(&owner(), read(&format!("documents/{name}")))
+                .is_err());
+        }
+        fs::create_dir(root.path().join("documents/memory")).unwrap();
+        let value = vault
+            .execute(
+                &owner(),
+                ManagedReadOperation::List {
+                    path: "documents".into(),
+                    limit: 100,
+                },
+            )
+            .unwrap();
+        assert_eq!(value["entries"].as_array().unwrap().len(), 1);
+        assert_eq!(value["entries"][0]["name"], "hello.md");
+    }
+
+    #[test]
+    fn no_root_or_sensitive_registration_is_allowed() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("mydata")).unwrap();
+        for scope in [".", "mydata", "../escape"] {
+            assert!(
+                ManagedReadVault::open(root.path(), "w1", "local:test", &[scope.into()]).is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn text_and_list_budgets_are_enforced_and_truncation_explicit() {
+        let (root, vault) = setup();
+        let file = fs::File::create(root.path().join("documents/large.txt")).unwrap();
+        file.set_len(MANAGED_MAX_TEXT_BYTES as u64 + 1).unwrap();
+        assert!(matches!(
+            vault.execute(&owner(), read("documents/large.txt")),
+            Err(ManagedReadError::TooLarge)
+        ));
+        for n in 0..105 {
+            fs::write(root.path().join(format!("documents/item-{n:03}.txt")), "x").unwrap();
+        }
+        let value = vault
+            .execute(
+                &owner(),
+                ManagedReadOperation::List {
+                    path: "documents".into(),
+                    limit: 100,
+                },
+            )
+            .unwrap();
+        assert_eq!(value["entries"].as_array().unwrap().len(), 100);
+        assert_eq!(value["truncated"], true);
+        assert!(vault
+            .execute(
+                &owner(),
+                ManagedReadOperation::List {
+                    path: "documents".into(),
+                    limit: 101
+                }
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn non_regular_and_non_utf8_reads_are_rejected() {
+        let (root, vault) = setup();
+        fs::write(root.path().join("documents/binary.bin"), [0xff, 0xfe]).unwrap();
+        assert!(matches!(
+            vault.execute(&owner(), read("documents/binary.bin")),
+            Err(ManagedReadError::NotUtf8)
+        ));
+        assert!(vault.execute(&owner(), read("documents")).is_err());
+        use std::os::unix::net::UnixListener;
+        let _listener = UnixListener::bind(root.path().join("documents/not-a-file.sock")).unwrap();
+        assert!(vault
+            .execute(&owner(), read("documents/not-a-file.sock"))
+            .is_err());
+    }
+
+    #[test]
+    fn failing_audit_never_releases_content_or_success_listener() {
+        let (root, vault) = setup();
+        let file = fs::File::open(root.path().join(AUDIT_FILE_NAME)).unwrap(); // read-only descriptor: write must fail
+        vault
+            .audit
+            .set_file(root.path().join(AUDIT_FILE_NAME), file);
+        let notifications = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = notifications.clone();
+        vault.audit.add_listener(Arc::new(move |_| {
+            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }));
+        assert!(matches!(
+            vault.execute(&owner(), read("documents/hello.md")),
+            Err(ManagedReadError::AuditUnavailable)
+        ));
+        assert!(matches!(
+            vault.execute(&owner(), read("documents/hello.md")),
+            Err(ManagedReadError::AuditUnavailable)
+        ));
+        assert_eq!(notifications.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn audit_symlink_is_not_followed_or_modified() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("documents")).unwrap();
+        fs::write(outside.path().join("victim"), "unchanged").unwrap();
+        symlink(
+            outside.path().join("victim"),
+            root.path().join(AUDIT_FILE_NAME),
+        )
+        .unwrap();
+        assert!(
+            ManagedReadVault::open(root.path(), "w1", "local:test", &["documents".into()]).is_err()
+        );
+        assert_eq!(
+            fs::read_to_string(outside.path().join("victim")).unwrap(),
+            "unchanged"
+        );
+    }
+
+    #[test]
+    fn broad_or_hardlinked_audit_is_refused_without_permission_migration() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("documents")).unwrap();
+        let audit_path = root.path().join(AUDIT_FILE_NAME);
+        fs::write(&audit_path, "legacy audit\n").unwrap();
+        fs::set_permissions(&audit_path, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(matches!(
+            ManagedReadVault::open(root.path(), "w1", "local:test", &["documents".into()]),
+            Err(ManagedReadError::Forbidden)
+        ));
+        assert_eq!(fs::metadata(&audit_path).unwrap().mode() & 0o777, 0o644);
+        fs::set_permissions(&audit_path, fs::Permissions::from_mode(0o600)).unwrap();
+        let alias = root.path().join("documents/audit-alias");
+        fs::hard_link(&audit_path, &alias).unwrap();
+        assert!(matches!(
+            ManagedReadVault::open(root.path(), "w1", "local:test", &["documents".into()]),
+            Err(ManagedReadError::Forbidden)
+        ));
+        assert_eq!(fs::read_to_string(&alias).unwrap(), "legacy audit\n");
+    }
+
+    #[test]
+    fn incomplete_or_invalid_audit_tail_blocks_restart_without_repairing_data() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("documents")).unwrap();
+        let audit_path = root.path().join(AUDIT_FILE_NAME);
+        for tail in ["{\"ts_ms\":1", "invalid-json\n"] {
+            fs::write(&audit_path, tail).unwrap();
+            fs::set_permissions(&audit_path, fs::Permissions::from_mode(0o600)).unwrap();
+            assert!(matches!(
+                ManagedReadVault::open(root.path(), "w1", "local:test", &["documents".into()]),
+                Err(ManagedReadError::AuditUnavailable)
+            ));
+            assert_eq!(fs::read_to_string(&audit_path).unwrap(), tail);
+        }
+    }
+
+    #[test]
+    fn held_root_descriptor_does_not_reopen_a_replaced_root_path() {
+        let parent = tempfile::tempdir().unwrap();
+        let root = parent.path().join("root");
+        fs::create_dir_all(root.join("documents")).unwrap();
+        fs::write(root.join("documents/a.txt"), "original").unwrap();
+        let vault =
+            ManagedReadVault::open(&root, "w1", "local:test", &["documents".into()]).unwrap();
+        fs::rename(&root, parent.path().join("old-root")).unwrap();
+        fs::create_dir_all(root.join("documents")).unwrap();
+        fs::write(root.join("documents/a.txt"), "replacement must not be read").unwrap();
+        let value = vault.execute(&owner(), read("documents/a.txt")).unwrap();
+        assert_eq!(value["content"], "original");
+        assert!(
+            fs::read_to_string(parent.path().join("old-root").join(AUDIT_FILE_NAME))
+                .unwrap()
+                .contains("req-test")
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

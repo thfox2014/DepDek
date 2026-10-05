@@ -337,19 +337,10 @@ where
     R: AsyncBufRead + Unpin,
 {
     let mut lines = stdout.lines();
-    loop {
-        match lines.next_line().await {
-            Ok(Some(line)) => {
-                // Keep wire order. Spawning one task per line lets a later
-                // notification reach the UI before an earlier one, because
-                // `handle_line` can yield while serving a vault request. In
-                // particular, adjacent text_delta events would then append
-                // chunks out of order and visibly scramble email addresses.
-                inner.handle_line(&line).await;
-            }
-            // EOF or read error: the process is gone.
-            _ => break,
-        }
+    while let Ok(Some(line)) = lines.next_line().await {
+        // Keep wire order. Spawning per-line tasks can reorder adjacent deltas
+        // while handle_line yields on a Vault request. EOF/error ends the loop.
+        inner.handle_line(&line).await;
     }
 }
 

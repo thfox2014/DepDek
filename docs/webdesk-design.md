@@ -223,3 +223,28 @@ e2e 覆盖：健康检查、未登录 401、未知 API JSON 404、SPA 可访问�
 | 4 | systemd 服务管理（启停/重启，白名单单元）、日志查看器、软件更新（签名校验 + 回滚） |
 | 5 | 多用户与角色（管理员/只读）、API Token、会话设备列表与远程注销 |
 ```
+# AgentOS V2 业务只读 BFF（第三批）
+
+2026-10-05 新增可选业务代理，默认禁用。Webdesk 仍不读 Home、秘密、控制配置或业务原件；当前业务接口只通过 daemon 认证会话进行固定查询。原管理员登录与 `/api/files` 保持原行为，原 SPA 未自动切换。此增量不开放通用 RPC/shell。
+
+配置 `business_socket` + 精确 `business_origin`；**目前只允许本机 loopback HTTP，远程业务代理拒绝启用**。现有证书字段并未开启直接 TLS，不能作为保护密码的依据；真实 TLS/受限代理链路需后续验收。`--insecure-no-auth` 一律拒绝业务代理。它仍是同 uid 受信服务的开发切片，跨服务 OS 身份/权限隔离需 Linux 验收。
+
+路由：POST `/api/v2/auth/login`（username/password，精确 Origin）；GET `/api/v2/auth/session`；POST `/api/v2/auth/logout`（Origin + CSRF）；GET `/api/v2/workspaces`；GET `/api/v2/commands?workspace_id=…`；POST `/api/v2/commands/invoke`（Origin + CSRF）。没有凭据管理、下载/上传/Plan/Job 或任意转发路由。
+
+业务登录必须由 daemon 校验注册主体，不能从 Webdesk admin 推导家庭身份。业务 cookie 为 `depdek_business_session`，HttpOnly/SameSite=Strict、Path=/api/v2；当前 loopback HTTP 不加 Secure，生产模式与真实 TLS 同批实现。响应 no-store，JSON 不返回 session_token。POST header 为 `x-depdek-business-csrf`，csrf_token 在登录 JSON 返回。
+
+所有目录范围与主体授权在 Vault 再验，退出撤销会话；BFF 的密码、token、CSRF、正文不写日志。Webdesk 追加脱敏登录/退出状态，正文放行依赖 daemon 严格审计。真实 TLS、分 uid 服务、持久多用户/对象 ACL 与原界面接线未完成。
+
+完整参数、限额与测试边界见 [运行时契约](agentos-v2/runtime-r1-access.md)。此子集是已实现入口，其余 V2 HTTP 仍为设计；不修改原桌面三方接口。
+
+## Provider 配置服务连接修复（2026-10-05）
+
+管理员登录只授予 Webdesk 配置接口权限，不会自动启动或提权配置 broker。保存需要 agent_config_socket 对应服务存在；当前本机演示补齐 broker 与执行器，而不让 Webdesk 直接写密钥。
+
+Linux 生产默认仍由 root broker 更新固定 `/etc/depdek/agent.env` 并重启 systemd 服务。本机非 root 开发新增显式 `DEPDEK_AGENT_CONFIG_MODE=local-private`：私有运行目录、同 uid 配置 socket、0600 自有固定 agent.env；执行器通过 `DEPDEK_AGENT_LOCAL_ENV_PATH` 读取该固定文件，每次请求重验权限并加载，配置服务通过固定 Agent status 确认 active_id 生效，不自动发送模型测试。该文件沿用兼容 env/base64 形式，不等同新加密 SecretStore，不声称 root-only 或生产隔离。
+
+本机模式依赖禁用 GUI 的核心 Vault 库做固定配置文件校验，不共享桌面进程或读取 Home：父目录须归当前非 root 用户所有且 0700，配置文件必须名为 agent.env 且 0600，拒绝符号/硬链接；持有目录 FD、写入锁，原子替换并 fsync。每次读写必须记录无密钥/正文的持久审计，失败不释放密钥或报告成功；SIGTERM/Ctrl+C 仅清理本实例的 socket。它不注册为 Agent 文件工具，也不增加秘密 getter。兼容配置和失败暂存仍可能含明文/base64 凭据，不能当作加密长期存储。
+
+回归验证：实际两个服务进程验证新增两个 Provider、留空保留密钥、列表显示、切换、并发保存不覆盖、执行器按请求重载；HTTP 路由验证 admin 会话 + CSRF、未登录 401、缺 CSRF/无认证/伪 TLS 远端 403、未连接 503、响应/审计不包含测试密钥；Vault 验证别名、逃逸、权限变化与审计故障。均使用合成密钥，不调用真实模型。
+
+POST 仍要求真实管理员会话 + CSRF；当前未实现 TLS listener，证书配置标志不能证明加密，直接远程提交 key 被拒绝，本机回环/受信 TLS 反代的本机连接可配置。响应和列表只返回 Provider 元数据；Webdesk 不读取该固定配置文件、密钥不回显，不自动外发聊天。

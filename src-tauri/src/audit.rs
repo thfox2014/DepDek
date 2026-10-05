@@ -87,6 +87,37 @@ impl AuditLog {
         Ok(())
     }
 
+    /// Install the file opened by Vault's managed access boundary. Path and
+    /// descriptor validation belong to vault.rs, not to this logger.
+    #[cfg(unix)]
+    pub(crate) fn set_file(&self, path: std::path::PathBuf, file: File) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.path = Some(path);
+        inner.file = Some(file);
+    }
+
+    /// Strict managed reads must persist their audit before releasing data.
+    /// On failure no listener is notified and the stream is disabled: a
+    /// partially-written line must not be followed by seemingly valid entries.
+    /// Legacy `record` intentionally retains its v1 behaviour below.
+    pub fn record_durable(&self, entry: AuditEntry) -> std::io::Result<()> {
+        let mut line = serde_json::to_vec(&entry).map_err(std::io::Error::other)?;
+        line.push(b'\n');
+        let mut inner = self.inner.lock().unwrap();
+        let result = match &mut inner.file {
+            Some(file) => file.write_all(&line).and_then(|_| file.sync_data()),
+            None => Err(std::io::Error::other("audit stream unavailable")),
+        };
+        if let Err(error) = result {
+            inner.file = None;
+            return Err(error);
+        }
+        for listener in &inner.listeners {
+            listener(&entry);
+        }
+        Ok(())
+    }
+
     pub fn add_listener(&self, listener: AuditListener) {
         self.inner.lock().unwrap().listeners.push(listener);
     }

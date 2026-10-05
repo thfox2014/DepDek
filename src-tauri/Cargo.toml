@@ -32,6 +32,13 @@ sha2 = "0.10"
 base64 = "0.22"
 flate2 = "1.1"
 tar = "0.4"
+libc = "0.2"
+errno = "0.3"
+argon2 = { version = "0.6", default-features = false, features = ["alloc", "zeroize", "password-hash"] }
+chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc", "zeroize"] }
+zeroize = "1.9"
+getrandom = "0.4"
+url = "2"
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 thiserror = "2"

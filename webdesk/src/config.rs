@@ -36,6 +36,12 @@ pub struct Config {
     #[serde(default = "default_agent_config_socket")]
     pub agent_config_socket: PathBuf,
 
+    /// Opt-in business BFF. No Home directory or privileged RPC access.
+    #[serde(default)]
+    pub business_socket: Option<PathBuf>,
+    #[serde(default)]
+    pub business_origin: Option<String>,
+
     /// Serve the SPA from disk instead of the embedded copy (frontend dev).
     #[serde(default)]
     pub web_root: Option<PathBuf>,
@@ -160,6 +166,8 @@ impl Config {
                 files_root: None,
                 agent_socket: default_agent_socket(),
                 agent_config_socket: default_agent_config_socket(),
+                business_socket: None,
+                business_origin: None,
                 web_root: None,
                 auth: AuthConfig::default(),
                 metrics: MetricsConfig::default(),
@@ -225,6 +233,35 @@ impl Config {
         }
         if self.tls_cert.is_some() != self.tls_key.is_some() {
             bail!("tls_cert 与 tls_key 必须同时配置");
+        }
+        if self.business_socket.is_some() != self.business_origin.is_some() {
+            bail!("business_socket 与 business_origin 必须同时配置");
+        }
+        if let (Some(socket), Some(origin)) = (&self.business_socket, &self.business_origin) {
+            if !socket.is_absolute() {
+                bail!("business_socket 必须是绝对路径");
+            }
+            let parsed = url::Url::parse(origin).context("business_origin 非法")?;
+            if !parsed.username().is_empty()
+                || parsed.password().is_some()
+                || parsed.query().is_some()
+                || parsed.fragment().is_some()
+                || parsed.origin().ascii_serialization() != *origin
+            {
+                bail!("business_origin 必须是精确 origin，不含路径或凭据");
+            }
+            let loopback = parsed
+                .host_str()
+                .is_some_and(|host| matches!(host, "127.0.0.1" | "[::1]" | "::1"));
+            // Existing tls_* only advertises reverse-proxy termination;
+            // serve() is plain HTTP. Never treat those flags as TLS proof.
+            if self.tls_enabled()
+                || !self.bind.ip().is_loopback()
+                || !loopback
+                || parsed.scheme() != "http"
+            {
+                bail!("业务代理当前仅支持 loopback HTTP 开发；远程 TLS 尚未验收");
+            }
         }
         if self.metrics.interval_ms < 500 {
             bail!("metrics.interval_ms 不得小于 500（CPU 采样需要最小间隔）");

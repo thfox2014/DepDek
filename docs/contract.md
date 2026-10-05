@@ -392,3 +392,35 @@ type TodoQueueFile = { version: 1; updatedAt: string; items: TodoItem[] };
 `calendar/events.json` 是本地中枢的当前聚合视图；事件先落本地，外部写回永远是显式动作。连接凭据仍属于 V0.2 明文兼容债务，后续迁移到 Credential Broker/OS Keychain。
 
 `todo/queue.json` 是待办中枢的当前队列；来源记录不覆盖原始邮件或日历事件，移动泳道只更新待办本身。
+
+## 9. AgentOS R1 本地只读服务（增量入口）
+
+`services/depdekd` 复用本 crate（禁用 tauri-app）中的 Vault，新增本机 Unix socket 的版本化 JSON-RPC 入口；它不是新的 sidecar 方法，不改变 §2–§8 的旧接口或 ID 空间。桌面与 sidecar 保持旧调用，Webdesk 本批尚未接入。
+
+- 第一批实现 `v2/health`、`v2/commands.list` 和 `v2/command.invoke`；文件命令为 `file.list/read/stat@1.0`，只查询启动配置登记的目录。实际协议与启动说明见 [R1 本地服务契约](agentos-v2/runtime-r1.md)。第二批可选本机凭据入口见 §10；其它 V2 API/Plan/Job 未实现。
+- 身份来自 Unix peer uid，只有与 daemon 相同的非 root OS 用户可连接；principal 由服务生成，JSON 不能声明 actor/role/session_id。当前仅支持单用户本机，只读入口不能被当作家庭多用户认证或浏览器委托。
+- 数据权限、路径、受管资产过滤全部在 `vault.rs::ManagedReadVault`；新服务不得直接打开数据文件。登记目录必须明确指定，不允许整个根。隐藏路径、现有凭据/记忆/策略等内部目录、数据库文件、symlink 和硬链接文件不通过新入口暴露。
+- Linux/macOS 下通过根目录 fd 和逐级 `openat(O_NOFOLLOW)` 读取；目录列表在返回前过滤不可见项，文本实际读取上限 128 KiB，目录扫描/输出有上限。
+- 每次受管文件查询成功或拒绝均持久写审计（沿用 AuditEntry，session_id 带服务生成的 principal/request_id）。写入/同步失败时不返回数据，错误 `AUDIT_UNAVAILABLE`；重启时损坏的最后一条日志拒绝接续，不自动修复/删证据；旧入口的审计行为暂不改变。
+- 本批无业务写操作、无数据迁移、无模型外发，不形成第二个领域主写者。不要将 R1 只读切片宣称为完整 V2 服务；可信多用户委托、完整 Secret Broker 与主写切换另行验收。
+
+## 10. AgentOS R1 第二批：可选本机 Secret Store
+
+增量实现 `services/depdekd` 的专用凭据管理入口；不注册为 Agent 工具，不改变旧 ProviderConfig、§7 邮件/§8 日历或 Webdesk 接口。`secret_dir` 为可选启动配置，默认禁用，必须为数据根之外的独立私有目录。实际协议见 [第二批运行时契约](agentos-v2/runtime-r1-secrets.md)。
+
+- 本机 owner 身份与 workspace 规则沿用 §9，不接受 JSON 自填角色。路径/目录/文件权限、nofollow、硬链接、独占锁和原子落盘检查仍集中 `vault.rs`。
+- Secret Store 使用 Argon2id 派生内存密钥与 XChaCha20-Poly1305 加密；没有硬编码主密码、磁盘明文主密钥或自动解锁。重启为锁定态，空闲超时清除内存状态；当前不是平台 Keychain/TPM 或无人值守解锁方案。
+- `v2/credentials.status/init/unlock/lock/list/put/revoke/receipt/import.preview/import.apply` 为专用方法；秘密只作为请求输入，不提供 get/export/租约取值接口。响应、审计、错误只含允许的元数据，不含 key/password/token/主密码或其摘要。
+- put/revoke 使用 operation_id 与 expected_revision，拒绝覆盖冲突；幂等回执与秘密同一加密快照原子提交。持久化不确定或后续审计失败不宣称成功，锁定后通过重启/解锁/回执查证，禁止盲目生成新 operation_id 重试。
+- 显式导入只接收有界、调用者主动提供的旧配置 JSON，支持预览与整批冲突拒绝。只暂存凭据与绑定映射，源不修改、不删除、不自动启用模型；真实旧配置迁移、备份、Worker 租约与客户端 Adapter 尚未切换，明文兼容债务仍存在。
+- CLI 的敏感输入使用无回显 TTY 或显式 stdin JSON，不允许把秘密放在 --input/argv/环境变量。服务只支持私有 Unix socket；可信浏览器委托与家庭多用户 ACL 仍待实现，不开放网络管理。
+
+## 11. AgentOS R1 第三批：独立业务会话与目录授权
+
+增量提供单工作空间内的显式业务用户注册（受信启动配置）、密码认证、短期不透明会话、会话撤销和目录范围查询；不把 Webdesk admin 或服务 Unix uid 当作终端业务用户。具体接口见 `agentos-v2/runtime-r1-access.md`。
+
+- 业务用户、密码 PHC 与可读目录由可信操作员在启动配置 `access_users` 登记，默认空/禁用。无默认业务密码、不通过请求体设角色。注册/密码参数约束、目录范围检查、会话签发/检验/撤销、文件返回前重验均在 `vault.rs` 及其内部 access 模块。
+- `v2/auth.login/session/logout` 与 `v2/delegated.workspaces/commands/invoke` 为固定方法。业务会话只能读本人登记的目录、只能调用三个 file 查询命令；不能管理凭据或读取普通本机 owner 命令。RPC 的 Unix peer 校验仍必需，会话 token 仅证明注册业务用户。
+- Webdesk 为可选 BFF，只代理这六类固定方法；通过独立 HttpOnly/SameSite cookie 持有会话，POST 校验精确 Origin 与 CSRF。BFF 不读 Home、秘密、配置或业务文件，不提供任意 RPC/shell 转发；接口独立登记在 webdesk-design.md。
+- 会话有绝对/空闲超时、容量、登录冷却，重启失效；logout 撤销后不能继续查询。查询授权锁覆盖读取和严格审计，返回前重验期限。目录 ACL 不是对象级 ACL、持久 membership 或多 workspace 注册；修改成员/目录需受控重启。
+- 不自动开启网络或改现有登录/文件/Agent 界面；无认证模式拒绝新业务代理入口。旧 Provider、租约、客户端主写切换和真实迁移仍待后续发布门，不因本批新增会话而开放模型或业务写入。

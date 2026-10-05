@@ -7,7 +7,9 @@ Agent Workbench：Tauri 2 跨平台多 agent 工作台。Rust 核心（信任边
 ## 结构与职责
 
 - `src-tauri/src/vault.rs` — 数据文件夹沙箱。所有安全校验只在这里做，不得在别处绕过。
+- `src-tauri/src/vault/access.rs` — Vault 内部业务会话/目录授权边界；不接受请求体角色，不把 Webdesk admin/进程 uid 当作业务用户。第三批固定代理仅限 loopback，实际契约见 `docs/agentos-v2/runtime-r1-access.md`。
 - `src-tauri/src/audit.rs` — append-only 审计（`.vault-audit.jsonl`）。每个 vault 操作无论成败都必须记录。
+- `services/depdekd/` — R1 本机只读业务服务 + 可选加密凭据管理 + `depdek` CLI，依赖禁用 GUI 的现有 Rust 核心。数据/凭据文件访问只经 `vault.rs::ManagedReadVault/SecretFiles`；Unix peer 身份不可从 JSON 声明。协议见 `docs/agentos-v2/runtime-r1.md` 与 `runtime-r1-secrets.md`，不等于完整 V2 HTTP API。凭据管理禁止 Agent 注册/明文 getter/秘密 argv，不改源或自动启用旧配置。
 - `src-tauri/src/rpc.rs` — stdio NDJSON JSON-RPC。Rust id 空间 1..99999，sidecar 从 100000 起。
 - `src-tauri/src/app.rs` — Tauri commands（feature `tauri-app` 门控，默认开启）。
 - `sidecar/src/` — agent 运行时。**禁止**给 agent 注册直接 fs/bash 工具；文件工具只能转发 `vault/*` RPC。stdout 只走协议行，日志一律 stderr。
@@ -20,6 +22,9 @@ Agent Workbench：Tauri 2 跨平台多 agent 工作台。Rust 核心（信任边
 ```bash
 # Rust（不需要 webkit 系统依赖即可跑）
 cd src-tauri && cargo test --no-default-features
+
+# R1 业务服务与 CLI（Unix；不需要 GUI）
+cargo test --manifest-path services/depdekd/Cargo.toml
 
 # sidecar
 npm --prefix sidecar install && npm --prefix sidecar run build && npm --prefix sidecar test
@@ -40,7 +45,7 @@ npm run tauri dev
 
 `VERSION`（仓库根）是唯一来源，由 `scripts/version.mjs` 同步到 `package.json`、`sidecar/package.json`、
 `webdesk/web/package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` + `Cargo.lock`、
-`webdesk/Cargo.toml` + `Cargo.lock`。改动版本必须用脚本，不要手改单个 manifest：
+`webdesk/Cargo.toml` + `Cargo.lock`；`space-service/`、`agent-service/`、`services/depdekd/` 的 manifest/lock 同样受管。改动版本必须用脚本，不要手改单个 manifest：
 
 ```bash
 npm run version:check                 # 校验一致性（npm run build 已内置）

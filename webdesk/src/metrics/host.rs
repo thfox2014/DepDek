@@ -295,7 +295,7 @@ mod tests {
         assert!(memory.used_bytes <= memory.total_bytes);
         assert!((0.0..=100.0).contains(&memory.used_pct));
         let cpu = cpu_summary(&sys);
-        assert!(cpu.per_core.len() >= 1);
+        assert!(!cpu.per_core.is_empty());
         assert!((0.0..=100.0).contains(&cpu.usage_pct));
     }
 }
