@@ -4,6 +4,10 @@
 
 第三批已新增单空间业务会话/目录授权和 loopback Webdesk 代理；整体发布门与剩余项见 [第三批实施记录](implementation-status-batch3.md)。它不关闭整个 R1，也不等于生产分 uid 委托、对象 ACL 或远程 TLS。
 
+第四批已提供受信同 uid Worker 的短期只读委托、独立固定 RPC 客户端与控制 Profile 引用检查，见 [第四批记录](implementation-status-batch4.md)。它不提供 API Key 租约/模型出口或生产 Worker 沙箱，也不切换旧主写者。
+
+第五批新增 Linux 独立 uid 受限 listener、默认关闭的 exact-input 本机模型出口及合成 Provider/容器验收，见 [第五批记录](implementation-status-batch5.md)。API Key 在 core 内部限定回调中使用，轮换/撤销排空已有请求；不放行云端/DNS/自动重试，不接旧引擎/真实配置，不等于完整生产 Credential Lease/Gateway。
+
 ## 1. 重构策略
 
 采用“提取核心 → 兼容代理 → 只读投影 → 按领域切主写 → 退出旧写入”的渐进路线。禁止一次重写 Tauri、Webdesk、sidecar 和全部数据格式；禁止新旧程序同时写同一领域。
@@ -174,6 +178,6 @@
 
 首先做 R0 与 R1 中的一条只读路径：`Webdesk/CLI → 身份委托 → depdekd → 现有 Vault → source/file 查询 → 审计 → Result`。同时完成 Secret Store 明文导入的设计验证与测试夹具。只有这条可信通路跑通，才推进来源 DB 和家庭知识写入。
 
-当前已打通 `CLI → 本机 owner uid → depdekd → ManagedReadVault → file 查询 → 严格审计 → Result`，增加可选加密凭据管理/合成暂存导入，以及 `loopback BFF → daemon 业务 session → Vault 目录范围查询`。生产分 uid 委托、持久身份/对象 ACL、Worker 租约、真实配置验证/引用切换仍未完成；暂存导入不是已迁移。R0 的模型/Gateway/隔离门未关闭，禁止提前开放 Agent 或网络业务写入。下一步先完成受限 Worker 委托/租约和控制 profile，再讨论领域主写切换。
+当前已打通 `CLI → 本机 owner uid → depdekd → ManagedReadVault → file 查询 → 严格审计 → Result`，增加加密凭据管理/合成暂存导入、loopback BFF 业务会话与 Worker 文件票据。第五批验证 `独立 uid/禁网络 Worker → 固定 Unix listener → 一次性精确文本授权 → core 内部 Key 使用 → 合成本机 Provider → 结果`；控制 Profile catalogue 本身仍不是连接测试。下一步是受控云端出口/TLS、实际 Pi/Harness 与 Context 接线、持久身份/对象 ACL、控制 Profile 写入与独占 Adapter、显式真实迁移恢复；再讨论领域主写切换。Linux 容器门不代替 NAS 真机/完整 OS 发布，暂存导入不是已迁移。
 
 不得在首个切片顺便更换所有 UI、引入图数据库、重做镜像安装器或开放无约束 MCP。终态可以宏大，每次切片必须可测试、可恢复、可解释。

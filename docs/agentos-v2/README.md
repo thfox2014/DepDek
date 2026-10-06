@@ -7,6 +7,10 @@
 > 检查基线：本地仓库提交 `ef0bd52`，`VERSION=0.2.0`。V2.0 是目标产品代际，本次不修改软件版本号。
 > 目标交付：基于 Debian 的家庭 AI NAS OS，以及连接同一业务服务的 Web、桌面与语音 Shell。
 
+上述为设计时基线。当前代码已合并远端 v0.2.1，第四批新增受信 Worker 只读委托/Profile 引用检查；仍未关闭完整 R1。远端桌面/预览 AES 凭据、R1 Argon2/XChaCha 存储、独立 agent.env 兼容配置尚未统一，不能混称已迁移。
+
+第五批新增 Linux 独立 uid 固定 Worker 通道和默认关闭的一次性本机模型出口，合成 Provider/容器验收见 [第五批记录](implementation-status-batch5.md)。未接旧 Agent Room/Pi/Harness、云端/TLS、真实配置迁移或 NAS 真机；完整计划仍未完成。
+
 ## 阅读入口
 
 | 文档 | 解决的问题 |
@@ -18,9 +22,13 @@
 | [实施记录](implementation-status.md) | 第一批已实现内容、真实测试结果、未关闭的发布门与下一步 |
 | [第二批实施记录](implementation-status-batch2.md) | 加密凭据管理、幂等/故障/导入测试及尚未接线的能力 |
 | [第三批实施记录](implementation-status-batch3.md) | 独立业务会话、目录授权、loopback BFF、安全测试和剩余计划总表 |
+| [第四批实施记录](implementation-status-batch4.md) | 受信 Worker 票据/独立客户端、控制 Profile 引用检查与剩余安全门 |
+| [第五批实施记录](implementation-status-batch5.md) | 分 uid Linux 容器验收、exact-input 本机出口、密钥排空及尚未接入的生产能力 |
 | [R1 本地运行时契约](runtime-r1.md) | 已实现的 daemon/CLI、只读命令、身份与审计；不是完整 V2 HTTP |
 | [R1 凭据运行时契约](runtime-r1-secrets.md) | 已实现的可选加密存储/CLI/导入预览与恢复边界；不代表已迁移真实配置 |
 | [R1 业务访问契约](runtime-r1-access.md) | 已实现的用户/会话/目录范围与固定 BFF；不是完整多租户或对象 ACL |
+| [R1 Worker/Profile 契约](runtime-r1-workers.md) | 本机受信只读委托与凭据引用；不是 API Key 租约或 OS 沙箱 |
+| [R1 Worker/Gateway 契约](runtime-r1-gateway.md) | 独立 uid 固定通道与单次本机模型授权；不是完整云端/执行器 Gateway |
 | [凭据迁移验收设计](secret-migration-r1.md) | Secret Store 来源盘点、导入顺序、合成夹具与待验收场景 |
 | [OpenAPI 草案](openapi.json) | P0 公共 HTTP 边界；命令参数通过版本化 Manifest 扩展 |
 | [核心 SQL 草案](schemas/workspace-core.sql) | 首条家庭事务闭环的工作空间数据库骨架，可独立验证约束 |
@@ -42,7 +50,7 @@ Shell 以语音和自然语言为主要入口，保留软键盘、CLI 和业务�
 2. [工作台本体设计](../workbench-ontology-design.md) 继续定义 Object / Assertion / Relation / Evidence / Action 元模型；本设计增加家庭领域包和服务化落地，不另建平行本体。
 3. [共享记忆设计](../agentteam-memory-design.md) 和 [当前记忆契约](../contract.md#210-agent-team-共享长期记忆) 继续约束既有 JSONL 事实源；本体先做镜像，不直接替换主写。
 4. [contract.md](../contract.md) 仍是已发布桌面端 Rust / sidecar / React 接口的唯一标准。实现 V2 桌面适配前，必须在那里登记正式扩展、兼容规则和弃用条件，再同步各方。
-5. Webdesk 保持独立进程、不直接读写 DepDek Home。其 V2 HTTP 转发仍是设计；本批未接入，不能将本机 uid 认证当作浏览器用户委托。实现时另行更新 [Webdesk 设计](../webdesk-design.md)。
+5. Webdesk 保持独立进程、不直接读写 DepDek Home。第三批已提供固定 loopback 业务会话/只读代理，完整 V2 HTTP 转发仍未完成；不能将本机 uid 认证当作浏览器用户委托，实际边界见 [Webdesk 设计](../webdesk-design.md)。
 6. 本目录作为 V2.0 工程总设计；旧 [重构路线](../depdek-refactor-roadmap.md) 的“今天页主入口”等历史排序不再控制新 Shell。接口名称在实现前仍可评审修订。
 
 ## 已确认的关键决策

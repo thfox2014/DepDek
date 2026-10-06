@@ -18,6 +18,8 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::vault::{ReadAuthority, SecretFileError, SecretFiles};
 mod migration;
+#[path = "secrets/provider_use.rs"]
+mod provider_use;
 
 pub const IDLE_LOCK_SECONDS: u64 = 300;
 const MAX_CREDENTIALS: usize = 128;

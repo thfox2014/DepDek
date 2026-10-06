@@ -443,7 +443,21 @@ type TodoQueueFile = { version: 1; updatedAt: string; items: TodoItem[] };
 - Webdesk 为可选 BFF，只代理这六类固定方法；通过独立 HttpOnly/SameSite cookie 持有会话，POST 校验精确 Origin 与 CSRF。BFF 不读 Home、秘密、配置或业务文件，不提供任意 RPC/shell 转发；接口独立登记在 webdesk-design.md。
 - 会话有绝对/空闲超时、容量、登录冷却，重启失效；logout 撤销后不能继续查询。查询授权锁覆盖读取和严格审计，返回前重验期限。目录 ACL 不是对象级 ACL、持久 membership 或多 workspace 注册；修改成员/目录需受控重启。
 - 不自动开启网络或改现有登录/文件/Agent 界面；无认证模式拒绝新业务代理入口。旧 Provider、租约、客户端主写切换和真实迁移仍待后续发布门，不因本批新增会话而开放模型或业务写入。
-## 12. 浏览器预览 HTTP 服务（standalone sidecar）
+## 12. AgentOS R1 第四批：Worker 文件委托与控制 Profile
+
+`depdekd` 增量提供 `v2/delegated.worker.issue/revoke` 与 `v2/worker.invoke`：业务 session + CSRF 签发短期、目录子集、次数受限的 file-query bearer；Worker 不持用户 session/CSRF/密码或 API Key。签发/撤销、scope 检查、调用预算和返回前复验均在 Vault 内，注销/过期/重启失效，审计失败不放行。该通道不注册到旧 sidecar，不改变桌面/React 旧接口或 ID 空间。
+
+可选可信启动 `provider_profiles` 只登记凭据引用，owner-only `v2/providers.list` 检查 Secret Store 的脱敏元数据、用途/revision/锁定/撤销。没有明文 getter、Credential Lease、模型外发或客户端切换。实际协议与预算见 [第四批运行时契约](agentos-v2/runtime-r1-workers.md)。本机同 uid 不等于生产 Worker 隔离。
+
+## 13. AgentOS R1 第五批：受限进程通道与一次性本机模型出口
+
+可选 `worker_transport` 为 Linux 独立 uid 提供单独 Unix listener，仅接受 `v2/worker.invoke` 和 `v2/model.invoke`；owner 控制 socket 不接受 Worker uid。目录/凭据/授权仍由 Vault 控制，Worker 不获得 Home、Secret Store 或管理 RPC。实际配置与验收见 [第五批契约](agentos-v2/runtime-r1-gateway.md)。此增量不修改旧 Tauri/sidecar/React/Webdesk 接口，也不自动接入已有 Pi/Harness。
+
+默认关闭的 `local_model_profiles` 只允许明确登记、数值回环 HTTP `/v1` Profile，用于本机模型/合成 Provider 验收，不支持云端或 DNS endpoint。业务 session + CSRF 显式调用 `v2/delegated.model.issue`，把单次 prompt、Provider/Profile revision、输出预算和 TTL 绑定到不可扩大的 bearer；`revoke`/logout/过期/重启使其失效。`v2/model.invoke` 只接收 bearer/workspace/run/call_id，不接收 prompt、Key、endpoint、工具或 messages。
+
+API Key 仅由 core 内部限定用途回调使用，仍无 getter/export；密钥库锁覆盖有界请求，轮换/撤销等待当前请求排空后生效。意图先持久审计再外发，失败/超时不自动重试；任何已尝试的授权均被消费。返回只解析选定文本和合法 usage，禁止回显当前 Key；服务返回前复核用户/授权期限。该单次开发出口不是持久 Job/外部行动回执、远程 TLS Gateway 或完整生产沙箱。
+
+## 14. 浏览器预览 HTTP 服务（standalone sidecar）
 
 浏览器无法调用 Tauri commands，standalone sidecar 提供一个最小 HTTP API（仅绑定 `127.0.0.1`）承载浏览器预览；所有读写都经 `vault/*`（settings 落盘在数据文件夹内，不进入浏览器存储）：
 

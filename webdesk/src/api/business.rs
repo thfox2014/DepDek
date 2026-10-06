@@ -419,11 +419,14 @@ mod tests {
         let socket = temp.path().join("runtime/command.sock");
         let core = Arc::new(
             Service::open(&ServeConfig {
+                local_model_profiles: vec![],
+                worker_transport: None,
                 workspace_id: "family-demo".into(),
                 root: root.clone(),
                 read_paths: vec!["documents".into()],
                 socket: socket.clone(),
                 secret_dir: None,
+                provider_profiles: vec![],
                 access_users: vec![AccessUser {
                     principal_id: "alice".into(),
                     password_hash: hash_business_password(SecretText::new(PASSWORD.into()))

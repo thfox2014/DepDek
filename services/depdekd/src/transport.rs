@@ -7,6 +7,7 @@ use anyhow::{bail, Context, Result};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 
+use crate::service::WorkerTransport;
 use crate::service::{protocol_error, RpcRequest, Service};
 use crate::{MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES};
 use zeroize::Zeroizing;
@@ -56,6 +57,47 @@ fn check_runtime_meta(meta: &std::fs::Metadata) -> Result<()> {
     Ok(())
 }
 
+/// Operator provisioned directory. Do not grant workers data or owner RPC access.
+pub fn bind_worker_socket(config: &WorkerTransport) -> Result<(UnixListener, SocketGuard)> {
+    if !cfg!(target_os = "linux")
+        || !config.socket.is_absolute()
+        || config.uid == 0
+        || config.uid == unsafe { libc::geteuid() }
+        || config.gid == 0
+    {
+        bail!("invalid isolated Worker transport");
+    }
+    let parent = config
+        .socket
+        .parent()
+        .context("Worker socket parent required")?;
+    let metadata = std::fs::symlink_metadata(parent)?;
+    if !metadata.is_dir()
+        || metadata.file_type().is_symlink()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.gid() != config.gid
+        || metadata.mode() & 0o777 != 0o710
+        || std::fs::canonicalize(parent)? != parent
+    {
+        bail!("Worker socket parent requires owner uid, worker gid, canonical 0710 directory");
+    }
+    let listener = UnixListener::bind(&config.socket)
+        .context("bind Worker socket; existing files never replaced")?;
+    let meta = std::fs::symlink_metadata(&config.socket)?;
+    let guard = SocketGuard {
+        path: config.socket.clone(),
+        dev: meta.dev(),
+        ino: meta.ino(),
+    };
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(config.socket.as_os_str().as_bytes())?;
+    if unsafe { libc::chown(path.as_ptr(), u32::MAX, config.gid) } != 0 {
+        bail!("Worker socket group assignment failed");
+    }
+    std::fs::set_permissions(&config.socket, std::fs::Permissions::from_mode(0o660))?;
+    Ok((listener, guard))
+}
+
 pub struct SocketGuard {
     path: PathBuf,
     dev: u64,
@@ -76,6 +118,22 @@ pub async fn serve(
     service: Arc<Service>,
     shutdown: impl std::future::Future<Output = ()>,
 ) -> Result<()> {
+    serve_channel(listener, service, None, shutdown).await
+}
+pub async fn serve_worker(
+    listener: UnixListener,
+    service: Arc<Service>,
+    worker_uid: u32,
+    shutdown: impl std::future::Future<Output = ()>,
+) -> Result<()> {
+    serve_channel(listener, service, Some(worker_uid), shutdown).await
+}
+async fn serve_channel(
+    listener: UnixListener,
+    service: Arc<Service>,
+    worker_uid: Option<u32>,
+    shutdown: impl std::future::Future<Output = ()>,
+) -> Result<()> {
     let permits = Arc::new(tokio::sync::Semaphore::new(CONNECTION_LIMIT));
     let mut tasks = tokio::task::JoinSet::new();
     let mut credential_timer = tokio::time::interval(Duration::from_secs(5));
@@ -93,7 +151,7 @@ pub async fn serve(
                     let _permit = permit;
                     // Errors contain no requests or content. A disconnected
                     // client does not turn an audited read into a retryable write.
-                    if handle_connection(stream,service).await.is_err() {
+                    if handle_connection(stream,service,worker_uid).await.is_err() {
                         eprintln!("[depdekd] connection closed without a result");
                     }
                 });
@@ -105,12 +163,16 @@ pub async fn serve(
     Ok(())
 }
 
-async fn handle_connection(mut stream: UnixStream, service: Arc<Service>) -> Result<()> {
+async fn handle_connection(
+    mut stream: UnixStream,
+    service: Arc<Service>,
+    worker_uid: Option<u32>,
+) -> Result<()> {
     let uid = stream.peer_cred().context("verify Unix peer")?.uid();
-    if uid != service.owner_uid() {
+    if uid != worker_uid.unwrap_or(service.owner_uid()) {
         write_response(
             &mut stream,
-            protocol_error(-32000, "local owner authentication required"),
+            protocol_error(-32000, "Unix peer authentication required"),
         )
         .await?;
         return Ok(());
@@ -137,7 +199,13 @@ async fn handle_connection(mut stream: UnixStream, service: Arc<Service>) -> Res
     };
     let response = tokio::time::timeout(
         REQUEST_TIMEOUT,
-        tokio::task::spawn_blocking(move || service.dispatch(uid, request)),
+        tokio::task::spawn_blocking(move || {
+            if worker_uid.is_some() {
+                service.dispatch_worker(uid, request)
+            } else {
+                service.dispatch(uid, request)
+            }
+        }),
     )
     .await
     .context("command deadline exceeded")??;
@@ -166,8 +234,10 @@ pub async fn read_frame(stream: &mut UnixStream, limit: usize) -> Result<Vec<u8>
     }
 }
 
-async fn write_response(stream: &mut UnixStream, response: serde_json::Value) -> Result<()> {
-    let mut bytes = serde_json::to_vec(&response)?;
+async fn write_response(stream: &mut UnixStream, mut response: serde_json::Value) -> Result<()> {
+    let serialized = serde_json::to_vec(&response);
+    agent_workbench_lib::secrets::wipe_json(&mut response);
+    let mut bytes = Zeroizing::new(serialized?);
     if bytes.len() > MAX_RESPONSE_BYTES {
         bail!("response budget exceeded");
     }
@@ -181,6 +251,14 @@ pub async fn call(
     method: &str,
     params: serde_json::Value,
 ) -> Result<serde_json::Value> {
+    call_as(socket, method, params, unsafe { libc::geteuid() }).await
+}
+pub async fn call_as(
+    socket: &Path,
+    method: &str,
+    params: serde_json::Value,
+    server_uid: u32,
+) -> Result<serde_json::Value> {
     let mut request = serde_json::json!({"jsonrpc":"2.0","id":1,"method":method,"params":params});
     let serialized = serde_json::to_vec(&request);
     agent_workbench_lib::secrets::wipe_json(&mut request);
@@ -192,12 +270,14 @@ pub async fn call(
     let mut stream = UnixStream::connect(socket)
         .await
         .context("connect to depdekd")?;
-    if stream.peer_cred()?.uid() != unsafe { libc::geteuid() } {
-        bail!("server is not owned by the local user");
+    if stream.peer_cred()?.uid() != server_uid {
+        bail!("server uid does not match trusted registration");
     }
     tokio::time::timeout(IO_TIMEOUT, stream.write_all(&bytes)).await??;
-    let bytes = tokio::time::timeout(REQUEST_TIMEOUT, read_frame(&mut stream, MAX_RESPONSE_BYTES))
-        .await??;
+    let bytes = Zeroizing::new(
+        tokio::time::timeout(REQUEST_TIMEOUT, read_frame(&mut stream, MAX_RESPONSE_BYTES))
+            .await??,
+    );
     let response: serde_json::Value =
         serde_json::from_slice(&bytes).context("invalid service response")?;
     if response["jsonrpc"] != "2.0" || response["id"] != 1 {

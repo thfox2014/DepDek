@@ -39,6 +39,7 @@ chacha20poly1305 = { version = "0.11", default-features = false, features = ["al
 zeroize = "1.9"
 getrandom = "0.4"
 url = "2"
+reqwest = { version = "=0.13.4", default-features = false, features = ["blocking", "json"] }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 thiserror = "2"

@@ -372,7 +372,7 @@ mod tests {
         s.set_entry("mail", "a.password", "very-secret-password").unwrap();
         let text = std::fs::read_to_string(dir.path().join("secrets/mail.enc.json")).unwrap();
         assert!(!text.contains("very-secret-password"));
-        assert!(text.contains("$secret") == false);
+        assert!(!text.contains("$secret"));
         assert!(text.contains("entries"));
     }
 

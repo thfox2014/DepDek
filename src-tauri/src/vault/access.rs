@@ -15,6 +15,12 @@ const ABSOLUTE_TTL: u64 = 3600;
 const IDLE_TTL: u64 = 600;
 const SESSION_LIMIT: usize = 64;
 const HASH_PREFIX: &str = "$argon2id$v=19$m=65536,t=3,p=1$";
+#[path = "access/workers.rs"]
+mod workers;
+pub use workers::{WorkerCall, WorkerIssue, WorkerRevoke};
+#[path = "access/gateway.rs"]
+mod gateway;
+pub use gateway::{ModelCall, ModelIssue, ModelRevoke};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -56,6 +62,12 @@ pub enum AccessError {
     NotFound,
     #[error("durable business audit unavailable")]
     Audit,
+    #[error("worker query call already used")]
+    Conflict,
+    #[error("model outcome unavailable; authorization consumed")]
+    ModelUnknown,
+    #[error(transparent)]
+    Credential(#[from] crate::secrets::SecretError),
 }
 impl AccessError {
     pub fn code(&self) -> &'static str {
@@ -68,6 +80,9 @@ impl AccessError {
             Self::Unavailable => "CAPABILITY_UNAVAILABLE",
             Self::NotFound => "NOT_FOUND",
             Self::Audit => "AUDIT_UNAVAILABLE",
+            Self::Conflict => "CONFLICT",
+            Self::ModelUnknown => "MODEL_OUTCOME_UNKNOWN",
+            Self::Credential(error) => error.code(),
         }
     }
     pub fn message(&self) -> &'static str {
@@ -80,6 +95,9 @@ impl AccessError {
             Self::Unavailable => "business access unavailable",
             Self::NotFound => "business resource not visible",
             Self::Audit => "durable business audit unavailable",
+            Self::Conflict => "worker query call already used",
+            Self::ModelUnknown => "model outcome unavailable; do not retry this authorization",
+            Self::Credential(error) => error.message(),
         }
     }
 }
@@ -119,6 +137,8 @@ pub(super) struct AccessState {
     users: BTreeMap<String, AccessUser>,
     sessions: HashMap<String, Session>,
     attempts: HashMap<String, Attempt>,
+    workers: HashMap<String, workers::WorkerLease>,
+    models: HashMap<String, gateway::ModelLease>,
 }
 fn argon() -> Result<Argon2<'static>, AccessError> {
     let params = Params::new(65536, 3, 1, Some(32)).map_err(|_| AccessError::Unavailable)?;
@@ -348,6 +368,8 @@ impl ManagedReadVault {
                     return Err(AccessError::Forbidden);
                 }
                 state.sessions.remove(&id);
+                state.workers.retain(|_, lease| lease.session_id != id);
+                state.models.retain(|_, lease| lease.session_id != id);
                 Ok(json!({"logged_out":true}))
             } else {
                 state.sessions.get_mut(&id).unwrap().last_seen = Instant::now();

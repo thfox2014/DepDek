@@ -33,12 +33,15 @@ fn prepare() -> (tempfile::TempDir, ServeConfig) {
     .unwrap();
     std::fs::write(root.join("private/secret.txt"), "never expose me").unwrap();
     let config = ServeConfig {
+        local_model_profiles: vec![],
+        worker_transport: None,
         workspace_id: "family-demo".into(),
         root,
         read_paths: vec!["documents".into()],
         socket: temp.path().join("runtime/depdekd.sock"),
         secret_dir: None,
         access_users: vec![],
+        provider_profiles: vec![],
     };
     (temp, config)
 }

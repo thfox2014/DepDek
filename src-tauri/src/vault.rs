@@ -257,9 +257,7 @@ fn is_trusted_session(session_id: &str) -> bool {
 /// in PROTECTED_PATHS or anything under the encrypted `secrets/` tree (the
 /// master key and encrypted credential blobs from `credentials.rs`).
 fn is_protected_path(relnorm: &str) -> bool {
-    PROTECTED_PATHS.contains(&relnorm)
-        || relnorm == "secrets"
-        || relnorm.starts_with("secrets/")
+    PROTECTED_PATHS.contains(&relnorm) || relnorm == "secrets" || relnorm.starts_with("secrets/")
 }
 
 /// Exact-match list used by `compress` to skip protected files by absolute
@@ -776,7 +774,11 @@ impl Vault {
         Ok(ListDirResult { entries })
     }
 
-    fn search_files_inner(&self, query: &str, session_id: &str) -> Result<SearchResult, VaultError> {
+    fn search_files_inner(
+        &self,
+        query: &str,
+        session_id: &str,
+    ) -> Result<SearchResult, VaultError> {
         let pair = self.root_pair()?;
         let mut matches = Vec::new();
         search_dir(&pair.root, &pair.root, query, &mut matches, session_id);
@@ -905,12 +907,14 @@ impl Vault {
                 &mut builder,
                 &source_path,
                 archive_base.as_deref(),
-                &archive_path,
-                &temp_path,
                 &mut files,
                 &mut bytes,
-                excluded,
-                skip_secrets,
+                &ArchiveFilters {
+                    archive: &archive_path,
+                    temporary: &temp_path,
+                    excluded,
+                    skip_secrets,
+                },
             )?;
             let encoder = builder.into_inner()?;
             encoder.finish()?;
@@ -939,26 +943,30 @@ impl Vault {
     }
 }
 
+struct ArchiveFilters<'a> {
+    archive: &'a Path,
+    temporary: &'a Path,
+    excluded: &'a [PathBuf],
+    skip_secrets: bool,
+}
+
 fn append_archive_entries(
     builder: &mut TarBuilder<GzEncoder<fs::File>>,
     path: &Path,
     name: Option<&Path>,
-    archive_path: &Path,
-    temp_path: &Path,
     files: &mut usize,
     bytes: &mut u64,
-    excluded: &[PathBuf],
-    skip_secrets: bool,
+    filters: &ArchiveFilters<'_>,
 ) -> Result<(), VaultError> {
     let file_type = fs::symlink_metadata(path)?.file_type();
     if file_type.is_symlink() {
         return Ok(());
     }
     if file_type.is_file() {
-        if path == archive_path
-            || path == temp_path
+        if path == filters.archive
+            || path == filters.temporary
             || path.file_name().is_some_and(|n| n == AUDIT_FILE_NAME)
-            || excluded.iter().any(|candidate| candidate == path)
+            || filters.excluded.iter().any(|candidate| candidate == path)
         {
             return Ok(());
         }
@@ -989,7 +997,7 @@ fn append_archive_entries(
         }
         // Encrypted credential blobs and the master key never enter archives
         // produced on behalf of an agent session.
-        if skip_secrets && entry.file_name() == "secrets" {
+        if filters.skip_secrets && entry.file_name() == "secrets" {
             continue;
         }
         let child_name = match name {
@@ -1000,12 +1008,9 @@ fn append_archive_entries(
             builder,
             &entry.path(),
             Some(&child_name),
-            archive_path,
-            temp_path,
             files,
             bytes,
-            excluded,
-            skip_secrets,
+            filters,
         )?;
     }
     Ok(())
@@ -1174,7 +1179,15 @@ pub struct ManagedReadVault {
 #[path = "vault/access.rs"]
 mod access;
 #[cfg(unix)]
-pub use access::{hash_business_password, AccessError, AccessUser, LoginInput};
+pub use access::{
+    hash_business_password, AccessError, AccessUser, LoginInput, ModelCall, ModelIssue,
+    ModelRevoke, WorkerCall, WorkerIssue, WorkerRevoke,
+};
+#[cfg(unix)]
+#[path = "vault/profiles.rs"]
+mod profiles;
+#[cfg(unix)]
+pub use profiles::{CredentialCatalogue, ProviderProfiles, ProviderRegistration};
 
 #[cfg(unix)]
 impl ManagedReadVault {
@@ -2780,11 +2793,7 @@ mod tests {
                 -32001,
                 "write {p}"
             );
-            assert_eq!(
-                v.stat("agent-1", p).unwrap_err().code(),
-                -32001,
-                "stat {p}"
-            );
+            assert_eq!(v.stat("agent-1", p).unwrap_err().code(), -32001, "stat {p}");
             assert_eq!(
                 v.delete_file("agent-1", p).unwrap_err().code(),
                 -32001,
@@ -2794,10 +2803,7 @@ mod tests {
             let parent = p.rsplit_once('/').map(|(d, _)| d).unwrap();
             let name = p.rsplit('/').next().unwrap();
             let list = v.list_dir("agent-1", parent).unwrap();
-            assert!(
-                !list.entries.iter().any(|e| e.name == name),
-                "listed {p}"
-            );
+            assert!(!list.entries.iter().any(|e| e.name == name), "listed {p}");
         }
 
         // Agent searches never expose credential content.
@@ -2831,10 +2837,7 @@ mod tests {
 
         // Agent sessions get a filtered archive.
         let agent = v.compress("agent-1", "mail", None).unwrap();
-        assert_eq!(
-            agent.files, 0,
-            "agent archive should exclude accounts.json"
-        );
+        assert_eq!(agent.files, 0, "agent archive should exclude accounts.json");
     }
 
     #[test]
@@ -2853,9 +2856,8 @@ mod tests {
                 -32001,
                 "read {p}"
             );
-            assert_eq!(
+            assert!(
                 v.read_file("user", p).unwrap().content.contains("enc") || p.contains("key"),
-                true,
                 "trusted read {p}"
             );
             assert_eq!(
@@ -2868,11 +2870,7 @@ mod tests {
                 -32001,
                 "write_binary {p}"
             );
-            assert_eq!(
-                v.stat("agent-1", p).unwrap_err().code(),
-                -32001,
-                "stat {p}"
-            );
+            assert_eq!(v.stat("agent-1", p).unwrap_err().code(), -32001, "stat {p}");
             assert_eq!(
                 v.delete_file("agent-1", p).unwrap_err().code(),
                 -32001,
@@ -2906,7 +2904,10 @@ mod tests {
         );
         let results = v.search_files("user", "cipher").unwrap();
         assert!(
-            results.matches.iter().any(|m| m.path == "secrets/mail.enc.json"),
+            results
+                .matches
+                .iter()
+                .any(|m| m.path == "secrets/mail.enc.json"),
             "trusted search should find secrets content"
         );
     }

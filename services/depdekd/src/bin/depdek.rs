@@ -7,14 +7,26 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     if args.is_empty() || args == ["--help"] {
-        println!("depdek {}\n  depdek auth hash-password  (hidden TTY; prints PHC only)\n  depdek --socket PATH health\n  depdek --socket PATH commands --workspace ID\n  depdek --socket PATH command file.list|file.read|file.stat --workspace ID --input '{{\"path\":\"documents\"}}' --json\n  depdek --socket PATH credentials status|init|unlock|lock|list|receipt|put|revoke|import-preview|import --workspace ID [--stdin] [--operation ID]\nCredential input: hidden TTY for init/unlock, explicit stdin JSON otherwise. No credential --input/secret argv/env. Always prints JSON; no shell/data fallback.",depdekd::VERSION);
+        println!("depdek {}\n  depdek auth hash-password  (hidden TTY; prints PHC only)\n  depdek --socket PATH health\n  depdek --socket PATH commands|providers --workspace ID\n  depdek --socket PATH command file.list|file.read|file.stat --workspace ID --input '{{\"path\":\"documents\"}}' --json\n  depdek --socket PATH credentials status|init|unlock|lock|list|receipt|put|revoke|import-preview|import --workspace ID [--stdin] [--operation ID]\n  depdek --socket PATH auth login|session|logout --stdin\n  depdek --socket PATH worker issue|revoke|invoke --workspace ID --stdin\nSensitive input: hidden TTY for credential init/unlock, explicit stdin JSON otherwise. No secret --input/argv/env. Always prints JSON; no shell/data fallback. Session/lease bearer appears only in its issuance response; never send it to a model.",depdekd::VERSION);
+        println!("  depdek --socket PATH model issue|revoke|invoke --workspace ID --stdin\n  depdek auth hash-password --stdin  (explicit bounded password JSON)");
         return Ok(());
     }
-    if args == ["auth", "hash-password"] {
+    if args == ["auth", "hash-password"] || args == ["auth", "hash-password", "--stdin"] {
         use agent_workbench_lib::secrets::SecretText;
-        let password = SecretText::new(rpassword::prompt_password(
-            "New business password (12+ bytes): ",
-        )?);
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Password {
+            password: SecretText,
+        }
+        let password = if args.len() == 3 {
+            serde_json::from_value::<Password>(sensitive_stdin()?)
+                .map_err(|_| anyhow::anyhow!("invalid password input"))?
+                .password
+        } else {
+            SecretText::new(rpassword::prompt_password(
+                "New business password (12+ bytes): ",
+            )?)
+        };
         println!(
             "{}",
             agent_workbench_lib::vault::hash_business_password(password)?
@@ -45,6 +57,55 @@ async fn main() -> anyhow::Result<()> {
             "v2/commands.list",
             serde_json::json!({"workspace_id":required(workspace,"workspace")?}),
         ),
+        [kind] if kind == "providers" && input.is_none() && operation.is_none() && !stdin_input => {
+            (
+                "v2/providers.list",
+                serde_json::json!({"workspace_id":required(workspace,"workspace")?}),
+            )
+        }
+        [kind, action]
+            if kind == "auth"
+                && workspace.is_none()
+                && input.is_none()
+                && operation.is_none()
+                && stdin_input =>
+        {
+            let method = match action.as_str() {
+                "login" => "v2/auth.login",
+                "session" => "v2/auth.session",
+                "logout" => "v2/auth.logout",
+                _ => anyhow::bail!("unsupported auth action"),
+            };
+            (method, sensitive_stdin()?)
+        }
+        [kind, action]
+            if (kind == "worker" || kind == "model")
+                && input.is_none()
+                && operation.is_none()
+                && stdin_input =>
+        {
+            let method = match (kind.as_str(), action.as_str()) {
+                ("worker", "issue") => "v2/delegated.worker.issue",
+                ("worker", "revoke") => "v2/delegated.worker.revoke",
+                ("worker", "invoke") => "v2/worker.invoke",
+                ("model", "issue") => "v2/delegated.model.issue",
+                ("model", "revoke") => "v2/delegated.model.revoke",
+                ("model", "invoke") => "v2/model.invoke",
+                _ => anyhow::bail!("unsupported worker action"),
+            };
+            let mut params = sensitive_stdin()?;
+            let object = params
+                .as_object_mut()
+                .ok_or_else(|| anyhow::anyhow!("invalid stdin JSON object"))?;
+            if object.contains_key("workspace_id") {
+                anyhow::bail!("workspace must be specified only via --workspace");
+            }
+            object.insert(
+                "workspace_id".into(),
+                serde_json::json!(required(workspace, "workspace")?),
+            );
+            (method, params)
+        }
         [kind, command] if kind == "command" && operation.is_none() && !stdin_input => (
             "v2/command.invoke",
             serde_json::json!({
@@ -60,12 +121,28 @@ async fn main() -> anyhow::Result<()> {
         }
         _ => anyhow::bail!("unsupported command or duplicate/unknown option; see --help"),
     };
-    let response = depdekd::transport::call(std::path::Path::new(&socket), method, params).await?;
+    let mut response =
+        depdekd::transport::call(std::path::Path::new(&socket), method, params).await?;
     println!("{}", serde_json::to_string_pretty(&response)?);
-    if response.get("error").is_some() {
+    let failed = response.get("error").is_some();
+    agent_workbench_lib::secrets::wipe_json(&mut response);
+    if failed {
         std::process::exit(2);
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn sensitive_stdin() -> anyhow::Result<serde_json::Value> {
+    use std::io::Read;
+    let mut bytes = zeroize::Zeroizing::new(Vec::with_capacity(depdekd::MAX_REQUEST_BYTES + 1));
+    std::io::stdin()
+        .take((depdekd::MAX_REQUEST_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > depdekd::MAX_REQUEST_BYTES {
+        anyhow::bail!("sensitive input exceeds budget");
+    }
+    serde_json::from_slice(&bytes).map_err(|_| anyhow::anyhow!("invalid sensitive JSON input"))
 }
 
 #[cfg(unix)]

@@ -2,8 +2,10 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use agent_workbench_lib::vault::{
-    AccessError, AccessUser, LoginInput, ManagedReadError, ManagedReadOperation, ManagedReadVault,
-    ReadAuthority, MANAGED_MAX_LIST_ENTRIES, MANAGED_MAX_TEXT_BYTES,
+    AccessError, AccessUser, CredentialCatalogue, LoginInput, ManagedReadError,
+    ManagedReadOperation, ManagedReadVault, ModelCall, ModelIssue, ModelRevoke, ProviderProfiles,
+    ProviderRegistration, ReadAuthority, WorkerCall, WorkerIssue, WorkerRevoke,
+    MANAGED_MAX_LIST_ENTRIES, MANAGED_MAX_TEXT_BYTES,
 };
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
@@ -26,6 +28,20 @@ pub struct ServeConfig {
     pub secret_dir: Option<PathBuf>,
     #[serde(default)]
     pub access_users: Vec<AccessUser>,
+    #[serde(default)]
+    pub provider_profiles: Vec<ProviderRegistration>,
+    #[serde(default)]
+    pub local_model_profiles: Vec<String>,
+    #[serde(default)]
+    pub worker_transport: Option<WorkerTransport>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkerTransport {
+    pub socket: PathBuf,
+    pub uid: u32,
+    pub gid: u32,
 }
 
 #[derive(Deserialize)]
@@ -213,6 +229,9 @@ pub struct Service {
     sequence: AtomicU64,
     vault: ManagedReadVault,
     secret_store: Option<SecretStore>,
+    provider_profiles: ProviderProfiles,
+    local_model_profiles: Vec<String>,
+    worker_uid: Option<u32>,
 }
 
 impl Service {
@@ -223,6 +242,17 @@ impl Service {
         }
         if !config.root.is_absolute() || !config.socket.is_absolute() {
             bail!("root and socket must be absolute paths");
+        }
+        if let Some(worker) = &config.worker_transport {
+            if !cfg!(target_os = "linux")
+                || worker.uid == 0
+                || worker.gid == 0
+                || worker.uid == owner_uid
+                || !worker.socket.is_absolute()
+                || worker.socket == config.socket
+            {
+                bail!("Worker transport requires Linux, a distinct non-root uid/gid and separate absolute socket");
+            }
         }
         let principal_id = format!("local:{owner_uid}");
         let vault = ManagedReadVault::open(
@@ -243,6 +273,12 @@ impl Service {
             })
             .collect();
         vault.configure_access(access_users)?;
+        let provider_profiles =
+            vault.register_provider_profiles(config.provider_profiles.clone())?;
+        vault.validate_local_model_profiles(&provider_profiles, &config.local_model_profiles)?;
+        if !config.local_model_profiles.is_empty() && config.secret_dir.is_none() {
+            bail!("local model profiles require an explicit Secret Store");
+        }
         let secret_store = config
             .secret_dir
             .as_ref()
@@ -263,6 +299,9 @@ impl Service {
             sequence: AtomicU64::new(1),
             vault,
             secret_store,
+            provider_profiles,
+            local_model_profiles: config.local_model_profiles.clone(),
+            worker_uid: config.worker_transport.as_ref().map(|worker| worker.uid),
         })
     }
 
@@ -271,16 +310,34 @@ impl Service {
     }
 
     pub fn dispatch(&self, peer_uid: u32, mut request: RpcRequest) -> Value {
+        self.dispatch_channel(peer_uid, &mut request, false)
+    }
+    pub fn dispatch_worker(&self, peer_uid: u32, mut request: RpcRequest) -> Value {
+        self.dispatch_channel(peer_uid, &mut request, true)
+    }
+    fn dispatch_channel(&self, peer_uid: u32, request: &mut RpcRequest, worker: bool) -> Value {
         let id = request.id;
         let request_id = format!(
             "{}-{}",
             self.request_prefix,
             self.sequence.fetch_add(1, Ordering::Relaxed)
         );
-        let result = if peer_uid != self.owner_uid {
+        let result = if (!worker && peer_uid != self.owner_uid)
+            || (worker && self.worker_uid != Some(peer_uid))
+        {
             Err(ApiError::forbidden())
         } else if request.jsonrpc != "2.0" {
             Err(ApiError::invalid())
+        } else if worker
+            && !matches!(
+                request.method.as_str(),
+                "v2/worker.invoke" | "v2/model.invoke"
+            )
+        {
+            self.vault
+                .deny_worker_protocol(&request_id)
+                .map(|_| json!({}))
+                .map_err(ApiError::from)
         } else {
             self.handle(&request_id, &request.method, request.params.take())
         };
@@ -302,7 +359,7 @@ impl Service {
                 }
                 Ok(
                     json!({"ready":true,"version":VERSION,"mode":"local_owner_read_only",
-                    "engine_enabled":false,"business_writes_enabled":false,"credential_management_enabled":self.secret_store.is_some()}),
+                    "engine_enabled":false,"business_writes_enabled":false,"local_model_gateway_enabled":!self.local_model_profiles.is_empty(),"credential_management_enabled":self.secret_store.is_some()}),
                 )
             }
             "v2/commands.list" => {
@@ -310,6 +367,33 @@ impl Service {
                     serde_json::from_value(params).map_err(|_| ApiError::invalid())?;
                 self.check_workspace(&params.workspace_id)?;
                 Ok(manifests())
+            }
+            "v2/providers.list" => {
+                let params: WorkspaceParams = parse(params)?;
+                let authority =
+                    ReadAuthority::new(&self.principal_id, &params.workspace_id, 1, request_id);
+                self.check_workspace(&params.workspace_id)?;
+                let metadata;
+                let catalogue = match &self.secret_store {
+                    None => CredentialCatalogue::Unavailable,
+                    Some(_) if self.provider_profiles.is_empty() => {
+                        CredentialCatalogue::Unavailable
+                    }
+                    Some(store) => {
+                        let status = store.execute(&authority, SecretOperation::Status)?;
+                        if status["initialized"] == false {
+                            CredentialCatalogue::NotInitialized
+                        } else if status["locked"] == true {
+                            CredentialCatalogue::Locked
+                        } else {
+                            metadata = store.execute(&authority, SecretOperation::List)?;
+                            CredentialCatalogue::Metadata(&metadata)
+                        }
+                    }
+                };
+                self.vault
+                    .provider_catalogue(&authority, &self.provider_profiles, catalogue)
+                    .map_err(ApiError::from)
             }
             "v2/command.invoke" => {
                 let req: CommandRequest =
@@ -354,6 +438,40 @@ impl Service {
                 .vault
                 .login_business(request_id, parse::<LoginInput>(params)?)
                 .map_err(ApiError::from),
+            "v2/delegated.worker.issue" => self
+                .vault
+                .issue_worker(request_id, parse::<WorkerIssue>(params)?)
+                .map_err(ApiError::from),
+            "v2/delegated.worker.revoke" => self
+                .vault
+                .revoke_worker(request_id, parse::<WorkerRevoke>(params)?)
+                .map_err(ApiError::from),
+            "v2/worker.invoke" => self
+                .vault
+                .worker_read(request_id, parse::<WorkerCall>(params)?)
+                .map_err(ApiError::from),
+            "v2/delegated.model.issue" => self
+                .vault
+                .issue_model(
+                    request_id,
+                    parse::<ModelIssue>(params)?,
+                    &self.provider_profiles,
+                    &self.local_model_profiles,
+                )
+                .map_err(ApiError::from),
+            "v2/delegated.model.revoke" => self
+                .vault
+                .revoke_model(request_id, parse::<ModelRevoke>(params)?)
+                .map_err(ApiError::from),
+            "v2/model.invoke" => {
+                let store = self
+                    .secret_store
+                    .as_ref()
+                    .ok_or_else(ApiError::unavailable)?;
+                self.vault
+                    .invoke_model(request_id, parse::<ModelCall>(params)?, store)
+                    .map_err(ApiError::from)
+            }
             "v2/auth.session" | "v2/auth.logout" => {
                 let input: BusinessSessionInput = parse(params)?;
                 if method == "v2/auth.session" && input.csrf_token.is_some() {
@@ -413,6 +531,7 @@ impl Service {
     }
 
     pub fn expire_credentials(&self) {
+        self.vault.expire_delegations();
         if let Some(store) = &self.secret_store {
             store.expire_idle();
         }

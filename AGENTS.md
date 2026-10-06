@@ -8,6 +8,8 @@ Agent Workbench：Tauri 2 跨平台多 agent 工作台。Rust 核心（信任边
 
 - `src-tauri/src/vault.rs` — 数据文件夹沙箱。所有安全校验只在这里做，不得在别处绕过。
 - `src-tauri/src/vault/access.rs` — Vault 内部业务会话/目录授权边界；不接受请求体角色，不把 Webdesk admin/进程 uid 当作业务用户。第三批固定代理仅限 loopback，实际契约见 `docs/agentos-v2/runtime-r1-access.md`。
+- `src-tauri/src/vault/access/workers.rs`、`vault/profiles.rs` — 第四批受信同 uid Worker 的短期只读票据与控制 Profile 引用检查；权限、预算、撤销和审计仍在 Vault 内。不是生产进程隔离/模型 Gateway，禁止自动接入非可信 Agent 或释放 API Key，契约见 `docs/agentos-v2/runtime-r1-workers.md`。
+- `vault/access/gateway.rs`、`secrets/provider_use.rs` — 第五批可选 exact-input 本机模型出口；Key 仅 core 内部有界回调使用，无 getter，默认禁用云端/DNS/自动重试。Linux Worker 独立 uid 固定通道仅接受文件/模型 invoke；真实 Engine/Context/BFF/迁移接线仍待验收，契约见 `docs/agentos-v2/runtime-r1-gateway.md`。
 - `src-tauri/src/audit.rs` — append-only 审计（`.vault-audit.jsonl`）。每个 vault 操作无论成败都必须记录。
 - `services/depdekd/` — R1 本机只读业务服务 + 可选加密凭据管理 + `depdek` CLI，依赖禁用 GUI 的现有 Rust 核心。数据/凭据文件访问只经 `vault.rs::ManagedReadVault/SecretFiles`；Unix peer 身份不可从 JSON 声明。协议见 `docs/agentos-v2/runtime-r1.md` 与 `runtime-r1-secrets.md`，不等于完整 V2 HTTP API。凭据管理禁止 Agent 注册/明文 getter/秘密 argv，不改源或自动启用旧配置。
 - `src-tauri/src/rpc.rs` — stdio NDJSON JSON-RPC。Rust id 空间 1..99999，sidecar 从 100000 起。

@@ -1,6 +1,7 @@
 //! R1 incremental service: local owner identity, versioned read manifests,
 //! and existing Rust Vault; optional credential management and scoped business
-//! sessions. No HTTP listener, model, Job, or business writer.
+//! sessions. Optional exact-input local-only model gateway; no public HTTP,
+//! production engine integration, persistent Job, or business writer.
 
 #[cfg(unix)]
 pub mod service;
