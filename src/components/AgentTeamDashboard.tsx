@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
-import { ArrowRight, Brain, EnvelopeSimple, FileText, GearSix, ImageSquare, MusicNotes, Plus, Robot, ShieldCheck, VideoCamera, Wrench } from "@phosphor-icons/react";
+import { ArrowRight, Brain, EnvelopeSimple, FileText, GearSix, ImageSquare, MusicNotes, Plus, Robot, ShieldCheck, VideoCamera, Wrench, XCircle } from "@phosphor-icons/react";
 import type { Icon } from "@phosphor-icons/react";
-import type { AgentSkill, ProviderConfig, SavedAgent } from "../api";
+import type { AgentSkill, ProviderConfig, SavedAgent, TeamTask, TeamTaskStatus } from "../api";
 import type { AgentMetrics, SessionInfo } from "../App";
 import "./agent-team-dashboard.css";
 
@@ -20,21 +20,48 @@ interface Props {
   metrics: Record<string, AgentMetrics>;
   providers: Record<string, ProviderConfig>;
   running: Record<string, boolean>;
+  teamTasks: TeamTask[];
+  onCancelTask: (taskId: string) => Promise<void>;
   onEnter: (id: string) => void;
   onConfigure: () => void;
   onCreate: (label: string, providerName: string, id?: string, openWorkbench?: boolean, engine?: "pi" | "deepseek-harness", skills?: AgentSkill[]) => Promise<void>;
   onOpenSettings: () => void;
 }
 
+const TASK_STATUS: Record<TeamTaskStatus, string> = {
+  queued: "排队中",
+  running: "执行中",
+  done: "已完成",
+  failed: "失败",
+  cancelled: "已取消",
+};
+
+function taskSort(tasks: TeamTask[]): TeamTask[] {
+  const rank = (status: TeamTaskStatus) => status === "running" ? 0 : status === "queued" ? 1 : 2;
+  return [...tasks].sort((a, b) => {
+    const byStatus = rank(a.status) - rank(b.status);
+    if (byStatus !== 0) return byStatus;
+    return a.updated_at < b.updated_at ? 1 : -1;
+  });
+}
+
+function clipText(value: string, max: number): string {
+  const flat = value.replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max)}…` : flat;
+}
+
 const compact = (value: number) => new Intl.NumberFormat("zh-CN", { notation: "compact", maximumFractionDigits: 1 }).format(value);
 
-export default function AgentTeamDashboard({ agents, sessions, metrics, providers, running, onEnter, onConfigure, onCreate, onOpenSettings }: Props) {
+export default function AgentTeamDashboard({ agents, sessions, metrics, providers, running, teamTasks, onCancelTask, onEnter, onConfigure, onCreate, onOpenSettings }: Props) {
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [newSkills, setNewSkills] = useState<AgentSkill[]>(["documents", "memory"]);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const orderedTasks = useMemo(() => taskSort(teamTasks).slice(0, 20), [teamTasks]);
+  const activeTeamTasks = teamTasks.filter((task) => task.status === "queued" || task.status === "running").length;
   const providerNames = Object.keys(providers);
   const deepseekProvider = Object.entries(providers).find(([name, config]) => name.toLocaleLowerCase().includes("deepseek") || (config.kind === "openai-compatible" && config.base_url.toLocaleLowerCase().includes("deepseek")));
   const deepseekKeyMissing = !deepseekProvider || (deepseekProvider[1].kind === "openai-compatible" ? !deepseekProvider[1].api_key : deepseekProvider[1].kind !== "anthropic" && !deepseekProvider[1].api_key);
@@ -70,7 +97,7 @@ export default function AgentTeamDashboard({ agents, sessions, metrics, provider
         <div className="agent-team-title">
           <span className="agent-team-kicker"><Robot size={15} /> AGENT TEAM</span>
           <h1>每个 Agent，都有自己的专长</h1>
-          <p>选择伙伴开始协作；它能做什么，由已启用技能和本地数据权限共同决定。</p>
+          <p>选择伙伴开始协作。在线的 Agent 可以把任务委托给队友；委托在后台执行，用的仍是对方已有的工具。</p>
         </div>
         <div className="agent-team-actions">
           <button className="agent-team-secondary" onClick={onOpenSettings}><GearSix size={17} />模型与密钥</button>
@@ -119,6 +146,50 @@ export default function AgentTeamDashboard({ agents, sessions, metrics, provider
             </article>
           );
         })}
+      </section>
+
+      <section className="agent-team-tasks" aria-label="协作任务">
+        <div className="agent-team-section-head">
+          <div>
+            <h2>协作任务</h2>
+            <span>{activeTeamTasks > 0 ? `${activeTeamTasks} 个进行中` : "委托和消息会显示在这里"}</span>
+          </div>
+        </div>
+        {orderedTasks.length === 0 ? (
+          <p className="agent-team-tasks-empty">还没有协作任务。Agent 可以用 delegate_task 把工作交给在线队友，完成后结果会回到发起人。</p>
+        ) : (
+          <ul className="agent-team-task-list">
+            {orderedTasks.map((task) => {
+              const cancellable = task.status === "queued" || task.status === "running";
+              return (
+                <li className={`agent-team-task agent-team-task--${task.status}`} key={task.id}>
+                  <span className="agent-team-task-status">{TASK_STATUS[task.status]}</span>
+                  <span className="agent-team-task-kind">{task.kind === "message" ? "消息" : "委托"}</span>
+                  <div className="agent-team-task-body">
+                    <b>{task.from_label} → {task.to_label}</b>
+                    <small>{clipText(task.instruction, 96)}</small>
+                    {task.result_preview && <small className="agent-team-task-result">结果：{clipText(task.result_preview, 140)}</small>}
+                    {task.error && task.status !== "done" && <small className="agent-team-task-error">{clipText(task.error, 120)}</small>}
+                  </div>
+                  {cancellable ? (
+                    <button
+                      type="button"
+                      disabled={cancellingId === task.id}
+                      aria-label={`取消 ${task.from_label} 交给 ${task.to_label} 的任务`}
+                      onClick={() => {
+                        setCancellingId(task.id);
+                        setActionError(null);
+                        void onCancelTask(task.id).catch((error) => setActionError(String(error))).finally(() => setCancellingId((current) => current === task.id ? null : current));
+                      }}
+                    >
+                      <XCircle size={15} />{cancellingId === task.id ? "取消中…" : "取消"}
+                    </button>
+                  ) : <span className="agent-team-task-depth">深度 {task.depth}</span>}
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </section>
 
       <section className="agent-team-integrations">

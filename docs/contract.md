@@ -26,11 +26,14 @@
 
 | 方法 | params | result |
 |---|---|---|
-| `agent/create_session` | `{session_id: string, provider: ProviderConfig, system_prompt?: string, engine?: "pi"\|"deepseek-harness", enabled_skills?: AgentSkill[]}` | `{session_id}` |
+| `agent/create_session` | `{session_id: string, provider: ProviderConfig, system_prompt?: string, engine?: "pi"\|"deepseek-harness", enabled_skills?: AgentSkill[], label?: string}` | `{session_id}` |
 | `agent/send` | `{session_id: string, text: string}` | `{}`（回复经 `agent/event` 流式下发） |
 | `agent/analyze` | `{provider: ProviderConfig, text: string, system_prompt: string, engine?: "pi"\|"deepseek-harness"}` | `{text: string}`（一次性只读分析；不创建持久会话，不暴露写入/删除/外部调用工具） |
 | `agent/abort` | `{session_id: string}` | `{}` |
 | `agent/close_session` | `{session_id: string}` | `{}` |
+| `team/list` | `{}` | `{tasks: TeamTask[]}`（内存队列，sidecar 重启后清空；见 2.11） |
+| `team/cancel` | `{task_id: string}` | `{task: TeamTask}`（未知 id 返回 -32013；已结束的任务原样返回） |
+| `team/roster` | `{agents: [{id: string, label: string}]}` | `{updated: number}`（只更新已存在会话的显示名） |
 | `mail/fetch` | `{account?: string, refresh_body?: boolean}`（账号显示名，缺省收全部；`refresh_body` 用于修复旧缓存的正文占位符） | `{fetched: number, accounts: [{name: string, new_messages: number, error?: string}]}` |
 | `mail/delete` | `{account: string, uids: number[]}` | `{account: string, deleted: number}`（仅在 IMAP UIDPLUS 可安全定位删除目标时执行） |
 | `mail/list_mailboxes` | `{account: string}` | `{account: string, mailboxes: [{path, special_use?, subscribed?, messages?, unseen?}]}` |
@@ -108,6 +111,7 @@ sidecar 另注册 `propose_memory` 工具（必须提供 `source_refs`），它�
 | -32010 | session id 重复（sidecar 返回） |
 | -32011 | 未知 session（sidecar 返回） |
 | -32012 | session 忙（上一个请求未完成，sidecar 返回） |
+| -32013 | 未知的团队协作任务（`team/cancel`，sidecar 返回） |
 
 sidecar 级致命错误（不归属于某个会话）用 `session_id: "system"` 的 `agent/event` error 通知上报。
 
@@ -186,6 +190,41 @@ type MemoryRecord = {
   created_at: string;
   updated_at: string;
 };
+```
+
+### 2.11 Agent 团队协作（委托与互发消息）
+
+Pi 会话在原有技能工具之外，额外拥有三个协作工具：`list_teammates`、`delegate_task`、`send_agent_message`。它们**不**属于 `enabled_skills` 白名单，也**不**增加 shell 或任意文件系统能力。被委托的会话只使用它自己已经启用的工具；DeepSeek Harness 会话没有这些工具，但可以被委托（只做文本回合）。只读 `agent/analyze` 不注册协作工具。
+
+- `delegate_task` 立即返回任务 id，发起方继续当前对话。任务在目标会话空闲后异步执行。
+- `send_agent_message` 走同一条队列，区别只是提示词把内容当作消息而不是待办工作。
+- 状态：`queued` → `running` → `done` | `failed` | `cancelled`。每次变化发 `team/event`，Rust 转发为 `team://event`。
+- 结束后把一段结果提示送回发起方会话（该回合 `origin=result`，协作工具会拒绝再次委托，避免结果回传把环重新打开）。
+- 循环防护：深度上限 3；链上已出现的 session 不能再次成为目标；不能委托给自己；每个发起方同时最多 4 个未完成任务，全局最多 16 个；相同发起方、目标和正文视为重复，不新建任务。委托正文上限 4000 字符，消息上限 2000 字符。
+- 用户从团队面板调用 `team/cancel`。排队中的任务直接取消；执行中的任务只中止这次协作回合，不把用户自己的对话误停掉。
+- 目标必须已经有会话。未启动的 Agent 不会被自动创建。
+- 每次接受、拒绝和状态变化都由 sidecar 调用 Rust `team/audit`。Rust 追加一条 `op: "team"` 的审计记录，`path` 为逻辑主体 `team/<task_id>/<kind>/<status>/<peer>`，不是数据文件夹里的文件。`task_id` 必须匹配 `tsk_` + 8–32 位十六进制；session id 只允许 `A-Za-z0-9_.:-`，避免把审计路径写成逃逸路径。审计失败不阻断协作。
+
+```ts
+type TeamTask = {
+  id: string;
+  kind: "delegate" | "message";
+  status: "queued" | "running" | "done" | "failed" | "cancelled";
+  from_session_id: string;
+  from_label: string;
+  to_session_id: string;
+  to_label: string;
+  instruction: string;
+  depth: number;
+  chain: string[];
+  created_at: string;
+  updated_at: string;
+  result_preview?: string;
+  error?: string;
+};
+```
+
+`agent/create_session` 可额外带 `label`，供名称解析。前端在会话或显示名变化时调用 `team/roster` 刷新标签。名称解析先精确匹配 session id，再按显示名大小写不敏感匹配；重名则拒绝并要求改用 id。
 
 ## 3. Tauri commands（前端 → Rust）
 
@@ -218,11 +257,14 @@ type MemoryRecord = {
 | `memory_tombstone` | `{id: string}` | `MemoryRecord`（tombstoned） |
 | `memory_stats` | — | `{total, by_status, by_scope, malformed_events, index_version}` |
 | `memory_rebuild_index` | — | `{rebuilt, items, malformed_events, index_version}` |
-| `agent_create_session` | `{session_id: string, provider: ProviderConfig, system_prompt?: string, engine?: AgentEngine, enabled_skills?: AgentSkill[]}` | `{session_id}` |
+| `agent_create_session` | `{session_id: string, provider: ProviderConfig, system_prompt?: string, engine?: AgentEngine, enabled_skills?: AgentSkill[], label?: string}` | `{session_id}` |
 | `agent_send` | `{session_id: string, text: string}` | — |
 | `agent_analyze` | `{provider: ProviderConfig, text: string, systemPrompt: string, engine?: AgentEngine}` | `{text: string}`（转发 `agent/analyze`） |
 | `agent_abort` | `{session_id: string}` | — |
 | `agent_close` | `{session_id: string}` | — |
+| `team_list` | — | `{tasks: TeamTask[]}` |
+| `team_cancel` | `{taskId: string}` | `{task: TeamTask}` |
+| `team_roster` | `{agents: [{id, label}]}` | `{updated: number}` |
 | `settings_get` | — | `Settings` |
 | `settings_set` | `{settings: Settings}` | —（迁移：新写入的明文 provider api_key 自动加密到 `secrets/providers.enc.json` 并落为 `$secret:` 引用，见 6.1） |
 | `credentials_set` | `{scope: string, key: string, value: string}` | —（value 为空字符串时删除该条目） |
@@ -244,7 +286,7 @@ type MemoryRecord = {
 type AuditEntry = {
   ts_ms: number;           // Unix 毫秒
   session_id: string;      // "user" 或 agent session id
-  op: "read"|"write"|"list"|"search"|"delete"|"stat";
+  op: "read"|"write"|"list"|"search"|"delete"|"stat"|"team";
   path: string;            // 相对根路径
   ok: boolean;
   error?: string;
@@ -272,7 +314,7 @@ type SavedAgent = {
 type AgentSkill = "documents" | "photos" | "music" | "videos" | "mail" | "memory";
 ```
 
-`enabled_skills` is enforced by the sidecar as an allow-list over built-in tools: `documents` grants read/list/search/write/compress; `photos`, `music`, and `videos` grant `search_media`/`open_media` restricted to that media kind; `mail` grants configured IMAP fetch; `memory` grants source-backed memory proposals. An explicit empty array grants no tools. Omitted values are interpreted as legacy configuration for backward compatibility. Media bytes are read only through `vault/read_binary`; the UI playback read is separately audited by Rust. The current MCP editor stores explanatory `mcp.md` text only and does not launch arbitrary MCP servers.
+`enabled_skills` is enforced by the sidecar as an allow-list over built-in tools: `documents` grants read/list/search/write/compress; `photos`, `music`, and `videos` grant `search_media`/`open_media` restricted to that media kind; `mail` grants configured IMAP fetch; `memory` grants source-backed memory proposals. An explicit empty array grants no vault/media/mail/memory tools. Team tools (`list_teammates`, `delegate_task`, `send_agent_message`) are attached to every Pi session regardless of that allow-list; they only enqueue work on another live session and do not widen the caller's own file or network tools. The callee still runs with its own skill allow-list. Omitted values are interpreted as legacy configuration for backward compatibility. Media bytes are read only through `vault/read_binary`; the UI playback read is separately audited by Rust. The current MCP editor stores explanatory `mcp.md` text only and does not launch arbitrary MCP servers.
 
 所有 vault_* commands 与 sidecar 走**同一个 Vault 服务**，同样写审计日志（session_id="user"）。command 错误以字符串 message 返回（Tauri `Result<T, String>`），message 中包含错误码文本，如 `E32001 path escapes root`。
 
@@ -312,12 +354,14 @@ CLI 可以在没有 daemon 时直接操作同一状态；指定 --socket 后改�
 | `mail://event` | `{account, phase, message, current?, total?}`（原样转发 sidecar 的 `mail/event`，供收取任务展示进度） |
 | `mail://action-event` | `{account, action, uid, current, total, message}`（原样转发 sidecar 的 `mail/action_event`，供远端批处理任务展示串行进度） |
 | `todo://event` | `{type, item, emittedAt}`（原样转发 sidecar 的 `todo/event`） |
+| `team://event` | `{task: TeamTask}`（原样转发 sidecar 的 `team/event`） |
 
 ## 5. 审计日志
 
 - 文件：`<数据文件夹根>/.vault-audit.jsonl`，append-only，每行一个 `AuditEntry` JSON。
 - 该文件本身对所有 vault 操作不可见（`list_dir` 过滤，读写 `/.vault-audit.jsonl` 一律拒绝，错误码 -32001）。
 - 换根后审计文件随新根创建；旧根的日志保留在原处。
+- `op: "team"` 只记录协作生命周期，`path` 是 `team/<task_id>/...` 逻辑主体，vault 读写不会把它当成文件打开。
 
 ## 6. 路径与安全规则（Rust 侧实现）
 

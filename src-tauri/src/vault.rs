@@ -253,6 +253,16 @@ fn is_trusted_session(session_id: &str) -> bool {
     matches!(session_id, "user" | "mail" | "calendar" | "settings")
 }
 
+/// Keep audit details on a single JSONL line and inside a char budget.
+/// `String::truncate` is byte-based and panics on a non-char boundary.
+fn clip_audit_detail(input: &str) -> String {
+    input
+        .chars()
+        .filter(|ch| *ch != '\n' && *ch != '\r')
+        .take(240)
+        .collect()
+}
+
 /// True when `relnorm` is a credential/private file — either an exact match
 /// in PROTECTED_PATHS or anything under the encrypted `secrets/` tree (the
 /// master key and encrypted credential blobs from `credentials.rs`).
@@ -342,6 +352,29 @@ impl Vault {
 
     pub fn audit(&self) -> AuditLog {
         self.inner.audit.clone()
+    }
+
+    /// Append one team-orchestration audit line. The path is a logical subject
+    /// (see contract 2.11), not a file inside the data folder.
+    pub fn record_team_audit(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        kind: &str,
+        status: &str,
+        peer_session_id: &str,
+        ok: bool,
+        detail: Option<&str>,
+    ) {
+        let path = format!("team/{task_id}/{kind}/{status}/{peer_session_id}");
+        let mut entry = AuditEntry::new(session_id, Op::Team, &path);
+        entry.ok = ok;
+        if !ok {
+            if let Some(detail) = detail.map(clip_audit_detail).filter(|text| !text.is_empty()) {
+                entry.error = Some(detail);
+            }
+        }
+        self.inner.audit.record(entry);
     }
 
     fn root_pair(&self) -> Result<RootPair, VaultError> {

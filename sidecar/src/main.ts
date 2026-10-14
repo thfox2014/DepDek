@@ -11,6 +11,7 @@ import { join, resolve } from "node:path";
 
 import { createStdioPeer } from "./rpc.js";
 import { SessionManager } from "./sessions.js";
+import { TeamOrchestrator, type RosterAgent } from "./team.js";
 import { LocalVault } from "./localVault.js";
 import { startAgentHttpServer } from "./httpServer.js";
 import { applyMailAction, deleteMail, fetchMail, listMailboxes, sendMail } from "./mail.js";
@@ -26,13 +27,27 @@ console.info = (...args: unknown[]) => console.error(...args);
 console.warn = (...args: unknown[]) => console.error(...args);
 
 const peer = createStdioPeer();
-const sessions = new SessionManager(peer, peer);
+let sessions!: SessionManager;
+const team = new TeamOrchestrator({
+  has: (id) => sessions.has(id),
+  isBusy: (id) => sessions.isBusy(id),
+  labelOf: (id) => sessions.labelOf(id),
+  setLabel: (id, label) => sessions.setLabel(id, label),
+  listSessions: () => sessions.listSessions(),
+  currentTurn: (id) => sessions.currentTurn(id),
+  runTurn: (id, text, turn) => sessions.runTurn(id, text, turn),
+  abortRun: (id) => sessions.abortRun(id),
+}, peer, peer);
+sessions = new SessionManager(peer, peer, team);
 
 registerMemoryHandlers(peer);
 
 peer.register("agent/create_session", (params) =>
-  sessions.createSession(params.session_id, params.provider as ProviderConfig, params.system_prompt, params.engine, params.enabled_skills),
+  sessions.createSession(params.session_id, params.provider as ProviderConfig, params.system_prompt, params.engine, params.enabled_skills, params.label),
 );
+peer.register("team/list", () => team.list());
+peer.register("team/cancel", (params) => team.cancel(String(params?.task_id ?? "")));
+peer.register("team/roster", (params) => team.applyRoster((params?.agents ?? []) as RosterAgent[]));
 peer.register("agent/send", (params) => sessions.send(params.session_id, params.text));
 peer.register("agent/analyze", (params) => sessions.runOnce(
   params.provider as ProviderConfig,

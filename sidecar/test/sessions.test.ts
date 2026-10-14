@@ -6,6 +6,7 @@ import {
   type FauxProviderRegistration,
 } from "@mariozechner/pi-ai";
 import { SessionManager, DEFAULT_SYSTEM_PROMPT } from "../src/sessions.js";
+import { TeamOrchestrator, TEAM_SYSTEM_NOTE } from "../src/team.js";
 import type { VaultClient } from "../src/tools.js";
 
 let faux: FauxProviderRegistration;
@@ -189,6 +190,35 @@ describe("SessionManager", () => {
     expect(manager.has("s6")).toBe(true);
     manager.closeSession("s6");
     expect(manager.has("s6")).toBe(false);
+  });
+
+  it("binds team tools and the team system note only when an orchestrator is attached", async () => {
+    let manager!: SessionManager;
+    const { vault, notifications } = makeHarness();
+    const team = new TeamOrchestrator({
+      has: (id) => manager.has(id),
+      isBusy: (id) => manager.isBusy(id),
+      labelOf: (id) => manager.labelOf(id),
+      setLabel: (id, label) => manager.setLabel(id, label),
+      listSessions: () => manager.listSessions(),
+      currentTurn: (id) => manager.currentTurn(id),
+      runTurn: (id, text, turn) => manager.runTurn(id, text, turn),
+      abortRun: (id) => manager.abortRun(id),
+    }, { notify: (method, params) => notifications.push({ method, params }) }, vault);
+    manager = new SessionManager(vault, { notify: (method, params) => notifications.push({ method, params }) }, team);
+    let captured = "";
+    faux.setResponses([
+      (context) => {
+        captured = context.systemPrompt;
+        return fauxAssistantMessage("ok");
+      },
+    ]);
+    manager.createSessionWithModel("lead", faux.getModel(), { label: "文档管家" });
+    expect(manager.toolNames("lead")).toEqual(expect.arrayContaining(["delegate_task", "send_agent_message", "list_teammates", "read_file"]));
+    expect(manager.listSessions()).toEqual([{ id: "lead", label: "文档管家", engine: "pi" }]);
+    manager.send("lead", "hi");
+    await waitFor(notifications, (n) => isEvent("message_complete")(n) && n.params.session_id === "lead");
+    expect(captured).toBe(`${DEFAULT_SYSTEM_PROMPT}${TEAM_SYSTEM_NOTE}`);
   });
 
   it("converts provider-level errors into error notifications", async () => {

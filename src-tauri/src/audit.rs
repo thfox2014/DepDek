@@ -24,6 +24,9 @@ pub enum Op {
     Search,
     Delete,
     Stat,
+    /// Agent-team delegation / message lifecycle. `path` is a logical subject
+    /// `team/<task_id>/<kind>/<status>/<peer>`, not a vault file.
+    Team,
 }
 
 /// One audit record; shape fixed by contract section 3.
