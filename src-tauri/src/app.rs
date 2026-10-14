@@ -440,6 +440,7 @@ async fn agent_create_session(
     system_prompt: Option<String>,
     engine: Option<String>,
     enabled_skills: Option<Vec<String>>,
+    label: Option<String>,
 ) -> Result<Value, String> {
     let mut params = json!({ "session_id": session_id, "provider": resolve_provider_secrets(&state, provider)? });
     if let Some(prompt) = system_prompt {
@@ -450,6 +451,9 @@ async fn agent_create_session(
     }
     if let Some(enabled_skills) = enabled_skills {
         params["enabled_skills"] = json!(enabled_skills);
+    }
+    if let Some(label) = label {
+        params["label"] = json!(label);
     }
     state.sidecar.request("agent/create_session", params).await
 }
@@ -501,6 +505,27 @@ async fn agent_abort(state: State<'_, AppState>, session_id: String) -> Result<(
         .request("agent/abort", json!({ "session_id": session_id }))
         .await?;
     Ok(())
+}
+
+#[tauri::command]
+async fn team_list(state: State<'_, AppState>) -> Result<Value, String> {
+    state.sidecar.request("team/list", json!({})).await
+}
+
+#[tauri::command]
+async fn team_cancel(state: State<'_, AppState>, task_id: String) -> Result<Value, String> {
+    state
+        .sidecar
+        .request("team/cancel", json!({ "task_id": task_id }))
+        .await
+}
+
+#[tauri::command]
+async fn team_roster(state: State<'_, AppState>, agents: Value) -> Result<Value, String> {
+    state
+        .sidecar
+        .request("team/roster", json!({ "agents": agents }))
+        .await
 }
 
 #[tauri::command]
@@ -845,6 +870,9 @@ pub fn run() {
             agent_analyze,
             agent_abort,
             agent_close,
+            team_list,
+            team_cancel,
+            team_roster,
             settings_get,
             settings_set,
             credentials_set,

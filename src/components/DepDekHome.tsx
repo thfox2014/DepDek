@@ -94,6 +94,8 @@ interface Props {
   onCloseAgent: (id: string) => void;
   /** AI-OS 模式下返回语音 Shell 入口；桌面端不传。 */
   onOpenShell?: () => void;
+  teamTasks: api.TeamTask[];
+  onCancelTeamTask: (taskId: string) => Promise<void>;
 }
 
 interface NavItem {
@@ -495,7 +497,7 @@ function FilesView({ root }: { root: string }) {
   );
 }
 
-function DomainView({ name, root, providerCount, sessionCount, agentMetrics, openAgentTeam, onConfigureAgent, notify, onStartTask, onUpdateTask, onInboxCountChange, onOpenAppConfig, sessions, activeAgentId, running, chats, providers, settings, conversationHistory, onSendAgent, onAbortAgent, onEnterAgent, onCloseAgent, onCreateAgent, onSaveAgentSettings, onOpenSettings, onNewConversation, onConversationHistoryChange }: {
+function DomainView({ name, root, providerCount, sessionCount, agentMetrics, openAgentTeam, onConfigureAgent, notify, onStartTask, onUpdateTask, onInboxCountChange, onOpenAppConfig, sessions, activeAgentId, running, chats, providers, settings, conversationHistory, onSendAgent, onAbortAgent, onEnterAgent, onCloseAgent, onCreateAgent, onSaveAgentSettings, onOpenSettings, onNewConversation, onConversationHistoryChange, teamTasks, onCancelTeamTask }: {
   name: Exclude<ViewName, "today">;
   root: string;
   providerCount: number;
@@ -522,6 +524,8 @@ function DomainView({ name, root, providerCount, sessionCount, agentMetrics, ope
   onOpenSettings: () => void;
   onNewConversation: (id: string) => Promise<void>;
   onConversationHistoryChange: (history: Record<string, ConversationRecord[]>) => void;
+  teamTasks: api.TeamTask[];
+  onCancelTeamTask: (taskId: string) => Promise<void>;
 } & TaskReporter) {
   if (name === "sessions") return <SessionsView sessions={sessions} activeId={activeAgentId} providers={providers} chats={chats} onSelect={onEnterAgent} onCreate={(label, providerName) => onCreateAgent(label, providerName, undefined, false)} onClose={onCloseAgent} onOpenSettings={onOpenSettings} />;
   if (name === "inbox") return <InboxView onStartTask={onStartTask} onUpdateTask={onUpdateTask} onInboxCountChange={onInboxCountChange} onOpenAppConfig={onOpenAppConfig} />;
@@ -532,7 +536,7 @@ function DomainView({ name, root, providerCount, sessionCount, agentMetrics, ope
   if (name === "knowledge") return <ObsidianPanel onOpenAppConfig={onOpenAppConfig} />;
   if (name === "connections") return <ApplicationConfigView onNotify={notify} />;
   if (name === "memory") return <MemoryPanel />;
-  if (name === "agentteam") return <AgentTeamDashboard agents={settings.agents ?? []} sessions={sessions} metrics={agentMetrics} providers={providers} running={running} onEnter={onEnterAgent} onConfigure={onConfigureAgent} onCreate={onCreateAgent} onOpenSettings={onOpenSettings} />;
+  if (name === "agentteam") return <AgentTeamDashboard agents={settings.agents ?? []} sessions={sessions} metrics={agentMetrics} providers={providers} running={running} teamTasks={teamTasks} onCancelTask={onCancelTeamTask} onEnter={onEnterAgent} onConfigure={onConfigureAgent} onCreate={onCreateAgent} onOpenSettings={onOpenSettings} />;
   if (name === "agent-config") return <OfficeView embedded sessions={sessions} running={running} chats={chats} providers={providers} settings={settings} conversationHistory={conversationHistory} onEnter={onEnterAgent} onCreate={onCreateAgent} onSaveSettings={onSaveAgentSettings} onOpenSettings={onOpenSettings} onSend={onSendAgent} onAbort={onAbortAgent} onNewConversation={onNewConversation} onConversationHistoryChange={onConversationHistoryChange} />;
   const view = VIEW_COPY[name];
   return (
@@ -767,7 +771,7 @@ function Copilot({
   );
 }
 
-export default function DepDekHome({ root, providerCount, sessionCount, agentMetrics, providers, settings, conversationHistory, onOpenSettings, onPickRoot, onCreateAgent, onSaveAgentSettings, sessions, activeAgentId, chats, running, onSelectAgent, onSendAgent, onAbortAgent, onNewConversation, onConversationHistoryChange, onEnterAgent, onCloseAgent, onOpenShell }: Props) {
+export default function DepDekHome({ root, providerCount, sessionCount, agentMetrics, providers, settings, conversationHistory, onOpenSettings, onPickRoot, onCreateAgent, onSaveAgentSettings, sessions, activeAgentId, chats, running, onSelectAgent, onSendAgent, onAbortAgent, onNewConversation, onConversationHistoryChange, onEnterAgent, onCloseAgent, onOpenShell, teamTasks, onCancelTeamTask }: Props) {
   const [activeView, setActiveView] = useState<ViewName>("agentteam");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
@@ -948,7 +952,7 @@ export default function DepDekHome({ root, providerCount, sessionCount, agentMet
         </header>}
 
         <main className={`dd-workbench ${activeView === "inbox" ? "dd-workbench--inbox" : ""} ${activeView === "today" ? "dd-workbench--today" : ""}`}>
-          {activeView === "today" ? <TodayView notify={notify} refreshKey={refreshKey} sessions={sessions} activeAgentId={activeAgentId} chats={chats} running={running} onSelectAgent={onSelectAgent} onSendAgent={onSendAgent} onAbortAgent={onAbortAgent} onOpenAgentTeam={openAgentTeam} /> : <DomainView name={activeView} root={root} providerCount={providerCount} sessionCount={sessionCount} agentMetrics={agentMetrics} openAgentTeam={openAgentTeam} onConfigureAgent={() => setActiveView("agent-config")} notify={notify} onStartTask={startTask} onUpdateTask={updateTask} onInboxCountChange={refreshInboxCount} onOpenAppConfig={() => setActiveView("connections")} sessions={sessions} activeAgentId={activeAgentId} running={running} chats={chats} providers={providers} settings={settings} conversationHistory={conversationHistory} onSendAgent={onSendAgent} onAbortAgent={onAbortAgent} onEnterAgent={onEnterAgent} onCloseAgent={onCloseAgent} onCreateAgent={onCreateAgent} onSaveAgentSettings={onSaveAgentSettings} onOpenSettings={onOpenSettings} onNewConversation={onNewConversation} onConversationHistoryChange={onConversationHistoryChange} />}
+          {activeView === "today" ? <TodayView notify={notify} refreshKey={refreshKey} sessions={sessions} activeAgentId={activeAgentId} chats={chats} running={running} onSelectAgent={onSelectAgent} onSendAgent={onSendAgent} onAbortAgent={onAbortAgent} onOpenAgentTeam={openAgentTeam} /> : <DomainView name={activeView} root={root} providerCount={providerCount} sessionCount={sessionCount} agentMetrics={agentMetrics} openAgentTeam={openAgentTeam} onConfigureAgent={() => setActiveView("agent-config")} notify={notify} onStartTask={startTask} onUpdateTask={updateTask} onInboxCountChange={refreshInboxCount} onOpenAppConfig={() => setActiveView("connections")} sessions={sessions} activeAgentId={activeAgentId} running={running} chats={chats} providers={providers} settings={settings} conversationHistory={conversationHistory} onSendAgent={onSendAgent} onAbortAgent={onAbortAgent} onEnterAgent={onEnterAgent} onCloseAgent={onCloseAgent} onCreateAgent={onCreateAgent} onSaveAgentSettings={onSaveAgentSettings} onOpenSettings={onOpenSettings} onNewConversation={onNewConversation} onConversationHistoryChange={onConversationHistoryChange} teamTasks={teamTasks} onCancelTeamTask={onCancelTeamTask} />}
         </main>
       </div>
 

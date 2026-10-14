@@ -254,6 +254,7 @@ impl SidecarInner {
                     "mail/event" => (self.emit)("mail://event", params),
                     "mail/action_event" => (self.emit)("mail://action-event", params),
                     "todo/event" => (self.emit)("todo://event", params),
+                    "team/event" => (self.emit)("team://event", params),
                     _ => {}
                 }
             }
@@ -320,10 +321,71 @@ impl SidecarInner {
                 encode(vault.compress(session_id, path, archive)?)
             }
             method if method.starts_with("memory/") => self.memory.handle(method, &params),
+            "team/audit" => team_audit(vault, &params),
             _ => return Err(VaultError::UnknownMethod(method.to_string())),
         };
         result
     }
+}
+
+fn is_session_token(value: &str) -> bool {
+    let len = value.chars().count();
+    (1..=128).contains(&len)
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | ':' | '-'))
+}
+
+fn is_team_task_id(value: &str) -> bool {
+    let Some(rest) = value.strip_prefix("tsk_") else {
+        return false;
+    };
+    (8..=32).contains(&rest.len()) && rest.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
+/// Record a team lifecycle line through the existing append-only audit log.
+fn team_audit(vault: &Vault, params: &Value) -> Result<Value, VaultError> {
+    let session_id = params
+        .get("session_id")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let task_id = params.get("task_id").and_then(Value::as_str).unwrap_or("");
+    let kind = params.get("kind").and_then(Value::as_str).unwrap_or("");
+    let status = params.get("status").and_then(Value::as_str).unwrap_or("");
+    let peer = params
+        .get("peer_session_id")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let ok = params
+        .get("ok")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| VaultError::InvalidParams("ok is required".to_string()))?;
+    if !is_session_token(session_id) || !is_session_token(peer) {
+        return Err(VaultError::InvalidParams(
+            "session id must be 1-128 ascii token characters".to_string(),
+        ));
+    }
+    if !is_team_task_id(task_id) {
+        return Err(VaultError::InvalidParams(
+            "task_id must look like tsk_<hex>".to_string(),
+        ));
+    }
+    if !matches!(kind, "delegate" | "message") {
+        return Err(VaultError::InvalidParams(
+            "kind must be delegate or message".to_string(),
+        ));
+    }
+    if !matches!(
+        status,
+        "queued" | "running" | "done" | "failed" | "cancelled" | "rejected"
+    ) {
+        return Err(VaultError::InvalidParams(
+            "status is not a team lifecycle state".to_string(),
+        ));
+    }
+    let detail = params.get("detail").and_then(Value::as_str);
+    vault.record_team_audit(session_id, task_id, kind, status, peer, ok, detail);
+    Ok(json!({}))
 }
 
 fn encode<T: Serialize>(value: T) -> Result<Value, VaultError> {
@@ -366,6 +428,7 @@ fn default_node_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audit::Op;
     use base64::engine::general_purpose::STANDARD as BASE64;
     use base64::Engine as _;
 
@@ -477,5 +540,92 @@ mod tests {
         .await;
 
         assert_eq!(*emitted.lock().unwrap(), vec!["first", "second"]);
+    }
+
+    #[tokio::test]
+    async fn team_audit_appends_a_logical_team_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::new();
+        vault.set_root(dir.path()).unwrap();
+        let sidecar = Sidecar::with_runtime(
+            vault.clone(),
+            Arc::new(|_, _| {}),
+            PathBuf::from("node"),
+            PathBuf::from("unused.js"),
+        );
+        sidecar
+            .inner
+            .handle_request(
+                "team/audit",
+                json!({
+                    "session_id": "doc-manager",
+                    "task_id": "tsk_abc12345",
+                    "kind": "delegate",
+                    "status": "queued",
+                    "peer_session_id": "photo-manager",
+                    "ok": true
+                }),
+            )
+            .await
+            .unwrap();
+        let (entries, total) = vault.audit().read(0, 10);
+        assert_eq!(total, 1);
+        assert_eq!(entries[0].op, Op::Team);
+        assert_eq!(entries[0].session_id, "doc-manager");
+        assert_eq!(entries[0].path, "team/tsk_abc12345/delegate/queued/photo-manager");
+        assert!(entries[0].ok);
+        assert!(entries[0].error.is_none());
+    }
+
+    #[tokio::test]
+    async fn team_audit_rejects_ids_that_could_escape_the_logical_path() {
+        let vault = Vault::new();
+        let sidecar = Sidecar::with_runtime(
+            vault,
+            Arc::new(|_, _| {}),
+            PathBuf::from("node"),
+            PathBuf::from("unused.js"),
+        );
+        let err = sidecar
+            .inner
+            .handle_request(
+                "team/audit",
+                json!({
+                    "session_id": "doc-manager",
+                    "task_id": "../etc/passwd",
+                    "kind": "delegate",
+                    "status": "queued",
+                    "peer_session_id": "photo-manager",
+                    "ok": false,
+                    "detail": "nope"
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), -32602);
+    }
+
+    #[tokio::test]
+    async fn team_event_is_forwarded_to_the_frontend() {
+        let emitted = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
+        let emitted_sink = emitted.clone();
+        let sidecar = Sidecar::with_runtime(
+            Vault::new(),
+            Arc::new(move |name, params| {
+                emitted_sink.lock().unwrap().push((name.to_string(), params));
+            }),
+            PathBuf::from("node"),
+            PathBuf::from("unused.js"),
+        );
+        sidecar
+            .inner
+            .handle_line(
+                r#"{"jsonrpc":"2.0","method":"team/event","params":{"task":{"id":"tsk_abc12345","status":"running"}}}"#,
+            )
+            .await;
+        let events = emitted.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0, "team://event");
+        assert_eq!(events[0].1["task"]["status"], "running");
     }
 }

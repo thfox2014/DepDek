@@ -47,6 +47,44 @@ export interface AgentMetrics {
   tokenUsageKnown: boolean;
 }
 
+const PREVIEW_TEAM_TASKS: api.TeamTask[] = [
+  {
+    id: "tsk_previewrun01",
+    kind: "delegate",
+    status: "running",
+    from_session_id: "tanvis",
+    from_label: "Tanvis",
+    to_session_id: "doc-manager",
+    to_label: "文档管家",
+    instruction: "把最近的会议纪要整理成三段摘要，并标出还没闭环的承诺。",
+    depth: 1,
+    chain: ["tanvis", "doc-manager"],
+    created_at: "2026-10-14T10:00:00.000Z",
+    updated_at: "2026-10-14T10:01:00.000Z",
+  },
+  {
+    id: "tsk_previewdone1",
+    kind: "message",
+    status: "done",
+    from_session_id: "doc-manager",
+    from_label: "文档管家",
+    to_session_id: "photo-manager",
+    to_label: "照片管家",
+    instruction: "上周旅行照片大概有多少张？不用打开原图。",
+    depth: 1,
+    chain: ["doc-manager", "photo-manager"],
+    created_at: "2026-10-14T09:40:00.000Z",
+    updated_at: "2026-10-14T09:42:00.000Z",
+    result_preview: "按文件名匹配到 4 张，都在 photos/trip 下面。",
+  },
+];
+
+function upsertTeamTask(current: api.TeamTask[], task: api.TeamTask): api.TeamTask[] {
+  const index = current.findIndex((item) => item.id === task.id);
+  const next = index >= 0 ? current.map((item) => item.id === task.id ? task : item) : [task, ...current];
+  return next.slice(0, 50);
+}
+
 const CONVERSATION_HISTORY_STORAGE_KEY = "depdek.agent-conversation-history.v1";
 const AGENT_METRICS_STORAGE_KEY = "depdek.agent-metrics.v1";
 const agentOsMode = import.meta.env.VITE_DEPDEK_OS === "1";
@@ -117,6 +155,7 @@ export default function App() {
   const [chats, setChats] = useState<Record<string, ChatBlock[]>>({});
   const [conversationHistory, setConversationHistory] = useState<Record<string, ConversationRecord[]>>(loadConversationHistory);
   const [running, setRunning] = useState<Record<string, boolean>>({});
+  const [teamTasks, setTeamTasks] = useState<api.TeamTask[]>([]);
   const [agentMetrics, setAgentMetrics] = useState<Record<string, AgentMetrics>>(loadAgentMetrics);
   const [mediaFile, setMediaFile] = useState<{ path: string; mime: string; dataUrl: string } | null>(null);
   const [mediaLoading, setMediaLoading] = useState<string | null>(null);
@@ -251,6 +290,7 @@ export default function App() {
               : { providers: { [INITIAL_PROVIDER_NAME]: INITIAL_DEEPSEEK_PROVIDER }, agents: INITIAL_AGENTS };
           setSettings(preview);
           setRoot(preview.last_root || "~/DepDek-Home · 浏览器 UX 预览");
+          if (!served) setTeamTasks(PREVIEW_TEAM_TASKS);
           await restoreConversationHistory((preview.agents ?? []).map((a) => a.id));
           return;
         }
@@ -274,7 +314,7 @@ export default function App() {
           const provider = nextSettings.providers[a.provider_name];
           if (!provider) continue;
           try {
-            await api.agentCreateSession(a.id, provider, a.system_prompt, a.engine, a.enabled_skills);
+            await api.agentCreateSession(a.id, provider, a.system_prompt, a.engine, a.enabled_skills, a.label);
             restored.push({ id: a.id, label: a.label, providerName: a.provider_name, engine: a.engine });
           } catch {
             // Sidecar unavailable; skip this session.
@@ -317,6 +357,9 @@ export default function App() {
         switch (ev.type) {
           case "progress":
             pushBlock(sid, { kind: "status", text: String(ev.data.message ?? "正在处理…") });
+            if (ev.data.phase === "team_task" || ev.data.phase === "team_result") {
+              setRunning((current) => ({ ...current, [sid]: true }));
+            }
             break;
           case "text_delta": {
             if (ev.data.engine === "deepseek-harness") markHarnessEvent(sid);
@@ -404,6 +447,41 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void api.teamList().then((result) => {
+      if (!disposed) setTeamTasks(result.tasks ?? []);
+    }).catch(() => undefined);
+    void api.onTeamEvent((event) => {
+      if (!event.task) return;
+      setTeamTasks((current) => upsertTeamTask(current, event.task));
+      if (event.task.status === "running") {
+        setRunning((current) => ({ ...current, [event.task.to_session_id]: true }));
+      }
+      if (event.task.status === "done" || event.task.status === "failed" || event.task.status === "cancelled") {
+        setRunning((current) => ({ ...current, [event.task.to_session_id]: false }));
+      }
+    }).then((fn) => {
+      if (disposed) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window) || sessions.length === 0) return;
+    const agents = sessions.map((session) => {
+      const saved = settings.agents?.find((agent) => agent.id === session.id);
+      return { id: session.id, label: saved?.label || session.label };
+    });
+    void api.teamRoster(agents).catch(() => undefined);
+  }, [sessions, settings.agents]);
+
   // ---- actions ---------------------------------------------------------------
   const pickRoot = async () => {
     setRootError(null);
@@ -434,7 +512,7 @@ export default function App() {
     }
     const engine = requestedEngine ?? existing?.engine;
     const enabledSkills: api.AgentSkill[] = requestedSkills ?? existing?.enabled_skills ?? (id.startsWith("doc-") ? ["documents", "memory"] : id.startsWith("photo-") ? ["photos", "memory"] : id.startsWith("music-") ? ["music", "videos", "memory"] : id.startsWith("video-") ? ["videos", "music", "memory"] : ALL_DEFAULT_SKILLS);
-    await api.agentCreateSession(id, provider, existing?.system_prompt, engine, enabledSkills);
+    await api.agentCreateSession(id, provider, existing?.system_prompt, engine, enabledSkills, label || existing?.label || id);
     setSessions((prev) => prev.some((session) => session.id === id) ? prev : [...prev, { id, label: label || id, providerName, engine }]);
     setActiveId(id);
     if (openWorkbench) setView("workbench");
@@ -463,7 +541,7 @@ export default function App() {
     setChats((current) => ({ ...current, [sid]: [] }));
     try { await api.agentAbort(sid); } catch { /* 当前没有运行中的请求也可以继续新建。 */ }
     try { await api.agentClose(sid); } catch { /* sidecar 重启后可能已经没有旧会话。 */ }
-    await api.agentCreateSession(sid, provider, agent?.system_prompt, agent?.engine ?? session.engine, agent?.enabled_skills);
+    await api.agentCreateSession(sid, provider, agent?.system_prompt, agent?.engine ?? session.engine, agent?.enabled_skills, agent?.label ?? session.label);
   };
 
   const closeSession = async (sid: string) => {
@@ -538,6 +616,17 @@ export default function App() {
     setRunning((r) => ({ ...r, [sid]: false }));
   };
 
+  const cancelTeamTask = async (taskId: string) => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      setTeamTasks((current) => current.map((task) => task.id === taskId && (task.status === "queued" || task.status === "running")
+        ? { ...task, status: "cancelled", updated_at: new Date().toISOString(), error: "已在预览中取消" }
+        : task));
+      return;
+    }
+    const result = await api.teamCancel(taskId);
+    if (result.task) setTeamTasks((current) => upsertTeamTask(current, result.task));
+  };
+
   const saveSettings = async (next: api.Settings) => {
     await api.settingsSet(next);
     setSettings(next);
@@ -552,7 +641,7 @@ export default function App() {
       if (previous?.provider_name === agent.provider_name && previous?.system_prompt === agent.system_prompt && previous?.engine === agent.engine && JSON.stringify(previous?.enabled_skills ?? []) === JSON.stringify(agent.enabled_skills ?? [])) continue;
       try {
         await api.agentClose(session.id);
-        await api.agentCreateSession(session.id, provider, agent.system_prompt, agent.engine, agent.enabled_skills);
+        await api.agentCreateSession(session.id, provider, agent.system_prompt, agent.engine, agent.enabled_skills, agent.label);
       } catch {
         // The session can be recreated on the next launch if the sidecar is
         // temporarily unavailable; settings remain saved in the meantime.
@@ -618,6 +707,8 @@ export default function App() {
           onOpenSettings={() => setShowSettings(true)}
           onPickRoot={pickRoot}
           onOpenShell={agentOsMode ? () => { setView("home"); setOsView("shell"); } : undefined}
+          teamTasks={teamTasks}
+          onCancelTeamTask={cancelTeamTask}
         />
       ) : (
         <>

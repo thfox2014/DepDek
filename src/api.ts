@@ -17,7 +17,7 @@ export type AgentEngine = "pi" | "deepseek-harness";
 export interface AuditEntry {
   ts_ms: number;
   session_id: string;
-  op: "read" | "write" | "list" | "search" | "delete" | "stat";
+  op: "read" | "write" | "list" | "search" | "delete" | "stat" | "team";
   path: string;
   ok: boolean;
   error?: string;
@@ -58,6 +58,31 @@ export interface AgentEvent {
   session_id: string;
   type: AgentEventType;
   data: Record<string, unknown>;
+}
+
+export type TeamTaskStatus = "queued" | "running" | "done" | "failed" | "cancelled";
+export type TeamTaskKind = "delegate" | "message";
+
+/** One delegated task or agent-to-agent message. See contract section 2.11. */
+export interface TeamTask {
+  id: string;
+  kind: TeamTaskKind;
+  status: TeamTaskStatus;
+  from_session_id: string;
+  from_label: string;
+  to_session_id: string;
+  to_label: string;
+  instruction: string;
+  depth: number;
+  chain: string[];
+  created_at: string;
+  updated_at: string;
+  result_preview?: string;
+  error?: string;
+}
+
+export interface TeamEvent {
+  task: TeamTask;
 }
 
 export interface DirEntry {
@@ -375,7 +400,12 @@ export const agentCreateSession = (
   systemPrompt?: string,
   engine?: AgentEngine,
   enabledSkills?: AgentSkill[],
-) => invoke<{ session_id: string }>("agent_create_session", { sessionId, provider, systemPrompt, engine, enabledSkills });
+  label?: string,
+) => invoke<{ session_id: string }>("agent_create_session", { sessionId, provider, systemPrompt, engine, enabledSkills, label });
+export const teamList = () => invoke<{ tasks: TeamTask[] }>("team_list");
+export const teamCancel = (taskId: string) => invoke<{ task: TeamTask }>("team_cancel", { taskId });
+export const teamRoster = (agents: Array<{ id: string; label: string }>) =>
+  invoke<{ updated: number }>("team_roster", { agents });
 export const agentSend = (sessionId: string, text: string) =>
   invoke<void>("agent_send", { sessionId, text });
 export const agentAnalyze = (provider: ProviderConfig, text: string, systemPrompt: string, engine?: AgentEngine) =>
@@ -515,6 +545,9 @@ export const todoUpdate = (input: TodoUpdateInput) =>
 
 export const onAgentEvent = (cb: (ev: AgentEvent) => void): Promise<UnlistenFn> =>
   listen<AgentEvent>("agent://event", (e) => cb(e.payload));
+
+export const onTeamEvent = (cb: (ev: TeamEvent) => void): Promise<UnlistenFn> =>
+  listen<TeamEvent>("team://event", (e) => cb(e.payload));
 
 export const onAuditEntry = (cb: (entry: AuditEntry) => void): Promise<UnlistenFn> =>
   listen<AuditEntry>("vault://audit", (e) => cb(e.payload));

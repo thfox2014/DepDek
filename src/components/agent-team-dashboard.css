@@ -83,3 +83,27 @@
 @media (max-width: 800px) { .agent-team-notice { align-items: flex-start; flex-wrap: wrap; } .agent-team-notice b { flex: 0 0 100%; } .agent-team-notice span { flex-basis: 60%; } .agent-team-notice button { margin-left: auto; } }
 @media (max-width: 520px) { .agent-team-actions { width: 100%; } .agent-team-actions button { flex: 1; } .agent-team-integrations { align-items: flex-start; flex-direction: column; } .agent-team-integrations > button { align-self: flex-end; } .agent-team-modal-skills { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .agent-team-card, .agent-team-status--busy i { transition: none; animation: none; } }
+.agent-team-tasks { max-width: 1480px; margin: 22px auto 0; }
+.agent-team-tasks-empty { margin: 0; padding: 16px 18px; border: 1px dashed #e1ddef; border-radius: 14px; background: rgba(255,255,255,.7); color: #8d8a9e; font-size: 13px; line-height: 1.6; }
+.agent-team-task-list { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.agent-team-task { display: grid; grid-template-columns: 72px 52px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px 14px; border: 1px solid #e7e4f2; border-radius: 14px; background: rgba(255,255,255,.94); }
+.agent-team-task-status, .agent-team-task-kind { display: inline-flex; align-items: center; justify-content: center; height: 24px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.agent-team-task-status { background: #f3f1f8; color: #6f6c80; }
+.agent-team-task--running .agent-team-task-status, .agent-team-task--queued .agent-team-task-status { background: #eeeaff; color: #6650d2; }
+.agent-team-task--done .agent-team-task-status { background: #e7f6ef; color: #2f8d68; }
+.agent-team-task--failed .agent-team-task-status { background: #fff0f2; color: #b9485b; }
+.agent-team-task-kind { background: #f7f6fb; color: #7d7a90; }
+.agent-team-task-body { min-width: 0; }
+.agent-team-task-body b, .agent-team-task-body small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-team-task-body b { font-size: 13px; }
+.agent-team-task-body small { margin-top: 3px; color: #9693a8; font-size: 12px; }
+.agent-team-task-result { color: #3f7d64 !important; }
+.agent-team-task-error { color: #b9485b !important; }
+.agent-team-task button, .agent-team-task-depth { justify-self: end; }
+.agent-team-task button { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; padding: 0 10px; border: 1px solid #eadfe8; border-radius: 9px; background: #fff; color: #8a4d66; cursor: pointer; font-size: 12px; font-weight: 700; }
+.agent-team-task button:disabled { opacity: .6; cursor: progress; }
+.agent-team-task-depth { color: #aaa7b8; font-size: 11px; }
+@media (max-width: 720px) {
+  .agent-team-task { grid-template-columns: auto auto minmax(0, 1fr); }
+  .agent-team-task button, .agent-team-task-depth { grid-column: 1 / -1; justify-self: start; }
+}
