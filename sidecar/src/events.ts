@@ -69,24 +69,24 @@ function aggregateTurnUsage(messages: readonly { role: string }[]): { input: num
 export function convertAgentEvent(event: AgentEvent, engine: "pi" | "deepseek-harness" = "pi"): AgentEventNotification[] {
   switch (event.type) {
     case "agent_start":
-      return [{ type: "progress", data: { phase: "started", message: "Pi Agent Core 已启动", engine } }];
+      return [];
     case "turn_start":
-      return [{ type: "progress", data: { phase: "thinking", message: "Pi 正在分析当前上下文", engine } }];
+      return [{ type: "progress", data: { phase: "thinking", message: "在想", engine } }];
     case "message_update": {
       const inner = event.assistantMessageEvent;
       if (inner.type === "text_delta") {
         return [{ type: "text_delta", data: { delta: inner.delta, engine } }];
       }
       if (inner.type === "thinking_start") {
-        return [{ type: "progress", data: { phase: "thinking", message: "Pi 正在整理推理线索", engine } }];
+        return [{ type: "progress", data: { phase: "thinking", message: "在想", engine } }];
       }
       if (inner.type === "thinking_end") {
-        return [{ type: "progress", data: { phase: "thinking_complete", message: "Pi 已完成推理阶段，正在组织回答", engine } }];
+        return [{ type: "progress", data: { phase: "thinking_complete", message: "在写", engine } }];
       }
       return [];
     }
     case "tool_execution_update":
-      return [{ type: "progress", data: { phase: "tool", message: `正在处理工具 ${event.toolName}`, engine } }];
+      return [{ type: "progress", data: { phase: "tool", message: `在用 ${event.toolName}`, engine } }];
     case "tool_execution_start":
       return [
         {
@@ -116,7 +116,6 @@ export function convertAgentEvent(event: AgentEvent, engine: "pi" | "deepseek-ha
         ];
       }
       return [
-        { type: "progress", data: { phase: "complete", message: "Pi Agent Core 已完成", engine } },
         { type: "message_complete", data: {
           stop_reason: assistant?.stopReason ?? "stop",
           engine,

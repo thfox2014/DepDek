@@ -69,7 +69,6 @@ describe("convertAgentEvent", () => {
       messages: [fauxAssistantMessage("done", { stopReason: "stop" })],
     });
     expect(notifications).toEqual([
-      { type: "progress", data: { phase: "complete", message: "Pi Agent Core 已完成", engine: "pi" } },
       { type: "message_complete", data: { stop_reason: "stop", engine: "pi" } },
     ]);
   });
@@ -88,7 +87,6 @@ describe("convertAgentEvent", () => {
       messages: [fauxAssistantMessage("partial", { stopReason: "aborted" })],
     });
     expect(notifications).toEqual([
-      { type: "progress", data: { phase: "complete", message: "Pi Agent Core 已完成", engine: "pi" } },
       { type: "message_complete", data: { stop_reason: "aborted", engine: "pi" } },
     ]);
   });
@@ -101,12 +99,12 @@ describe("convertAgentEvent", () => {
     const first = { ...fauxAssistantMessage("tool", { stopReason: "toolUse" }), usage: usage(8, 2, 10) };
     const final = { ...fauxAssistantMessage("done", { stopReason: "stop" }), usage: usage(12, 5, 17) };
     const notifications = convertAgentEvent({ type: "agent_end", messages: [first, final] });
-    expect(notifications[1]).toMatchObject({ type: "message_complete", data: { usage: { input: 20, output: 7, total: 27 } } });
+    expect(notifications[0]).toMatchObject({ type: "message_complete", data: { usage: { input: 20, output: 7, total: 27 } } });
   });
 
   it("ignores unrelated events", () => {
-    expect(convertAgentEvent({ type: "agent_start" })).toEqual([{ type: "progress", data: { phase: "started", message: "Pi Agent Core 已启动", engine: "pi" } }]);
-    expect(convertAgentEvent({ type: "turn_start" })).toEqual([{ type: "progress", data: { phase: "thinking", message: "Pi 正在分析当前上下文", engine: "pi" } }]);
+    expect(convertAgentEvent({ type: "agent_start" })).toEqual([]);
+    expect(convertAgentEvent({ type: "turn_start" })).toEqual([{ type: "progress", data: { phase: "thinking", message: "在想", engine: "pi" } }]);
   });
 
   it("shows safe thinking milestones without exposing raw chain-of-thought", () => {
@@ -115,7 +113,7 @@ describe("convertAgentEvent", () => {
       message: {} as any,
       assistantMessageEvent: { type: "thinking_start", contentIndex: 0, partial: {} as any },
     });
-    expect(notifications).toEqual([{ type: "progress", data: { phase: "thinking", message: "Pi 正在整理推理线索", engine: "pi" } }]);
+    expect(notifications).toEqual([{ type: "progress", data: { phase: "thinking", message: "在想", engine: "pi" } }]);
   });
 });
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import {
   Books,
   Brain,
@@ -42,8 +42,8 @@ import InboxView from "./InboxView";
 import ObsidianPanel from "./ObsidianPanel";
 import TodoBoard from "./TodoBoard";
 import ApplicationConfigView from "./ApplicationConfigView";
-import MarkdownText from "./MarkdownText";
-import ToolProcessPanel from "./ToolProcessPanel";
+import { personaLine } from "../agentVoice";
+import AgentTranscript from "./AgentTranscript";
 import OfficeView from "./OfficeView";
 import AgentTeamDashboard from "./AgentTeamDashboard";
 import MemoryPanel from "./MemoryPanel";
@@ -679,8 +679,6 @@ function Copilot({
   const selectedBlocks = selectedAgent ? chats[selectedAgent.id] ?? [] : [];
   const isRunning = selectedAgent ? Boolean(running[selectedAgent.id]) : false;
 
-  const streamingLines = (text: string) => text.split("\n").filter((line) => line.trim()).slice(-2).join("\n");
-
   useEffect(() => {
     const next = activeAgentId && sessions.some((session) => session.id === activeAgentId) ? activeAgentId : sessions[0]?.id ?? "";
     if (next !== selectedAgentId) setSelectedAgentId(next);
@@ -703,58 +701,21 @@ function Copilot({
     onOpenAgentTeam();
   };
 
-  const renderBlock = (block: ChatBlock) => {
-    switch (block.kind) {
-      case "user":
-        return <div key={block.id} className="dd-message dd-message--me">{block.text}</div>;
-      case "assistant":
-        {
-          const isStreamingBlock = isRunning && block.id === selectedBlocks[selectedBlocks.length - 1]?.id;
-          return <div key={block.id} className={`dd-message dd-message--ai${isStreamingBlock ? " dd-message--streaming" : ""}`}>
-            {isStreamingBlock ? <><span className="dd-streaming-label">Tanvis 正在分析</span><MarkdownText markdown={streamingLines(block.text) || "分析中…"} compact /></> : <MarkdownText markdown={block.text || "…"} />}
-          </div>;
-        }
-      case "error":
-        return <div key={block.id} className="dd-message dd-message--ai dd-message--error"><StatusPill tone="risk">执行失败</StatusPill><p>{block.message}</p></div>;
-      case "tool":
-        return null;
-      case "status":
-        return <div key={block.id} className="dd-message dd-message--status">{block.text}</div>;
-    }
-  };
-
   return (
     <aside className={`dd-copilot ${embedded ? "dd-copilot--embedded" : ""} ${open ? "dd-copilot--open" : ""}`}>
-      <header><img src={logo} alt="DepDek" /><div><b>DepDek Copilot</b><small>{selectedAgent ? `Agent Team · ${selectedAgent.label}` : `围绕「${VIEW_TITLES[activeView]}」协作 · 请选择 Agent`}</small></div><button onClick={close} aria-label="关闭 Copilot"><X size={18} /></button></header>
+      <header><img src={logo} alt="" /><div><b>{selectedAgent ? selectedAgent.label : "选一位同事"}</b><small>{selectedAgent ? personaLine(selectedAgent.label) : `先从 Agent Team 选一个人，再聊「${VIEW_TITLES[activeView]}」`}</small></div><button onClick={close} aria-label="关闭 Copilot"><X size={18} /></button></header>
       <div className="dd-copilot-body">
-        {!selectedAgent && <div className="dd-copilot-empty"><Robot size={28} /><b>先选择一个 Agent</b><span>从 Agent Team 选择工作伙伴，建立独立 chat。</span><button onClick={openTeam}>打开 Agent Team</button></div>}
-        {selectedAgent && selectedBlocks.length === 0 && <div className="dd-copilot-empty dd-copilot-empty--agent"><StatusPill tone="ok">已连接</StatusPill><b>{selectedAgent.label}</b><span>向这个 Agent 发送第一条消息即可建立 chat。</span></div>}
-        {(() => {
-          const rendered: ReactNode[] = [];
-          let tools: Extract<ChatBlock, { kind: "tool" }>[] = [];
-          const flushTools = () => {
-            if (tools.length) rendered.push(<ToolProcessPanel key={`tools-${tools[0].id}`} blocks={tools} />);
-            tools = [];
-          };
-          selectedBlocks.forEach((block) => {
-            if (block.kind === "tool") tools.push(block);
-            else {
-              flushTools();
-              rendered.push(renderBlock(block));
-            }
-          });
-          flushTools();
-          return rendered;
-        })()}
-        {selectedAgent && isRunning && <div className="dd-message dd-message--status">{selectedAgent.label} 正在思考…</div>}
+        {!selectedAgent && <div className="dd-copilot-empty"><Robot size={28} /><b>还没有人在线</b><span>去 Agent Team 叫一个人过来。</span><button onClick={openTeam}>打开 Agent Team</button></div>}
+        {selectedAgent && selectedBlocks.length === 0 && !isRunning && <div className="agent-empty"><b>{selectedAgent.label}</b><span>{personaLine(selectedAgent.label)}</span></div>}
+        {selectedAgent && <AgentTranscript blocks={selectedBlocks} agentLabel={selectedAgent.label} running={isRunning} />}
       </div>
       <footer>
-        <div className="dd-copilot-composer"><input disabled={!selectedAgent || isRunning} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => event.key === "Enter" && send()} placeholder={selectedAgent ? "和当前 Agent 聊点什么…" : "先从 Agent Team 选择一个 Agent"} /><button disabled={!selectedAgent || isRunning} onClick={send} aria-label="发送"><PaperPlaneTilt size={17} weight="fill" /></button></div>
+        <div className="dd-copilot-composer"><input disabled={!selectedAgent || isRunning} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => event.key === "Enter" && send()} placeholder={selectedAgent ? `跟 ${selectedAgent.label} 说…` : "先选一位同事"} /><button disabled={!selectedAgent || isRunning} onClick={send} aria-label="发送"><PaperPlaneTilt size={17} weight="fill" /></button></div>
         <div className="dd-agent-switcher">
           <Robot size={15} />
           {sessions.length > 0 ? (
             <label>
-              <small>当前 Agent · {isRunning ? "执行中" : "可对话"}</small>
+              <small>{isRunning ? "在忙" : "在线"}</small>
               <select aria-label="选择 Agent Team 中的 Agent" value={selectedAgent?.id ?? ""} onChange={(event) => selectAgent(event.target.value)}>
                 {sessions.map((session) => <option key={session.id} value={session.id}>{session.label} · {session.providerName}</option>)}
               </select>
@@ -765,7 +726,7 @@ function Copilot({
           {selectedAgent && <button className="dd-agent-manage" onClick={openTeam}>管理</button>}
           {selectedAgent && isRunning && <button className="dd-agent-abort" onClick={() => void onAbortAgent(selectedAgent.id)}>停止</button>}
         </div>
-        <small className="dd-copilot-note"><ShieldCheck size={12} />chat 由 Agent Team 会话承载 · 数据范围和外发策略仍由你控制</small>
+        <small className="dd-copilot-note"><ShieldCheck size={12} />要你点头的事会标成「待你确认」。文件和邮件不会自己发出去。</small>
       </footer>
     </aside>
   );

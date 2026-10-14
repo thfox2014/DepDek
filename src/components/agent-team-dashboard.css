@@ -31,7 +31,7 @@
 .agent-team-avatar--4 { background: #fceaf0; color: #cb678c; }
 .agent-team-card-identity { min-width: 0; flex: 1; }
 .agent-team-card-identity h3 { margin: 0 0 5px; font-size: 16px; }
-.agent-team-card-identity span { display: block; overflow: hidden; color: #9a97aa; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.agent-team-card-identity span, .agent-team-voice { display: block; overflow: hidden; color: #6f6c84; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .agent-team-card-config { display: grid; width: 32px; height: 32px; place-items: center; border: 0; border-radius: 9px; background: transparent; color: #9995ac; cursor: pointer; }
 .agent-team-card-config:hover { background: #f2efff; color: #6d56df; }
 .agent-team-skill-list { display: flex; min-height: 55px; align-content: flex-start; flex-wrap: wrap; gap: 7px; margin: 18px 0 14px; }
@@ -92,6 +92,8 @@
 .agent-team-task--running .agent-team-task-status, .agent-team-task--queued .agent-team-task-status { background: #eeeaff; color: #6650d2; }
 .agent-team-task--done .agent-team-task-status { background: #e7f6ef; color: #2f8d68; }
 .agent-team-task--failed .agent-team-task-status { background: #fff0f2; color: #b9485b; }
+.agent-team-task--ask { border-color: #f0d7a4; background: #fffaf3; }
+.agent-team-task--ask .agent-team-task-status { background: #fff1d6; color: #9a6420; }
 .agent-team-task-kind { background: #f7f6fb; color: #7d7a90; }
 .agent-team-task-body { min-width: 0; }
 .agent-team-task-body b, .agent-team-task-body small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

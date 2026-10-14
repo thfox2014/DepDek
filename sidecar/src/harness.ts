@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import type { ProviderConfig } from "./providers.js";
+import { AGENT_VOICE } from "./voice.js";
 
 export const HARNESS_ENGINE = "deepseek-harness" as const;
 export type HarnessEngine = typeof HARNESS_ENGINE;
@@ -141,12 +142,11 @@ function policyYaml(model: string): string {
 function composeTask(systemPrompt: string | undefined, history: string[], text: string): string {
   const prior = history.join("\n\n").slice(-MAX_HISTORY_CHARS);
   return [
-    "You are the DepDek Agent Team assistant running through DeepSeek Harness.",
-    "This is a text-only turn. Do not claim to have changed files, sent mail, or modified external services.",
-    systemPrompt?.trim() ? `Agent instructions:\n${systemPrompt.trim()}` : "",
-    prior ? `Conversation context (may be truncated):\n${prior}` : "",
-    `Current user request:\n${text.trim()}`,
-    "Return a concise answer in Markdown.",
+    systemPrompt?.trim() ? `角色：\n${systemPrompt.trim()}` : "",
+    prior ? `之前的对话（可能被截断）：\n${prior}` : "",
+    `用户刚才说：\n${text.trim()}`,
+    AGENT_VOICE,
+    "这一轮只能回答。不要声称改过文件、发过邮件或写过外部服务。",
   ].filter(Boolean).join("\n\n");
 }
 
@@ -193,7 +193,6 @@ export class DeepSeekHarnessSession {
     if (this.busy) throw new Error("DeepSeek Harness session is busy");
     this.busy = true;
     this.abortRequested = false;
-    this.progress("started", "DeepSeek Harness 已启动");
     if (this.provider.kind === "anthropic") {
       this.busy = false;
       throw new Error("DeepSeek Harness 当前只支持 DeepSeek/OpenAI 兼容 provider；请为该 Agent 选择 DeepSeek provider");
@@ -214,7 +213,6 @@ export class DeepSeekHarnessSession {
     let runtimeDir: string;
     try {
       runtimeDir = await this.ensureRuntimeDir();
-      this.progress("policy", "已加载 Harness 只读策略");
     } catch (error) {
       this.busy = false;
       throw error;
@@ -224,7 +222,7 @@ export class DeepSeekHarnessSession {
       throw new HarnessAbortedError();
     }
     const task = composeTask(this.systemPrompt, this.history, text);
-    this.progress("thinking", "DeepSeek Harness 正在分析当前上下文");
+    this.progress("thinking", "在想");
     let child: ChildProcessWithoutNullStreams;
     try {
       child = this.spawnProcess({
@@ -240,7 +238,7 @@ export class DeepSeekHarnessSession {
           ...(this.provider.api_key ? { DEEPSEEK_API_KEY: this.provider.api_key } : {}),
         },
       });
-      this.progress("generating", "DeepSeek Harness 正在生成回答");
+      this.progress("generating", "在写");
       console.error(`[depdek-harness] session=${this.sessionId} engine=deepseek-harness profile=headless model=${this.model} command=${command}`);
     } catch (error) {
       this.busy = false;
@@ -251,7 +249,6 @@ export class DeepSeekHarnessSession {
       const answer = await this.collect(child, command);
       const trimmed = answer.trim();
       if (!trimmed) throw new Error("DeepSeek Harness 返回了空响应");
-      this.progress("complete", "DeepSeek Harness 已完成分析");
       this.history.push(`用户：${text.trim()}`, `助手：${trimmed}`);
       while (this.history.join("\n\n").length > MAX_HISTORY_CHARS) this.history.splice(0, 2);
       return trimmed;

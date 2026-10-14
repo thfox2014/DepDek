@@ -6,6 +6,7 @@ import {
   type FauxProviderRegistration,
 } from "@mariozechner/pi-ai";
 import { SessionManager, DEFAULT_SYSTEM_PROMPT } from "../src/sessions.js";
+import { withAgentVoice } from "../src/voice.js";
 import { TeamOrchestrator, TEAM_SYSTEM_NOTE } from "../src/team.js";
 import type { VaultClient } from "../src/tools.js";
 
@@ -166,7 +167,7 @@ describe("SessionManager", () => {
     manager.createSessionWithModel("s5", faux.getModel(), { systemPrompt: "custom prompt" });
     manager.send("s5", "hi");
     await waitFor(notifications, (n) => isEvent("message_complete")(n) && n.params.session_id === "s5");
-    expect(capturedSystemPrompt).toBe("custom prompt");
+    expect(capturedSystemPrompt).toBe(withAgentVoice("custom prompt"));
   });
 
   it("keeps sessions isolated and rejects duplicates", () => {

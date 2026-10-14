@@ -3,8 +3,8 @@ import * as api from "../api";
 import { ChatCircleText, ClockCounterClockwise, FileText, FloppyDisk, GearSix, PaperPlaneTilt, Plus, ShieldCheck } from "@phosphor-icons/react";
 import type { ProviderConfig } from "../api";
 import type { ChatBlock, ConversationRecord, SessionInfo } from "../App";
-import MarkdownText from "./MarkdownText";
-import ToolProcessPanel from "./ToolProcessPanel";
+import { personaLine } from "../agentVoice";
+import AgentTranscript from "./AgentTranscript";
 
 interface Props {
   sessions: SessionInfo[];
@@ -194,8 +194,8 @@ const AGENT_CONFIG_TABS: Array<{ id: AgentConfigTab; label: string; optional?: b
 
 function defaultAgentFiles(label: string): Record<AgentFileName, string> {
   return {
-    "agent.md": `# ${label}\n\n你是 ${label}，DepDek 的个人数据 Agent。先准确复述事实，再给出可由用户确认的建议。\n`,
-    "skill.md": "# Skills\n\n- 识别主题、行动项、时间节点和风险。\n- 所有建议必须保持只读，不代替用户回复、移动、删除或发送。\n",
+    "agent.md": `# ${label}\n\n你是 ${label}。用第一人称，先给结果。需要对方点头的事单独一行，以「待确认：」开头。\n`,
+    "skill.md": "# Skills\n\n- 先做能做的，再问必须问的。\n- 发邮件、删文件、写外部服务之前，停下来等确认。\n",
     "mcp.md": "# MCP\n\n本文件只记录未来接入的 MCP 说明，不授予本次分析任何工具权限。当前分析不得调用外部服务。\n",
   };
 }
@@ -443,27 +443,7 @@ function AgentSessionPanel({
     void onSend(agentId, text);
   };
 
-  const renderBlocks = () => {
-    const rendered: ReactNode[] = [];
-    let tools: Extract<ChatBlock, { kind: "tool" }>[] = [];
-    const flushTools = () => {
-      if (tools.length) rendered.push(<ToolProcessPanel key={`session-tools-${tools[0].id}`} blocks={tools} />);
-      tools = [];
-    };
-    visibleBlocks.forEach((block) => {
-      if (block.kind === "tool") {
-        tools.push(block);
-        return;
-      }
-      flushTools();
-      if (block.kind === "user") rendered.push(<div key={block.id} className="msg user">{block.text}</div>);
-      if (block.kind === "assistant") rendered.push(<div key={block.id} className="msg assistant"><MarkdownText markdown={block.text} /></div>);
-      if (block.kind === "error") rendered.push(<div key={block.id} className="msg error-text">{block.message}</div>);
-      if (block.kind === "status") rendered.push(<div key={block.id} className="msg status">{block.text}</div>);
-    });
-    flushTools();
-    return rendered;
-  };
+  const renderBlocks = () => <AgentTranscript blocks={visibleBlocks} agentLabel={agentLabel} running={running && !readOnly} />;
 
   return (
     <section className="office__session-panel" aria-label={`${agentLabel} 会话`}>
@@ -491,15 +471,15 @@ function AgentSessionPanel({
         </div>
       </header>
       <div className="office__session-context">
-        {selectedHistory ? <><span>历史对话 · 只读查看</span><button type="button" onClick={() => setSelectedHistoryId(null)}>返回当前会话</button></> : <span>当前会话 · Agent 会保留本次上下文</span>}
+        {selectedHistory ? <><span>这是以前的对话，只能看</span><button type="button" onClick={() => setSelectedHistoryId(null)}>回到现在</button></> : <span>{personaLine(agentLabel)}</span>}
       </div>
       <div className="messages office__session-messages" ref={scrollRef}>
-        {visibleBlocks.length ? renderBlocks() : <div className="office__session-empty"><ChatCircleText size={28} /><b>还没有消息</b><span>输入一条消息，开始与 {agentLabel} 协作。</span></div>}
+        {visibleBlocks.length ? renderBlocks() : <div className="office__session-empty"><b>{agentLabel}</b><span>{personaLine(agentLabel)}</span></div>}
       </div>
       {error && <p className="error-text office__session-error">{error}</p>}
       {readOnly ? <div className="office__session-readonly"><span>这是历史对话快照，不能直接继续写入原会话。</span><button type="button" onClick={() => setSelectedHistoryId(null)}>进入当前会话</button></div> : <div className="composer office__session-composer">
-        <textarea value={input} disabled={running} placeholder={running ? "Agent 正在处理…" : `和 ${agentLabel} 聊点什么…`} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); } }} />
-        {running ? <button type="button" onClick={() => void onAbort(agentId)}>中止</button> : <button type="button" className="primary" disabled={!input.trim()} onClick={submit}><PaperPlaneTilt size={15} />发送</button>}
+        <textarea value={input} disabled={running} placeholder={running ? `${agentLabel} 在忙…` : `跟 ${agentLabel} 说…`} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); } }} />
+        {running ? <button type="button" onClick={() => void onAbort(agentId)}>停下</button> : <button type="button" className="primary" disabled={!input.trim()} onClick={submit}><PaperPlaneTilt size={15} />发送</button>}
       </div>}
     </section>
   );

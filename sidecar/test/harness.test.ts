@@ -19,11 +19,13 @@ describe("DeepSeek Harness bridge", () => {
     );
     await expect(session.prompt("整理一下")) .resolves.toContain("Harness 响应");
     await expect(session.prompt("继续")) .resolves.toContain("Harness 响应");
-    expect(seen[1]).toContain("Conversation context");
+    expect(seen[1]).toContain("之前的对话");
     expect(envs[0]?.DSH_PERMISSION_MODE).toBe("read-only");
     expect(envs[0]?.DSH_TELEMETRY_DISABLED).toBe("1");
-    expect(seen[0]).toContain("Current user request");
-    expect(progress.map((event) => event.phase)).toEqual(["started", "policy", "thinking", "generating", "complete", "started", "policy", "thinking", "generating", "complete"]);
+    expect(seen[0]).toContain("用户刚才说");
+    expect(seen[0]).toContain("待确认：");
+    expect(progress.map((event) => event.phase)).toEqual(["thinking", "generating", "thinking", "generating"]);
+    expect(progress.map((event) => event.message)).toEqual(["在想", "在写", "在想", "在写"]);
     await session.dispose();
   });
 

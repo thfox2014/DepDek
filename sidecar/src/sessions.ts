@@ -16,6 +16,7 @@ import { createReadOnlyVaultTools, createVaultTools, type VaultClient } from "./
 import { convertAgentEvent } from "./events.js";
 import { resolveProvider, type ProviderConfig } from "./providers.js";
 import { DeepSeekHarnessSession, HARNESS_ENGINE, HarnessAbortedError } from "./harness.js";
+import { withAgentVoice } from "./voice.js";
 import { buildPersonalContext, withPersonalContext } from "./context.js";
 import {
   TEAM_SYSTEM_NOTE,
@@ -30,11 +31,9 @@ export const ERR_SESSION_EXISTS = -32010;
 export const ERR_SESSION_NOT_FOUND = -32011;
 export const ERR_SESSION_BUSY = -32012;
 
-export const DEFAULT_SYSTEM_PROMPT =
-  "You are a workbench agent. You read and write files in the user's data folder " +
-  "exclusively through the provided tools. You must never access anything outside " +
-  "the data folder. The internal file tasks/history.json is excluded from analysis " +
-  "context; do not request or analyze it.";
+export const DEFAULT_SYSTEM_PROMPT = withAgentVoice(
+  "你只能通过工具读写用户的数据文件夹，不要碰文件夹以外的东西。tasks/history.json 是内部日志，不要去读。",
+);
 
 /** Outbound channel used to push agent/event notifications. */
 export interface EventSink {
@@ -113,7 +112,7 @@ export class SessionManager {
     if (this.sessions.has(sessionId)) {
       throw new RpcError(ERR_SESSION_EXISTS, `session already exists: ${sessionId}`);
     }
-    const basePrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+    const basePrompt = options.systemPrompt?.trim() ? withAgentVoice(options.systemPrompt) : DEFAULT_SYSTEM_PROMPT;
     const agent = new Agent({
       initialState: {
         systemPrompt: this.team ? `${basePrompt}${TEAM_SYSTEM_NOTE}` : basePrompt,

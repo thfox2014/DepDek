@@ -32,7 +32,7 @@ export type ChatBlock =
       preview?: string;
     }
   | { id: number; kind: "error"; message: string }
-  | { id: number; kind: "status"; text: string };
+  | { id: number; kind: "status"; text: string; ephemeral?: boolean };
 
 export interface ConversationRecord {
   id: string;
@@ -75,7 +75,7 @@ const PREVIEW_TEAM_TASKS: api.TeamTask[] = [
     chain: ["doc-manager", "photo-manager"],
     created_at: "2026-10-14T09:40:00.000Z",
     updated_at: "2026-10-14T09:42:00.000Z",
-    result_preview: "按文件名匹配到 4 张，都在 photos/trip 下面。",
+    result_preview: "按文件名匹配到 4 张，都在 photos/trip 下面。待确认：要不要收进这一个文件夹？",
   },
 ];
 
@@ -130,6 +130,16 @@ function loadConversationHistory(): Record<string, ConversationRecord[]> {
   } catch {
     return {};
   }
+}
+
+function dropEphemeral(blocks: ChatBlock[]): ChatBlock[] {
+  let end = blocks.length;
+  while (end > 0) {
+    const block = blocks[end - 1];
+    if (block?.kind === "status" && block.ephemeral) end -= 1;
+    else break;
+  }
+  return end === blocks.length ? blocks : blocks.slice(0, end);
 }
 
 // Omit does not distribute over unions, so distribute it manually.
@@ -290,7 +300,15 @@ export default function App() {
               : { providers: { [INITIAL_PROVIDER_NAME]: INITIAL_DEEPSEEK_PROVIDER }, agents: INITIAL_AGENTS };
           setSettings(preview);
           setRoot(preview.last_root || "~/DepDek-Home · 浏览器 UX 预览");
-          if (!served) setTeamTasks(PREVIEW_TEAM_TASKS);
+          if (!served) {
+            setTeamTasks(PREVIEW_TEAM_TASKS);
+            setChats({
+              tanvis: [
+                { id: 9001, kind: "user", text: "这周的纪要里，有什么还要我拍板？" },
+                { id: 9002, kind: "assistant", text: "预算口径已经对齐。\n待确认：周四的重叠会议，要不要改到周五上午？" },
+              ],
+            });
+          }
           await restoreConversationHistory((preview.agents ?? []).map((a) => a.id));
           return;
         }
@@ -341,31 +359,36 @@ export default function App() {
     if (!("__TAURI_INTERNALS__" in window)) return;
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    const markHarnessEvent = (sid: string) => {
-      setChats((prev) => {
-        const blocks = prev[sid] ?? [];
-        if (blocks.some((block) => block.kind === "status" && block.text.includes("DeepSeek Harness"))) return prev;
-        return {
-          ...prev,
-          [sid]: [...blocks, { id: nextId(), kind: "status", text: "引擎已确认：DeepSeek Harness · dsh --profile headless" }],
-        };
-      });
-    };
     api
       .onAgentEvent((ev) => {
         const sid = ev.session_id;
         switch (ev.type) {
-          case "progress":
-            pushBlock(sid, { kind: "status", text: String(ev.data.message ?? "正在处理…") });
-            if (ev.data.phase === "team_task" || ev.data.phase === "team_result") {
-              setRunning((current) => ({ ...current, [sid]: true }));
+          case "progress": {
+            const phase = String(ev.data.phase ?? "");
+            const text = String(ev.data.message ?? "").trim();
+            const sticky = phase === "team_task" || phase === "team_result";
+            const quiet = !text || phase === "started" || phase === "complete" || phase === "policy";
+            if (!quiet) {
+              setChats((prev) => {
+                const blocks = prev[sid] ?? [];
+                const last = blocks[blocks.length - 1];
+                if (!sticky && last?.kind === "status" && last.ephemeral) {
+                  if (last.text === text) return prev;
+                  return { ...prev, [sid]: [...blocks.slice(0, -1), { ...last, text }] };
+                }
+                return {
+                  ...prev,
+                  [sid]: [...blocks, { id: nextId(), kind: "status", text, ...(sticky ? {} : { ephemeral: true }) }],
+                };
+              });
             }
+            if (sticky) setRunning((current) => ({ ...current, [sid]: true }));
             break;
+          }
           case "text_delta": {
-            if (ev.data.engine === "deepseek-harness") markHarnessEvent(sid);
             const delta = String(ev.data.delta ?? "");
             setChats((prev) => {
-              const blocks = prev[sid] ?? [];
+              const blocks = dropEphemeral(prev[sid] ?? []);
               const last = blocks[blocks.length - 1];
               if (last && last.kind === "assistant") {
                 return {
@@ -416,7 +439,12 @@ export default function App() {
             break;
           }
           case "message_complete":
-            if (ev.data.engine === "deepseek-harness") markHarnessEvent(sid);
+            setChats((prev) => {
+              const blocks = prev[sid];
+              if (!blocks) return prev;
+              const next = dropEphemeral(blocks);
+              return next === blocks ? prev : { ...prev, [sid]: next };
+            });
             setRunning((r) => ({ ...r, [sid]: false }));
             setAgentMetrics((current) => {
               const previous = current[sid] ?? { completedRuns: 0, reportedTokens: 0, tokenUsageKnown: false };

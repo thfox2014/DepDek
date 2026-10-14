@@ -113,7 +113,7 @@ describe("TeamOrchestrator", () => {
     expect(harness.runs[0]?.turn.origin).toBe("delegate");
     expect(harness.runs[1]?.id).toBe("doc-manager");
     expect(harness.runs[1]?.turn.origin).toBe("result");
-    expect(harness.runs[1]?.text).toContain("Do not delegate");
+    expect(harness.runs[1]?.text).toContain("不要再委托");
     expect(harness.audits.some((entry) => entry.status === "done" && entry.ok === true)).toBe(true);
     expect(harness.audits.every((entry) => entry.kind === "delegate")).toBe(true);
   });

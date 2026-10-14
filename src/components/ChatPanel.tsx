@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChatBlock, SessionInfo } from "../App";
-import MarkdownText from "./MarkdownText";
-import ToolProcessPanel from "./ToolProcessPanel";
+import AgentTranscript from "./AgentTranscript";
 
 interface Props {
   sessions: SessionInfo[];
@@ -29,6 +28,7 @@ export default function ChatPanel({
 
   const blocks = activeId ? chats[activeId] ?? [] : [];
   const isRunning = activeId ? Boolean(running[activeId]) : false;
+  const activeLabel = sessions.find((session) => session.id === activeId)?.label ?? "Agent";
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -71,56 +71,12 @@ export default function ChatPanel({
         ))}
       </div>
       <div className="messages" ref={scrollRef}>
-        {(() => {
-          const rendered: ReactNode[] = [];
-          let tools: Extract<ChatBlock, { kind: "tool" }>[] = [];
-          const flushTools = () => {
-            if (tools.length) rendered.push(<ToolProcessPanel key={`tools-${tools[0].id}`} blocks={tools} />);
-            tools = [];
-          };
-          blocks.forEach((b) => {
-            if (b.kind === "tool") {
-              tools.push(b);
-              return;
-            }
-            flushTools();
-            rendered.push((() => {
-          switch (b.kind) {
-            case "user":
-              return (
-                <div key={b.id} className="msg user">
-                  {b.text}
-                </div>
-              );
-            case "assistant":
-              return (
-                <div key={b.id} className="msg assistant">
-                  <MarkdownText markdown={b.text} />
-                </div>
-              );
-            case "error":
-              return (
-                <div key={b.id} className="msg error-text">
-                  {b.message}
-                </div>
-              );
-            case "status":
-              return (
-                <div key={b.id} className="msg status">
-                  {b.text}
-                </div>
-              );
-          }
-            })());
-          });
-          flushTools();
-          return rendered;
-        })()}
+        <AgentTranscript blocks={blocks} agentLabel={activeLabel} running={isRunning} />
       </div>
       <div className="composer">
         <textarea
           value={input}
-          placeholder={activeId ? "输入消息，Enter 发送，Shift+Enter 换行" : "请选择一个会话标签"}
+          placeholder={activeId ? `跟 ${activeLabel} 说…` : "先选一个会话"}
           disabled={!activeId}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
@@ -131,7 +87,7 @@ export default function ChatPanel({
           }}
         />
         {isRunning ? (
-          <button onClick={() => activeId && onAbort(activeId)}>中止</button>
+          <button onClick={() => activeId && onAbort(activeId)}>停下</button>
         ) : (
           <button className="primary" disabled={!activeId || !input.trim()} onClick={submit}>
             发送

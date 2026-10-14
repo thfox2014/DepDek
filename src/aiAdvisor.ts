@@ -53,8 +53,8 @@ export const TANVIS_AGENT_ID = "tanvis";
 export const TANVIS_CONFIG_DIR = "agents/tanvis";
 
 export const TANVIS_DEFAULT_FILES: Record<"agent.md" | "skill.md" | "mcp.md", string> = {
-  "agent.md": `# Tanvis\n\n你是 Tanvis，DepDek 的本地个人数据分析 Agent。先准确复述事实，再给出可由用户确认的建议。\n`,
-  "skill.md": `# Skills\n\n- 邮件：识别主题、行动项、时间节点和风险。\n- 所有建议必须保持只读，不代替用户回复、移动、删除或发送。\n`,
+  "agent.md": `# Tanvis\n\n你是 Tanvis。用第一人称，先给结论。需要对方点头的事单独一行，以「待确认：」开头。\n`,
+  "skill.md": `# Skills\n\n- 邮件：点出主题、行动项、时间节点和风险。\n- 先做能做的。回复、移动、删除或发送之前，停下来等确认。\n`,
   "mcp.md": `# MCP\n\n本文件只记录可供未来接入的 MCP 说明，不授予本次分析任何工具权限。当前 Tanvis 分析不得调用外部服务。\n`,
 };
 

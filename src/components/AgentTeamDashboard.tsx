@@ -3,6 +3,7 @@ import { ArrowRight, Brain, EnvelopeSimple, FileText, GearSix, ImageSquare, Musi
 import type { Icon } from "@phosphor-icons/react";
 import type { AgentSkill, ProviderConfig, SavedAgent, TeamTask, TeamTaskStatus } from "../api";
 import type { AgentMetrics, SessionInfo } from "../App";
+import { personaLine } from "../agentVoice";
 import "./agent-team-dashboard.css";
 
 const SKILL_CATALOG: Record<AgentSkill, { name: string; description: string; icon: Icon }> = {
@@ -96,8 +97,8 @@ export default function AgentTeamDashboard({ agents, sessions, metrics, provider
       <header className="agent-team-header">
         <div className="agent-team-title">
           <span className="agent-team-kicker"><Robot size={15} /> AGENT TEAM</span>
-          <h1>每个 Agent，都有自己的专长</h1>
-          <p>选择伙伴开始协作。在线的 Agent 可以把任务委托给队友；委托在后台执行，用的仍是对方已有的工具。</p>
+          <h1>找个人，把事说完</h1>
+          <p>点开就聊。他们会把活交给队友，结果回到发起人。要你点头的事会单独标出来。</p>
         </div>
         <div className="agent-team-actions">
           <button className="agent-team-secondary" onClick={onOpenSettings}><GearSix size={17} />模型与密钥</button>
@@ -114,7 +115,7 @@ export default function AgentTeamDashboard({ agents, sessions, metrics, provider
 
       {deepseekKeyMissing && <div className="agent-team-notice"><b>默认模型：DeepSeek</b><span>{deepseekProvider ? "尚未填写 API Key。请先在模型设置中配置凭据后开始协作。" : "尚未配置 DeepSeek Provider。请在模型设置中补充 API Key 后开始协作。"}</span><button onClick={onOpenSettings}>配置模型 <ArrowRight size={14} /></button></div>}
 
-      <div className="agent-team-section-head"><div><h2>Agent 工作伙伴</h2><span>每个 Agent 单独配置模型、提示词和技能</span></div><button onClick={onConfigure}><Wrench size={16} />管理技能与配置</button></div>
+      <div className="agent-team-section-head"><div><h2>同事</h2><span>每个人有自己的事，也有自己的工具</span></div><button onClick={onConfigure}><Wrench size={16} />管理技能与配置</button></div>
       {actionError && <div className="agent-team-inline-error" role="alert">{actionError}</div>}
       <section className="agent-team-grid">
         {agents.map((agent, index) => {
@@ -128,7 +129,7 @@ export default function AgentTeamDashboard({ agents, sessions, metrics, provider
             <article className="agent-team-card" key={agent.id}>
               <div className="agent-team-card-head">
                 <div className={"agent-team-avatar agent-team-avatar--" + (index % 5)}><Robot size={24} weight="duotone" /></div>
-                <div className="agent-team-card-identity"><h3>{agent.label}</h3><span>{agent.engine === "deepseek-harness" ? "DeepSeek Harness" : "Pi Agent Core"} · {agent.provider_name}</span></div>
+                <div className="agent-team-card-identity"><h3>{agent.label}</h3><span className="agent-team-voice">{personaLine(agent.label)}</span></div>
                 <button className="agent-team-card-config" title="配置 Agent" aria-label={"配置 " + agent.label} onClick={onConfigure}><GearSix size={17} /></button>
               </div>
               <div className="agent-team-skill-list">
@@ -138,7 +139,7 @@ export default function AgentTeamDashboard({ agents, sessions, metrics, provider
                 }) : <span className="agent-team-no-skill">尚未启用工具技能</span>}
               </div>
               <div className="agent-team-card-stats"><div><b>{metric.completedRuns}</b><small>已完成任务</small></div><div><b>{metric.tokenUsageKnown ? compact(metric.reportedTokens) : "—"}</b><small>Tokens</small></div><div><b>{agent.engine === "deepseek-harness" ? "只读文本" : "Vault"}</b><small>工具范围</small></div></div>
-              {agent.engine === "deepseek-harness" && <p className="agent-team-capability-note">Harness 当前配置为文本只读，不提供文件/MCP 工具调用；切换 Pi 引擎以使用所列技能。</p>}
+              {agent.engine === "deepseek-harness" && <p className="agent-team-capability-note">这位只回话，不改文件。要动文件，换成 Pi。</p>}
               <footer>
                 <span className={isRunning ? "agent-team-status agent-team-status--busy" : session ? "agent-team-status" : "agent-team-status agent-team-status--off"}><i />{isRunning ? "正在工作" : session ? "在线" : hasKey ? "待启动" : "等待配置 API Key"}</span>
                 <button onClick={() => void startOrEnter(agent, Boolean(session))}>{session ? "进入协作" : "开始工作"}<ArrowRight size={16} /></button>
@@ -151,19 +152,20 @@ export default function AgentTeamDashboard({ agents, sessions, metrics, provider
       <section className="agent-team-tasks" aria-label="协作任务">
         <div className="agent-team-section-head">
           <div>
-            <h2>协作任务</h2>
-            <span>{activeTeamTasks > 0 ? `${activeTeamTasks} 个进行中` : "委托和消息会显示在这里"}</span>
+            <h2>正在交接的事</h2>
+            <span>{activeTeamTasks > 0 ? `${activeTeamTasks} 件进行中` : "交给队友的事会停在这里"}</span>
           </div>
         </div>
         {orderedTasks.length === 0 ? (
-          <p className="agent-team-tasks-empty">还没有协作任务。Agent 可以用 delegate_task 把工作交给在线队友，完成后结果会回到发起人。</p>
+          <p className="agent-team-tasks-empty">还没有交接。谁要是把事交给队友，会停在这里，做完再回到发起人。</p>
         ) : (
           <ul className="agent-team-task-list">
             {orderedTasks.map((task) => {
               const cancellable = task.status === "queued" || task.status === "running";
+              const needsYou = /待确认[:：]/.test(`${task.instruction}\n${task.result_preview ?? ""}`);
               return (
-                <li className={`agent-team-task agent-team-task--${task.status}`} key={task.id}>
-                  <span className="agent-team-task-status">{TASK_STATUS[task.status]}</span>
+                <li className={`agent-team-task agent-team-task--${task.status}${needsYou ? " agent-team-task--ask" : ""}`} key={task.id}>
+                  <span className="agent-team-task-status">{needsYou ? "待你确认" : TASK_STATUS[task.status]}</span>
                   <span className="agent-team-task-kind">{task.kind === "message" ? "消息" : "委托"}</span>
                   <div className="agent-team-task-body">
                     <b>{task.from_label} → {task.to_label}</b>
