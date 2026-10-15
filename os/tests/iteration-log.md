@@ -6,16 +6,16 @@ Target: a Debian 13 (Trixie) amd64 hybrid installer ISO that starts the DepDek A
 
 | ID | Test | Pass condition | Final result |
 |---|---|---|---|
-| MVP-01 | Build standard frontend | TypeScript and Vite production build succeed | Pass, iteration 15 |
+| MVP-01 | Build standard frontend | TypeScript and Vite production build succeed | Pass, iteration 21 (AI-OS and Webdesk) |
 | MVP-02 | Validate WAV input | Valid 16 kHz mono PCM is accepted | Pass, Rust test |
 | MVP-03 | Reject malformed audio | Empty, corrupt, stereo, zero-length, and over-30-second audio is rejected | Pass, Rust test |
-| MVP-04 | Run Rust core and RPC regression tests | All unit, local-model e2e, and RPC integration tests pass | Pass: 31 + 1 + 2, iteration 15 |
+| MVP-04 | Run Rust core and RPC regression tests | Core, RPC and actual bundled setup-model checks pass | Pass, iteration 21: 121 core tests as non-root + 2 RPC + 1 real setup-model test; legacy localhost:8080 model test skipped |
 | MVP-05 | Initialize DepDek Home | First run creates `~/DepDek-Home` through the existing vault root validator | Pass: Tauri command is built; live shell shows `/home/live/DepDek-Home` |
-| MVP-06 | Open the dedicated AI-OS shell | Graphical boot starts the native Jiaho account page; `depdek-shell` remains a manual entry | Implemented for iteration 21; build verification pending |
-| MVP-07 | Build the amd64 Debian package | Package metadata says `Architecture: amd64`; shell, sidecar, Node, and offline model are bundled | Pass: iteration 15 package inspection |
-| MVP-08 | Boot the hybrid ISO | QEMU reaches the native account page with the bundled model service ready | Implemented for iteration 21; build verification pending |
-| MVP-09 | Include the install and post-login path | Calamares is retained; a normal graphical display session starts native AI-OS login | Implemented for iteration 21; physical installation verification pending |
-| MVP-10 | Run offline Mandarin recognition | Vosk loads with networking disabled and recognizes the fixture's expected words | Pass: iteration 11 build log |
+| MVP-06 | Open the dedicated AI-OS shell | Graphical boot starts the native Jiaho account page; `depdek-shell` remains a manual entry | Pass, iteration 21: visible account-creation page at 1280×800 |
+| MVP-07 | Build the amd64 Debian package | Package metadata says `Architecture: amd64`; shell, sidecar, Node and the voice model are bundled | Pass, iteration 21: 0.2.1 amd64 package; matching package/rootfs application hashes |
+| MVP-08 | Boot the hybrid ISO | QEMU reaches the native account page with the bundled model service ready | Pass, iteration 21: BIOS boot with AVX/BMI2 disabled; screenshot manually reviewed |
+| MVP-09 | Include the install and post-login path | Calamares is retained; a normal graphical display session starts native AI-OS login | Pass for rootfs contents and Live startup; target-disk installation remains unverified |
+| MVP-10 | Run offline Mandarin recognition | Vosk loads with networking disabled and recognizes the fixture's expected words | Pass, iteration 21 finish log (smoke test, not an ASR quality benchmark) |
 
 ## Iteration history
 
@@ -33,12 +33,24 @@ Target: a Debian 13 (Trixie) amd64 hybrid installer ISO that starts the DepDek A
 | 18 | Compile the current amd64 application and assemble a fresh rootfs. | New `0.2.1` `.deb` compiled successfully; chroot DNS blocked pip. Disabled reuse of the final rootfs cache to prevent silently packaging an older application. |
 | 19 | Use the newly built `.deb`, prebuild Python wheels outside the chroot, install them offline, and build/boot the new ISO. | Pass: rootfs/autostart/Calamares and offline Vosk smoke checks, BIOS/UEFI ISO boot metadata, matching application hashes in `.deb`/chroot/SquashFS, and visible QEMU BIOS Shell at 1280×800 (10,537 lime pixels). Evidence: `artifacts/iteration-19-validation.md`, `iteration-19-build.log`, `iteration-19-boot.log`, `boot-screen-iteration19.png`, and `SHA256SUMS`. |
 | 20 | Attempt the CLI-first redesign, then supersede it with the user's Jiaho first-login flow. | Added GRUB/Plymouth branding, native login, once-only setup points and the bundled local assistant. Docker stopped during compilation; no new ISO was produced. |
-| 21 | Merge current remote main and rebuild the Jiaho graphical first-login edition (2026-10-16). | Preserve remote collaboration features, apply the login gate to their control commands, disable BMI2 as well as AVX for the local runtime, and reuse compiler output. Build/boot verification in progress. |
+| 21 | Merge current remote main and rebuild the Jiaho graphical first-login edition (2026-10-16). | Pass: amd64 package, ISO, rootfs/model checksum, offline voice, actual local-model/credit persistence and visible BIOS boot. Fixed the Apache license filename, private-account subtree access, absolute-symlink rootfs assertions, serial/splash interaction and mutable build-entry script. Initial root-run credential fixtures were correctly denied; all 121 core tests passed as the ordinary `node` user. See the validation record below. |
+
+### Iteration 21 validation record
+
+- Sources preserve upstream Agent collaboration changes, native first-login/credits and the Jiaho boot assets. `main` was pushed without a force update; HTTPS temporarily failed and the existing verified SSH identity was used.
+- Frontend and Webdesk production builds passed; sidecar: 16 files / 143 tests; browser-computer boundary: 1 test; Rust core: 121 tests as non-root; RPC: 2 tests. The old localhost:8080 model test reported an unavailable endpoint and was not counted as a real inference pass.
+- `welcome_bundled` explicitly used the actual pinned Qwen model: first grant 1,000 → one successful request 990 → replay/restart/login still 990; preferences persisted. Default test runs ignore this case unless the bundled local service is explicitly started.
+- Image build completed, but editing its host-mounted running entry script interrupted the finishing commands. Rootfs/voice checks, cleanup and final copy were completed explicitly from the retained build container; future builds run a private entry-script snapshot. The temporary builder was removed after matching hashes and saving the ISO.
+- BIOS QEMU boot used 4 GB RAM, two CPUs and disabled AVX/AVX2/FMA/F16C/BMI2. The actual Plymouth logo and first account-creation page were visually inspected, not inferred from a process marker. Bundled-model `/health` was ready. UEFI boot metadata is present; UEFI execution itself was not tested.
+- ISO SHA256: `1001470378660edb4429e54faa415411d1941fe73bc145801f1a62ca3735eea6`.
+- Debian package SHA256: `f0b3fc978b4288ee6e334d243e6bcf2e2ffa6a02a10d72f9488df89a8d5238b2`.
+- Application binary in package and staged rootfs: `3fab5de3b39aae9c9d8573a606b312f11094a94c247d1739fcfc18b165b52241`.
+- Evidence under `artifacts/`: `iteration-21-build.log`, `iteration-21-finish.log`, `iteration-21-core-tests-nonroot.log`, `iteration-21-integration-tests.log`, `iteration-21-welcome-real-tests.log`, `iteration-21-iso-inspection.log`, `iteration-21-boot.log`, `boot-splash-iteration21.png`, `boot-login-iteration21.png`, and `SHA256SUMS`.
 
 ## MVP result and remaining validation
 
-The prior ISO/package remain available. The current sources replace the earlier CLI-first proposal with Jiaho graphical boot, native account creation, 1,000 once-only setup points and an offline configuration assistant. The new image must finish build and boot verification before it is used as updated installation media.
+The current `DepDek-AI-OS-amd64.iso` and matching `.deb` are the rebuilt iteration-21 artifacts. They replace the earlier CLI-first proposal with Jiaho graphical boot, native account creation, 1,000 once-only setup points and an offline configuration assistant. A previous image remains in `artifacts/pre-20261015-build/`.
 
-The earlier ISO was boot-tested with the BIOS path in QEMU. The new Jiaho edition is not yet boot-verified; physical USB boot, UEFI boot, and a complete Calamares install onto a target disk also remain unverified.
+The new Jiaho edition was BIOS boot-tested in QEMU. Physical USB boot, UEFI execution and a complete Calamares install onto a target disk remain unverified. No USB was written and no remote machine was deployed in iteration 21. Setup points are local configuration-experience points, not commercial cloud credits or a multi-user NAS identity system.
 
 The 2026-10-15 refresh retains the prior ISO/package under `artifacts/pre-20261015-build/`. The new artifacts are an MVP test build, not a production release: npm reported high/critical dependency advisories which were not force-upgraded or triaged here, and no real cloud model request was made. The current Shell's “已连接” provider label is not proof of a successful cloud connection. Full V2 NAS service provisioning and physical installation acceptance remain outside this build.
