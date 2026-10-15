@@ -73,7 +73,7 @@ lb config \
   --mirror-chroot https://deb.debian.org/debian \
   --mirror-chroot-security https://security.debian.org/debian-security \
   --archive-areas "main contrib non-free-firmware" \
-  --bootappend-live "boot=live components nocomponents=locales username=live hostname=jiaho quiet splash console=ttyS0,115200n8 console=tty0" \
+  --bootappend-live "boot=live components nocomponents=locales username=live hostname=jiaho quiet splash plymouth.ignore-serial-consoles console=ttyS0,115200n8 console=tty0" \
   --bootloaders "grub-pc grub-efi"
 lb build
 
