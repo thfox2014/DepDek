@@ -441,6 +441,7 @@ async fn agent_create_session(
     engine: Option<String>,
     enabled_skills: Option<Vec<String>>,
     label: Option<String>,
+    config_dir: Option<String>,
 ) -> Result<Value, String> {
     let mut params = json!({ "session_id": session_id, "provider": resolve_provider_secrets(&state, provider)? });
     if let Some(prompt) = system_prompt {
@@ -454,6 +455,9 @@ async fn agent_create_session(
     }
     if let Some(label) = label {
         params["label"] = json!(label);
+    }
+    if let Some(config_dir) = config_dir {
+        params["config_dir"] = json!(config_dir);
     }
     state.sidecar.request("agent/create_session", params).await
 }
@@ -525,6 +529,110 @@ async fn team_roster(state: State<'_, AppState>, agents: Value) -> Result<Value,
     state
         .sidecar
         .request("team/roster", json!({ "agents": agents }))
+        .await
+}
+
+#[tauri::command]
+async fn team_policy_get(state: State<'_, AppState>) -> Result<Value, String> {
+    state.sidecar.request("team/policy_get", json!({})).await
+}
+
+#[tauri::command]
+async fn team_policy_set(state: State<'_, AppState>, policy: Value) -> Result<Value, String> {
+    state
+        .sidecar
+        .request("team/policy_set", json!({ "policy": policy }))
+        .await
+}
+
+#[tauri::command]
+async fn approval_list(state: State<'_, AppState>) -> Result<Value, String> {
+    state.sidecar.request("approval/list", json!({})).await
+}
+
+#[tauri::command]
+async fn approval_decide(
+    state: State<'_, AppState>,
+    id: String,
+    decision: String,
+) -> Result<Value, String> {
+    state
+        .sidecar
+        .request("approval/decide", json!({ "id": id, "decision": decision }))
+        .await
+}
+
+#[tauri::command]
+async fn schedule_list(state: State<'_, AppState>) -> Result<Value, String> {
+    state.sidecar.request("schedule/list", json!({})).await
+}
+
+#[tauri::command]
+async fn schedule_put(state: State<'_, AppState>, routine: Value) -> Result<Value, String> {
+    state
+        .sidecar
+        .request("schedule/put", json!({ "routine": routine }))
+        .await
+}
+
+#[tauri::command]
+async fn schedule_delete(state: State<'_, AppState>, id: String) -> Result<Value, String> {
+    state
+        .sidecar
+        .request("schedule/delete", json!({ "id": id }))
+        .await
+}
+
+#[tauri::command]
+async fn mcp_connectors_get(state: State<'_, AppState>) -> Result<Value, String> {
+    state.sidecar.request("mcp/connectors_get", json!({})).await
+}
+
+#[tauri::command]
+async fn mcp_connector_put(state: State<'_, AppState>, connector: Value) -> Result<Value, String> {
+    state
+        .sidecar
+        .request("mcp/connector_put", json!({ "connector": connector }))
+        .await
+}
+
+#[tauri::command]
+async fn mcp_connector_delete(state: State<'_, AppState>, id: String) -> Result<Value, String> {
+    state
+        .sidecar
+        .request("mcp/connector_delete", json!({ "id": id }))
+        .await
+}
+
+#[tauri::command]
+async fn mcp_oauth_store(state: State<'_, AppState>, body: Value) -> Result<Value, String> {
+    state.sidecar.request("mcp/oauth_store", body).await
+}
+
+#[tauri::command]
+async fn mcp_oauth_status(
+    state: State<'_, AppState>,
+    connector_id: String,
+) -> Result<Value, String> {
+    state
+        .sidecar
+        .request("mcp/oauth_status", json!({ "connector_id": connector_id }))
+        .await
+}
+
+#[tauri::command]
+async fn mcp_list_tools(state: State<'_, AppState>, connector_id: String) -> Result<Value, String> {
+    state
+        .sidecar
+        .request("mcp/list_tools", json!({ "connector_id": connector_id }))
+        .await
+}
+
+#[tauri::command]
+async fn mcp_reload(state: State<'_, AppState>, session_id: String) -> Result<Value, String> {
+    state
+        .sidecar
+        .request("mcp/reload", json!({ "session_id": session_id }))
         .await
 }
 
@@ -873,6 +981,20 @@ pub fn run() {
             team_list,
             team_cancel,
             team_roster,
+            team_policy_get,
+            team_policy_set,
+            approval_list,
+            approval_decide,
+            schedule_list,
+            schedule_put,
+            schedule_delete,
+            mcp_connectors_get,
+            mcp_connector_put,
+            mcp_connector_delete,
+            mcp_oauth_store,
+            mcp_oauth_status,
+            mcp_list_tools,
+            mcp_reload,
             settings_get,
             settings_set,
             credentials_set,

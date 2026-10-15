@@ -27,6 +27,12 @@ pub enum Op {
     /// Agent-team delegation / message lifecycle. `path` is a logical subject
     /// `team/<task_id>/<kind>/<status>/<peer>`, not a vault file.
     Team,
+    /// MCP tool call. `path` is `mcp/<connector>/<tool>/<status>`.
+    Mcp,
+    /// Approval card. `path` is `approval/<id>/<kind>/<decision>`.
+    Approval,
+    /// Schedule fire. `path` is `schedule/<routine_id>/<status>`.
+    Schedule,
 }
 
 /// One audit record; shape fixed by contract section 3.

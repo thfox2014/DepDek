@@ -3,6 +3,7 @@ import { ArrowRight, Brain, EnvelopeSimple, FileText, GearSix, ImageSquare, Musi
 import type { Icon } from "@phosphor-icons/react";
 import type { AgentSkill, ProviderConfig, SavedAgent, TeamTask, TeamTaskStatus } from "../api";
 import type { AgentMetrics, SessionInfo } from "../App";
+import AgentAssistPanel from "./AgentAssistPanel";
 import "./agent-team-dashboard.css";
 
 const SKILL_CATALOG: Record<AgentSkill, { name: string; description: string; icon: Icon }> = {
@@ -10,7 +11,7 @@ const SKILL_CATALOG: Record<AgentSkill, { name: string; description: string; ico
   photos: { name: "照片管理", description: "按名称检索图片并在本地查看", icon: ImageSquare },
   music: { name: "播放音乐", description: "搜索音乐文件并调用内置播放器", icon: MusicNotes },
   videos: { name: "播放视频", description: "搜索视频文件并调用内置播放器", icon: VideoCamera },
-  mail: { name: "邮件收取", description: "通过已配置的 IMAP 连接收取邮件", icon: EnvelopeSimple },
+  mail: { name: "邮件", description: "收取邮件，或起草邮件并等你批准后才发送", icon: EnvelopeSimple },
   memory: { name: "共享记忆", description: "提交有来源的记忆候选，待用户确认", icon: Brain },
 };
 
@@ -193,9 +194,11 @@ export default function AgentTeamDashboard({ agents, sessions, metrics, provider
       </section>
 
       <section className="agent-team-integrations">
-        <div><span className="agent-team-integration-icon"><Wrench size={18} /></span><div><b>工具与连接</b><p>内置技能已可通过受审计 Vault 调用。MCP 文件目前用于记录配置说明，外部 MCP Server 尚未启动或授予工具权限。</p></div></div>
+        <div><span className="agent-team-integration-icon"><Wrench size={18} /></span><div><b>工具与连接</b><p>写入、外部 MCP 和发出邮件都要你点批准。MCP 授权写在 mcp.md 的 <code>连接器/工具</code> 行里，不会启动本地命令。</p></div></div>
         <button onClick={onConfigure}>查看各 Agent 配置 <ArrowRight size={15} /></button>
       </section>
+
+      <AgentAssistPanel agents={agents} />
 
       {createOpen && <div className="agent-team-modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setCreateOpen(false)}><section className="agent-team-modal" role="dialog" aria-modal="true" aria-label="新建 Agent"><header><div><b>新建 Agent</b><small>选择一个或多个能力，之后可在 Agent 配置中调整。</small></div><button onClick={() => setCreateOpen(false)} aria-label="关闭">×</button></header><label>名称<input autoFocus value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="例如：合同整理助手" /></label><fieldset className="agent-team-modal-skills"><legend>启用技能</legend>{Object.entries(SKILL_CATALOG).map(([id, skill]) => <label key={id}><input type="checkbox" checked={newSkills.includes(id as AgentSkill)} onChange={(event) => setNewSkills((current) => event.target.checked ? [...current, id as AgentSkill] : current.filter((item) => item !== id))} /><span><b>{skill.name}</b><small>{skill.description}</small></span></label>)}</fieldset><p>默认使用 DeepSeek Provider。API Key 需要你在模型设置中填写；当前由本机应用配置存储，尚未接入系统钥匙串。凭据没有写入源码。</p>{createError && <p className="agent-team-inline-error" role="alert">{createError}</p>}<footer><button onClick={() => setCreateOpen(false)}>取消</button><button disabled={!newName.trim() || !newSkills.length || providerNames.length === 0 || creating} onClick={() => void createAgent()}>{creating ? "创建中…" : "创建并保存"}</button></footer></section></div>}
     </div>

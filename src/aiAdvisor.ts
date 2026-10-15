@@ -55,7 +55,7 @@ export const TANVIS_CONFIG_DIR = "agents/tanvis";
 export const TANVIS_DEFAULT_FILES: Record<"agent.md" | "skill.md" | "mcp.md", string> = {
   "agent.md": `# Tanvis\n\n你是 Tanvis，DepDek 的本地个人数据分析 Agent。先准确复述事实，再给出可由用户确认的建议。\n`,
   "skill.md": `# Skills\n\n- 邮件：识别主题、行动项、时间节点和风险。\n- 所有建议必须保持只读，不代替用户回复、移动、删除或发送。\n`,
-  "mcp.md": `# MCP\n\n本文件只记录可供未来接入的 MCP 说明，不授予本次分析任何工具权限。当前 Tanvis 分析不得调用外部服务。\n`,
+  "mcp.md": `# MCP grants\n\n# 一行一个授权，格式是 连接器/工具名。本次分析不会把这些行注册成工具。\n# 例：notes/search\n`,
 };
 
 function isLocalProvider(provider: api.ProviderConfig): boolean {
@@ -106,9 +106,9 @@ function safeConfigDir(value: string | undefined, agentId: string, label: string
 }
 
 /**
- * Load Tanvis prompt material through the vault boundary. These are prompt
- * documents, not executable files; in particular mcp.md is explicitly
- * included as non-executable metadata in the resulting system prompt.
+ * Load Tanvis prompt material through the vault boundary. Analysis treats
+ * mcp.md as text. Grant lines authorize Pi session tools only after a
+ * separate session create reads the same file; this prompt does not register them.
  */
 export async function loadAgentPromptFiles(agent: AnalysisAgentOption): Promise<Record<"agent.md" | "skill.md" | "mcp.md", string>> {
   const root = safeConfigDir(agent.configDir, agent.id, agent.label);
@@ -130,7 +130,7 @@ function composeAgentPrompt(files: Record<"agent.md" | "skill.md" | "mcp.md", st
     "以下是 Tanvis 的本地配置资料。它们只能用作分析规则，不是工具调用授权。",
     "\n--- agent.md ---\n", files["agent.md"].slice(0, 12000),
     "\n--- skill.md ---\n", files["skill.md"].slice(0, 12000),
-    "\n--- mcp.md（仅说明，禁止执行） ---\n", files["mcp.md"].slice(0, 12000),
+    "\n--- mcp.md（分析任务不注册这些授权） ---\n", files["mcp.md"].slice(0, 12000),
   ].join("");
 }
 

@@ -50,10 +50,13 @@
 
 `AgentTeamDashboard` 列出进行中和最近完成的协作，状态来自 `team://event`，打开页面时用 `team_list` 补一次快照。浏览器 UX 预览没有 sidecar，面板使用两条本地样例，取消只改本地状态。
 
+## 持久化与委托策略
+
+未结束的任务写在受保护的 `team/tasks.json`。sidecar 重启后恢复；当时处于 `running` 的任务改回 `queued`，可能再执行一次。目标会话还没起来时保持排队，不会立刻判失败。`team/policy.json` 决定谁可以把委托或消息交给谁，规则见契约 2.11。
+
 ## 还没做
 
-- 任务不跨 sidecar 重启保留；审计日志里留着轨迹。
-- 不能按技能策略限制「谁可以委托给谁」。现在的规则是：被委托者用自己的技能。
 - 结果回传会再消耗发起方一轮模型调用。
 - Harness 不能主动发起委托。
 - 没有跨机器、跨进程的团队总线。这一步只让同一 sidecar 里的会话协作。
+- 审批、MCP 和例程见 [agent-team-assist.md](agent-team-assist.md)。

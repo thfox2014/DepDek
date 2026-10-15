@@ -24,10 +24,15 @@ const PROTECTED_PATHS = [
   "mail/accounts.json",
   "calendar/accounts.json",
   "settings/settings.json",
+  "team/tasks.json",
+  "team/policy.json",
+  "mcp/connectors.json",
+  "schedule/routines.json",
+  "mail/outgoing-drafts.json",
 ];
 
 /** First-party sessions (UI + connectors) that may access protected files. */
-const TRUSTED_SESSIONS = new Set(["user", "mail", "calendar", "settings"]);
+const TRUSTED_SESSIONS = new Set(["user", "mail", "calendar", "settings", "team", "mcp", "schedule"]);
 
 /** Mirrors vault.rs `is_protected_path`: exact credential files plus the
  *  whole encrypted secrets/ tree (master key + credential blobs). */

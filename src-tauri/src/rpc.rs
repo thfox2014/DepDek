@@ -21,6 +21,7 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::oneshot;
 
+use crate::audit::Op;
 use crate::memory::MemoryStore;
 use crate::vault::{Vault, VaultError};
 
@@ -255,6 +256,8 @@ impl SidecarInner {
                     "mail/action_event" => (self.emit)("mail://action-event", params),
                     "todo/event" => (self.emit)("todo://event", params),
                     "team/event" => (self.emit)("team://event", params),
+                    "approval/event" => (self.emit)("approval://event", params),
+                    "schedule/event" => (self.emit)("schedule://event", params),
                     _ => {}
                 }
             }
@@ -322,6 +325,9 @@ impl SidecarInner {
             }
             method if method.starts_with("memory/") => self.memory.handle(method, &params),
             "team/audit" => team_audit(vault, &params),
+            "mcp/audit" => mcp_audit(vault, &params),
+            "approval/audit" => approval_audit(vault, &params),
+            "schedule/audit" => schedule_audit(vault, &params),
             _ => return Err(VaultError::UnknownMethod(method.to_string())),
         };
         result
@@ -385,6 +391,115 @@ fn team_audit(vault: &Vault, params: &Value) -> Result<Value, VaultError> {
     }
     let detail = params.get("detail").and_then(Value::as_str);
     vault.record_team_audit(session_id, task_id, kind, status, peer, ok, detail);
+    Ok(json!({}))
+}
+
+fn is_slug(value: &str) -> bool {
+    let len = value.chars().count();
+    (1..=64).contains(&len)
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
+}
+
+fn is_prefixed_id(value: &str, prefix: &str) -> bool {
+    let Some(rest) = value.strip_prefix(prefix) else {
+        return false;
+    };
+    (8..=32).contains(&rest.len()) && rest.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
+fn require_ok(params: &Value) -> Result<bool, VaultError> {
+    params
+        .get("ok")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| VaultError::InvalidParams("ok is required".to_string()))
+}
+
+fn detail_of(params: &Value) -> Option<&str> {
+    params.get("detail").and_then(Value::as_str)
+}
+
+/// Record an MCP tool attempt. The path is logical, not a vault file.
+fn mcp_audit(vault: &Vault, params: &Value) -> Result<Value, VaultError> {
+    let session_id = params.get("session_id").and_then(Value::as_str).unwrap_or("");
+    let connector = params.get("connector_id").and_then(Value::as_str).unwrap_or("");
+    let tool = params.get("tool").and_then(Value::as_str).unwrap_or("");
+    let status = params.get("status").and_then(Value::as_str).unwrap_or("");
+    let ok = require_ok(params)?;
+    if !is_session_token(session_id) || !is_slug(connector) || !is_slug(tool) {
+        return Err(VaultError::InvalidParams(
+            "mcp audit ids must be ascii tokens".to_string(),
+        ));
+    }
+    if !matches!(status, "ok" | "denied" | "error") {
+        return Err(VaultError::InvalidParams(
+            "status must be ok, denied or error".to_string(),
+        ));
+    }
+    vault.record_logical_audit(
+        Op::Mcp,
+        session_id,
+        &format!("mcp/{connector}/{tool}/{status}"),
+        ok,
+        detail_of(params),
+    );
+    Ok(json!({}))
+}
+
+fn approval_audit(vault: &Vault, params: &Value) -> Result<Value, VaultError> {
+    let session_id = params.get("session_id").and_then(Value::as_str).unwrap_or("");
+    let approval_id = params.get("approval_id").and_then(Value::as_str).unwrap_or("");
+    let kind = params.get("kind").and_then(Value::as_str).unwrap_or("");
+    let decision = params.get("decision").and_then(Value::as_str).unwrap_or("");
+    let ok = require_ok(params)?;
+    if !is_session_token(session_id) || !is_prefixed_id(approval_id, "apr_") {
+        return Err(VaultError::InvalidParams(
+            "approval id must look like apr_<hex>".to_string(),
+        ));
+    }
+    if !matches!(kind, "write" | "external" | "email") {
+        return Err(VaultError::InvalidParams(
+            "kind must be write, external or email".to_string(),
+        ));
+    }
+    if !matches!(decision, "pending" | "approved" | "denied" | "expired") {
+        return Err(VaultError::InvalidParams(
+            "decision is not an approval state".to_string(),
+        ));
+    }
+    vault.record_logical_audit(
+        Op::Approval,
+        session_id,
+        &format!("approval/{approval_id}/{kind}/{decision}"),
+        ok,
+        detail_of(params),
+    );
+    Ok(json!({}))
+}
+
+fn schedule_audit(vault: &Vault, params: &Value) -> Result<Value, VaultError> {
+    let session_id = params.get("session_id").and_then(Value::as_str).unwrap_or("");
+    let routine_id = params.get("routine_id").and_then(Value::as_str).unwrap_or("");
+    let status = params.get("status").and_then(Value::as_str).unwrap_or("");
+    let ok = require_ok(params)?;
+    if !is_session_token(session_id) || !is_prefixed_id(routine_id, "rtn_") {
+        return Err(VaultError::InvalidParams(
+            "routine id must look like rtn_<hex>".to_string(),
+        ));
+    }
+    if !matches!(status, "ran" | "skipped" | "failed") {
+        return Err(VaultError::InvalidParams(
+            "status must be ran, skipped or failed".to_string(),
+        ));
+    }
+    vault.record_logical_audit(
+        Op::Schedule,
+        session_id,
+        &format!("schedule/{routine_id}/{status}"),
+        ok,
+        detail_of(params),
+    );
     Ok(json!({}))
 }
 
@@ -627,5 +742,138 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].0, "team://event");
         assert_eq!(events[0].1["task"]["status"], "running");
+    }
+
+    #[tokio::test]
+    async fn logical_audits_record_mcp_approval_and_schedule() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::new();
+        vault.set_root(dir.path()).unwrap();
+        let sidecar = Sidecar::with_runtime(
+            vault.clone(),
+            Arc::new(|_, _| {}),
+            PathBuf::from("node"),
+            PathBuf::from("unused.js"),
+        );
+        sidecar
+            .inner
+            .handle_request(
+                "mcp/audit",
+                json!({
+                    "session_id": "doc-manager",
+                    "connector_id": "linear",
+                    "tool": "list_issues",
+                    "status": "ok",
+                    "ok": true
+                }),
+            )
+            .await
+            .unwrap();
+        sidecar
+            .inner
+            .handle_request(
+                "approval/audit",
+                json!({
+                    "session_id": "doc-manager",
+                    "approval_id": "apr_abc12345",
+                    "kind": "email",
+                    "decision": "approved",
+                    "ok": true
+                }),
+            )
+            .await
+            .unwrap();
+        sidecar
+            .inner
+            .handle_request(
+                "schedule/audit",
+                json!({
+                    "session_id": "doc-manager",
+                    "routine_id": "rtn_abc12345",
+                    "status": "ran",
+                    "ok": true
+                }),
+            )
+            .await
+            .unwrap();
+        let (entries, total) = vault.audit().read(0, 10);
+        assert_eq!(total, 3);
+        let paths: Vec<_> = entries.iter().map(|entry| entry.path.as_str()).collect();
+        assert!(paths.contains(&"schedule/rtn_abc12345/ran"));
+        assert!(paths.contains(&"approval/apr_abc12345/email/approved"));
+        assert!(paths.contains(&"mcp/linear/list_issues/ok"));
+        assert!(entries.iter().any(|entry| entry.op == Op::Mcp));
+        assert!(entries.iter().any(|entry| entry.op == Op::Approval));
+        assert!(entries.iter().any(|entry| entry.op == Op::Schedule));
+    }
+
+    #[tokio::test]
+    async fn logical_audits_reject_path_escape() {
+        let vault = Vault::new();
+        let sidecar = Sidecar::with_runtime(
+            vault,
+            Arc::new(|_, _| {}),
+            PathBuf::from("node"),
+            PathBuf::from("unused.js"),
+        );
+        let err = sidecar
+            .inner
+            .handle_request(
+                "mcp/audit",
+                json!({
+                    "session_id": "../etc",
+                    "connector_id": "linear",
+                    "tool": "list_issues",
+                    "status": "ok",
+                    "ok": false
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), -32602);
+        let err = sidecar
+            .inner
+            .handle_request(
+                "approval/audit",
+                json!({
+                    "session_id": "doc-manager",
+                    "approval_id": "../../secret",
+                    "kind": "write",
+                    "decision": "denied",
+                    "ok": false
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), -32602);
+    }
+
+    #[tokio::test]
+    async fn approval_and_schedule_events_are_forwarded() {
+        let emitted = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
+        let emitted_sink = emitted.clone();
+        let sidecar = Sidecar::with_runtime(
+            Vault::new(),
+            Arc::new(move |name, params| {
+                emitted_sink.lock().unwrap().push((name.to_string(), params));
+            }),
+            PathBuf::from("node"),
+            PathBuf::from("unused.js"),
+        );
+        sidecar
+            .inner
+            .handle_line(
+                r#"{"jsonrpc":"2.0","method":"approval/event","params":{"card":{"id":"apr_abc12345","status":"pending"}}}"#,
+            )
+            .await;
+        sidecar
+            .inner
+            .handle_line(
+                r#"{"jsonrpc":"2.0","method":"schedule/event","params":{"phase":"ran"}}"#,
+            )
+            .await;
+        let events = emitted.lock().unwrap();
+        assert_eq!(events[0].0, "approval://event");
+        assert_eq!(events[1].0, "schedule://event");
     }
 }
