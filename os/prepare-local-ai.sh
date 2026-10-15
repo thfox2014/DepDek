@@ -38,6 +38,6 @@ fi
 install -m 0755 "$build/build/bin/llama-server" "$destination/usr/lib/jiaho/llama-server"
 install -m 0644 "$model" "$destination/usr/share/jiaho/models/setup.gguf"
 install -m 0644 "$build/LICENSE" "$destination/usr/share/doc/jiaho-ai/llama-LICENSE"
-install -m 0644 /usr/share/common-licenses/Apache-2 "$destination/usr/share/doc/jiaho-ai/Qwen-LICENSE"
+install -m 0644 /usr/share/common-licenses/Apache-2.0 "$destination/usr/share/doc/jiaho-ai/Qwen-LICENSE"
 printf 'llama.cpp %s (MIT), no AVX\nQwen/Qwen2.5-0.5B-Instruct-GGUF %s (Apache-2.0)\nSHA256 %s\n' "$revision" "$model_revision" "$model_sha" > "$destination/usr/share/doc/jiaho-ai/SOURCES"
 echo 'Bundled local setup AI is verified and ready.'

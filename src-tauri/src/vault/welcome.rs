@@ -646,6 +646,47 @@ mod tests {
         assert!(WelcomeVault::open(&link.join(".jiaho-onboarding")).is_err());
     }
     #[test]
+    fn parent_vault_cannot_expose_private_account_or_symlink_alias() {
+        let (t, p, v) = setup();
+        register(&v);
+        let gate = Vault::new();
+        gate.set_root(t.path()).unwrap();
+        symlink(&p, t.path().join("alias")).unwrap();
+        for session in ["user", "agent-test"] {
+            for rel in [".jiaho-onboarding/state.json", "alias/state.json"] {
+                assert!(gate.read_file(session, rel).is_err());
+                assert!(gate.read_binary(session, rel).is_err());
+                assert!(gate.write_file(session, rel, "overwrite").is_err());
+                assert!(gate.stat(session, rel).is_err());
+            }
+            assert!(!gate
+                .list_dir(session, ".")
+                .unwrap()
+                .entries
+                .iter()
+                .any(|e| e.name == ".jiaho-onboarding"));
+            assert!(gate
+                .search_files(session, "password_hash")
+                .unwrap()
+                .matches
+                .is_empty());
+        }
+        let pack = t.path().join("pack");
+        fs::create_dir_all(pack.join(".jiaho-onboarding")).unwrap();
+        fs::write(pack.join(".jiaho-onboarding/state.json"), "private").unwrap();
+        fs::write(pack.join("public.txt"), "public").unwrap();
+        gate.compress("user", "pack", Some("archive.tar.gz"))
+            .unwrap();
+        let input = fs::File::open(t.path().join("archive.tar.gz")).unwrap();
+        let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(input));
+        assert!(archive.entries().unwrap().all(|entry| !entry
+            .unwrap()
+            .path()
+            .unwrap()
+            .to_string_lossy()
+            .contains(".jiaho-onboarding")));
+    }
+    #[test]
     fn credits_exhaustion_and_login_rate_limit() {
         let (_t, _p, v) = setup();
         register(&v);

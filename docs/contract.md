@@ -610,4 +610,4 @@ Provider HTTP 请求统一发送静态公开产品 User-Agent，版本来自受 
 
 AI-OS 原生构建新增 `ai_os_status/register/login/logout/chat/complete` Tauri commands，参数、积分和持久化语义见 [首启契约](agentos-v2/runtime-welcome.md)。默认禁用于普通桌面构建，不注册成 sidecar 工具或 R1 RPC。编译启用时 Vault 在未登录状态拒绝旧文件入口；首次登录一次性赠送配置体验积分，默认模型仅固定回环的镜像内置本地助手，不包含商业云端 Key 或余额。
 
-原生状态与积分由 Rust Vault 验证，不接受前端声明角色、余额、模型地址或赠送额度。R1 业务身份/Worker/云端同意边界保持独立。
+原生状态与积分由 Rust Vault 验证，不接受前端声明角色、余额、模型地址或赠送额度。`.jiaho-onboarding` 私有子树不通过通用 Vault 的读取、写入、列表、检索或压缩接口暴露，即使用户选择其父目录；指向该子树的符号链接同样拒绝。R1 业务身份/Worker/云端同意边界保持独立。

@@ -222,7 +222,7 @@ fn normalize(rel: &str) -> Result<String, VaultError> {
                 let seg = seg
                     .to_str()
                     .ok_or_else(|| VaultError::NotUtf8(rel.to_string()))?;
-                if seg == AUDIT_FILE_NAME || seg == ".household" {
+                if seg == AUDIT_FILE_NAME || seg == ".household" || seg == ".jiaho-onboarding" {
                     return Err(VaultError::Escape(
                         "access to the audit log is denied".to_string(),
                     ));
@@ -290,7 +290,7 @@ pub(crate) fn protected_paths() -> &'static [&'static str] {
 
 /// Hidden from agent listings/searches; trusted sessions see everything.
 fn hidden_from(session_id: &str, relnorm: &str) -> bool {
-    relnorm.split('/').any(|s| s == ".household")
+    relnorm.split('/').any(|s| matches!(s, ".household" | ".jiaho-onboarding"))
         || (!is_trusted_session(session_id) && is_protected_path(relnorm))
 }
 
@@ -475,7 +475,7 @@ impl Vault {
         if !canonical.starts_with(&pair.canonical)
             || canonical
                 .strip_prefix(&pair.canonical)
-                .is_ok_and(|p| p.components().any(|c| c.as_os_str() == ".household"))
+                .is_ok_and(|p| p.components().any(|c| c.as_os_str() == ".household" || c.as_os_str() == ".jiaho-onboarding"))
         {
             return Err(VaultError::Escape(relnorm));
         }
@@ -516,7 +516,7 @@ impl Vault {
         if !canonical.starts_with(&pair.canonical)
             || canonical
                 .strip_prefix(&pair.canonical)
-                .is_ok_and(|p| p.components().any(|c| c.as_os_str() == ".household"))
+                .is_ok_and(|p| p.components().any(|c| c.as_os_str() == ".household" || c.as_os_str() == ".jiaho-onboarding"))
         {
             return Err(VaultError::Escape(relnorm));
         }
@@ -1100,7 +1100,7 @@ fn append_archive_entries(
     let mut entries = fs::read_dir(path)?.flatten().collect::<Vec<_>>();
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
-        if entry.file_name() == AUDIT_FILE_NAME || entry.file_name() == ".household" {
+        if entry.file_name() == AUDIT_FILE_NAME || entry.file_name() == ".household" || entry.file_name() == ".jiaho-onboarding" {
             continue;
         }
         // Encrypted credential blobs and the master key never enter archives
