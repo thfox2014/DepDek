@@ -11,10 +11,10 @@ Target: a Debian 13 (Trixie) amd64 hybrid installer ISO that starts the DepDek A
 | MVP-03 | Reject malformed audio | Empty, corrupt, stereo, zero-length, and over-30-second audio is rejected | Pass, Rust test |
 | MVP-04 | Run Rust core and RPC regression tests | All unit, local-model e2e, and RPC integration tests pass | Pass: 31 + 1 + 2, iteration 15 |
 | MVP-05 | Initialize DepDek Home | First run creates `~/DepDek-Home` through the existing vault root validator | Pass: Tauri command is built; live shell shows `/home/live/DepDek-Home` |
-| MVP-06 | Open the dedicated AI-OS shell | Live and installed sessions boot to a text console; `depdek-shell` starts the visual Agent workbench | Implemented in iteration 20; build verification pending |
+| MVP-06 | Open the dedicated AI-OS shell | Graphical boot starts the native Jiaho account page; `depdek-shell` remains a manual entry | Implemented for iteration 21; build verification pending |
 | MVP-07 | Build the amd64 Debian package | Package metadata says `Architecture: amd64`; shell, sidecar, Node, and offline model are bundled | Pass: iteration 15 package inspection |
-| MVP-08 | Boot the hybrid ISO | QEMU reaches a CLI login prompt; the Agent workbench is not launched automatically | Implemented in iteration 20; build verification pending |
-| MVP-09 | Include the install and post-login path | Calamares and its launcher are installed; after installation, the user can sign in at the console and run `depdek-shell` | Implemented in iteration 20; build verification pending |
+| MVP-08 | Boot the hybrid ISO | QEMU reaches the native account page with the bundled model service ready | Implemented for iteration 21; build verification pending |
+| MVP-09 | Include the install and post-login path | Calamares is retained; a normal graphical display session starts native AI-OS login | Implemented for iteration 21; physical installation verification pending |
 | MVP-10 | Run offline Mandarin recognition | Vosk loads with networking disabled and recognizes the fixture's expected words | Pass: iteration 11 build log |
 
 ## Iteration history
@@ -32,12 +32,13 @@ Target: a Debian 13 (Trixie) amd64 hybrid installer ISO that starts the DepDek A
 | 17 | Rebuild from the updated `main` and preserved AgentOS changes (2026-10-15). | Model download failed with a TLS EOF. Recovered the identical Mandarin model asset from the retained previous local `.deb`; excluded host compiler/dependency caches and local env files from staging. |
 | 18 | Compile the current amd64 application and assemble a fresh rootfs. | New `0.2.1` `.deb` compiled successfully; chroot DNS blocked pip. Disabled reuse of the final rootfs cache to prevent silently packaging an older application. |
 | 19 | Use the newly built `.deb`, prebuild Python wheels outside the chroot, install them offline, and build/boot the new ISO. | Pass: rootfs/autostart/Calamares and offline Vosk smoke checks, BIOS/UEFI ISO boot metadata, matching application hashes in `.deb`/chroot/SquashFS, and visible QEMU BIOS Shell at 1280×800 (10,537 lime pixels). Evidence: `artifacts/iteration-19-validation.md`, `iteration-19-build.log`, `iteration-19-boot.log`, `boot-screen-iteration19.png`, and `SHA256SUMS`. |
-| 20 | Make the ISO CLI-first and launch the refined visual workbench only on `depdek-shell`. | Removed automatic display-manager startup, added a polished console welcome and explicit Xfce/Agent launcher, and refined the Agent shell surfaces. Build verification pending. |
+| 20 | Attempt the CLI-first redesign, then supersede it with the user's Jiaho first-login flow. | Added GRUB/Plymouth branding, native login, once-only setup points and the bundled local assistant. Docker stopped during compilation; no new ISO was produced. |
+| 21 | Merge current remote main and rebuild the Jiaho graphical first-login edition (2026-10-16). | Preserve remote collaboration features, apply the login gate to their control commands, disable BMI2 as well as AVX for the local runtime, and reuse compiler output. Build/boot verification in progress. |
 
 ## MVP result and remaining validation
 
-The software MVP currently has an amd64 Debian hybrid installer ISO and matching Debian package. Iteration 20 changes the boot flow to a CLI-first session and adds an explicit visual-shell command; this updated ISO still needs to be built before those changes are available on USB.
+The prior ISO/package remain available. The current sources replace the earlier CLI-first proposal with Jiaho graphical boot, native account creation, 1,000 once-only setup points and an offline configuration assistant. The new image must finish build and boot verification before it is used as updated installation media.
 
-The earlier ISO was boot-tested with the BIOS path in QEMU. The iteration-20 CLI-first image has not been built or boot-tested yet; physical USB boot, UEFI boot, and a complete Calamares install onto a target disk also remain unverified.
+The earlier ISO was boot-tested with the BIOS path in QEMU. The new Jiaho edition is not yet boot-verified; physical USB boot, UEFI boot, and a complete Calamares install onto a target disk also remain unverified.
 
 The 2026-10-15 refresh retains the prior ISO/package under `artifacts/pre-20261015-build/`. The new artifacts are an MVP test build, not a production release: npm reported high/critical dependency advisories which were not force-upgraded or triaged here, and no real cloud model request was made. The current Shell's “已连接” provider label is not proof of a successful cloud connection. Full V2 NAS service provisioning and physical installation acceptance remain outside this build.

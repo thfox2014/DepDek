@@ -17,7 +17,7 @@ file "$iso" | tee /tmp/depdek-iso-file.txt
 grep -q 'bootable' /tmp/depdek-iso-file.txt || { echo "ISO is not bootable" >&2; exit 1; }
 qemu-system-x86_64 \
   -machine q35,accel=tcg -m 4096 -smp 2 \
-  -cpu max,-avx,-avx2,-fma,-f16c \
+  -cpu max,-avx,-avx2,-fma,-f16c,-bmi2 \
   -boot d -cdrom "$iso" \
   -display vnc=127.0.0.1:1 \
   -chardev "socket,id=serial0,path=$serial_socket,server=on,wait=off,logfile=$log" -serial chardev:serial0 \

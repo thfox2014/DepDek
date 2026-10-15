@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
+export CARGO_TARGET_DIR=/cargo-cache
 
 src=/workspace
 work=/tmp/depdek-mvp
@@ -41,7 +42,7 @@ else
   fi
 
   VITE_DEPDEK_OS=1 npm run tauri -- build --bundles deb
-  deb=$(find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' -print -quit)
+  deb=$(find "$CARGO_TARGET_DIR/release/bundle/deb" -maxdepth 1 -name '*.deb' -print -quit)
   test -n "$deb"
 fi
 if [ "$deb" != "$out/depdek-ai-os-amd64.deb" ]; then

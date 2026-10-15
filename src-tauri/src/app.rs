@@ -570,11 +570,13 @@ async fn agent_abort(state: State<'_, AppState>, session_id: String) -> Result<(
 
 #[tauri::command]
 async fn team_list(state: State<'_, AppState>) -> Result<Value, String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     state.sidecar.request("team/list", json!({})).await
 }
 
 #[tauri::command]
 async fn team_cancel(state: State<'_, AppState>, task_id: String) -> Result<Value, String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     state
         .sidecar
         .request("team/cancel", json!({ "task_id": task_id }))
@@ -583,6 +585,7 @@ async fn team_cancel(state: State<'_, AppState>, task_id: String) -> Result<Valu
 
 #[tauri::command]
 async fn team_roster(state: State<'_, AppState>, agents: Value) -> Result<Value, String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     state
         .sidecar
         .request("team/roster", json!({ "agents": agents }))
@@ -591,11 +594,13 @@ async fn team_roster(state: State<'_, AppState>, agents: Value) -> Result<Value,
 
 #[tauri::command]
 async fn team_policy_get(state: State<'_, AppState>) -> Result<Value, String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     state.sidecar.request("team/policy_get", json!({})).await
 }
 
 #[tauri::command]
 async fn team_policy_set(state: State<'_, AppState>, policy: Value) -> Result<Value, String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     state
         .sidecar
         .request("team/policy_set", json!({ "policy": policy }))
@@ -604,6 +609,7 @@ async fn team_policy_set(state: State<'_, AppState>, policy: Value) -> Result<Va
 
 #[tauri::command]
 async fn approval_list(state: State<'_, AppState>) -> Result<Value, String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     state.sidecar.request("approval/list", json!({})).await
 }
 
@@ -613,6 +619,7 @@ async fn approval_decide(
     id: String,
     decision: String,
 ) -> Result<Value, String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     state
         .sidecar
         .request("approval/decide", json!({ "id": id, "decision": decision }))
@@ -621,11 +628,13 @@ async fn approval_decide(
 
 #[tauri::command]
 async fn schedule_list(state: State<'_, AppState>) -> Result<Value, String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     state.sidecar.request("schedule/list", json!({})).await
 }
 
 #[tauri::command]
 async fn schedule_put(state: State<'_, AppState>, routine: Value) -> Result<Value, String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     state
         .sidecar
         .request("schedule/put", json!({ "routine": routine }))
@@ -634,6 +643,7 @@ async fn schedule_put(state: State<'_, AppState>, routine: Value) -> Result<Valu
 
 #[tauri::command]
 async fn schedule_delete(state: State<'_, AppState>, id: String) -> Result<Value, String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     state
         .sidecar
         .request("schedule/delete", json!({ "id": id }))
@@ -642,11 +652,13 @@ async fn schedule_delete(state: State<'_, AppState>, id: String) -> Result<Value
 
 #[tauri::command]
 async fn mcp_connectors_get(state: State<'_, AppState>) -> Result<Value, String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     state.sidecar.request("mcp/connectors_get", json!({})).await
 }
 
 #[tauri::command]
 async fn mcp_connector_put(state: State<'_, AppState>, connector: Value) -> Result<Value, String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     state
         .sidecar
         .request("mcp/connector_put", json!({ "connector": connector }))
@@ -655,6 +667,7 @@ async fn mcp_connector_put(state: State<'_, AppState>, connector: Value) -> Resu
 
 #[tauri::command]
 async fn mcp_connector_delete(state: State<'_, AppState>, id: String) -> Result<Value, String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     state
         .sidecar
         .request("mcp/connector_delete", json!({ "id": id }))
@@ -663,6 +676,7 @@ async fn mcp_connector_delete(state: State<'_, AppState>, id: String) -> Result<
 
 #[tauri::command]
 async fn mcp_oauth_store(state: State<'_, AppState>, body: Value) -> Result<Value, String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     state.sidecar.request("mcp/oauth_store", body).await
 }
 
@@ -671,6 +685,7 @@ async fn mcp_oauth_status(
     state: State<'_, AppState>,
     connector_id: String,
 ) -> Result<Value, String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     state
         .sidecar
         .request("mcp/oauth_status", json!({ "connector_id": connector_id }))
@@ -679,6 +694,7 @@ async fn mcp_oauth_status(
 
 #[tauri::command]
 async fn mcp_list_tools(state: State<'_, AppState>, connector_id: String) -> Result<Value, String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     state
         .sidecar
         .request("mcp/list_tools", json!({ "connector_id": connector_id }))
@@ -687,6 +703,7 @@ async fn mcp_list_tools(state: State<'_, AppState>, connector_id: String) -> Res
 
 #[tauri::command]
 async fn mcp_reload(state: State<'_, AppState>, session_id: String) -> Result<Value, String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     state
         .sidecar
         .request("mcp/reload", json!({ "session_id": session_id }))

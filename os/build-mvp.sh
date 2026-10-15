@@ -22,12 +22,14 @@ boot_log="$artifacts/iteration-$iteration-boot.log"
 printf 'DepDek AI-OS build iteration %s\n' "$iteration" | tee "$build_log"
 docker build --platform linux/amd64 -f "$repo_root/os/Dockerfile.amd64" -t depdek-ai-os-builder:trixie "$repo_root" 2>&1 | tee -a "$build_log"
 docker volume create depdek-ai-os-live-build-cache >/dev/null
+docker volume create depdek-ai-os-cargo-cache >/dev/null
 build_container="depdek-ai-os-build-$iteration"
 docker run --name "$build_container" --privileged --platform linux/amd64 \
   -e VITE_DEPDEK_OS=1 \
   -e DEPDEK_PREBUILT_DEB="${DEPDEK_PREBUILT_DEB:-}" \
   -v "$repo_root:/workspace" \
   -v depdek-ai-os-live-build-cache:/live-cache \
+  -v depdek-ai-os-cargo-cache:/cargo-cache \
   -w /workspace \
   depdek-ai-os-builder:trixie \
   bash os/build-in-container.sh 2>&1 | tee -a "$build_log"
