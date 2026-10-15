@@ -3,6 +3,15 @@ set -euo pipefail
 
 root="$(realpath "$1")"
 require_file() {
+  # Absolute links in an unpacked rootfs resolve inside that rootfs at boot,
+  # not against the builder's /usr (which need not contain a display manager).
+  if [ -L "$root/$1" ]; then
+    local target
+    target=$(readlink "$root/$1")
+    if [[ "$target" = /* ]] && [ -e "$root$target" ]; then
+      return
+    fi
+  fi
   if [ ! -e "$root/$1" ]; then
     echo "missing from live rootfs: /$1" >&2
     exit 1
