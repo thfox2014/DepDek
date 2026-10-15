@@ -15,6 +15,18 @@ export interface VaultClient {
   request<T = unknown>(method: string, params?: unknown): Promise<T>;
 }
 
+/** Pause a write or external tool until the user approves a card. */
+export interface ActionApproval {
+  request(input: {
+    sessionId: string;
+    kind: "write" | "external";
+    tool: string;
+    title: string;
+    summary: string;
+    preview: Record<string, unknown>;
+  }): Promise<boolean>;
+}
+
 const SANDBOX_NOTE =
   "You can only access the user's data folder through these tools. " +
   "All paths are POSIX-style relative paths from the data folder root " +
@@ -32,6 +44,13 @@ interface VaultToolOptions<TParameters extends TSchema> {
   format: (result: any, args: Static<TParameters>) => string;
   /** Reject a tool call before it reaches the vault. */
   guard?: (args: Static<TParameters>) => string | undefined;
+  approval?: ActionApproval;
+  confirm?: {
+    kind: "write" | "external";
+    title: (args: Static<TParameters>) => string;
+    summary: (args: Static<TParameters>) => string;
+    preview: (args: Static<TParameters>) => Record<string, unknown>;
+  };
 }
 
 function vaultTool<TParameters extends TSchema>(
@@ -51,6 +70,22 @@ function vaultTool<TParameters extends TSchema>(
           content: [{ type: "text", text: blocked }],
           details: { blocked: true },
         };
+      }
+      if (options.approval && options.confirm) {
+        const approved = await options.approval.request({
+          sessionId,
+          kind: options.confirm.kind,
+          tool: options.name,
+          title: options.confirm.title(args),
+          summary: options.confirm.summary(args),
+          preview: options.confirm.preview(args),
+        });
+        if (!approved) {
+          return {
+            content: [{ type: "text", text: "用户未批准这个操作，已取消。" }],
+            details: { blocked: true, approval: "denied" },
+          };
+        }
       }
       const result = await client.request(options.method, {
         session_id: sessionId,
@@ -78,6 +113,11 @@ const PROTECTED_PATHS = [
   "mail/accounts.json",
   "calendar/accounts.json",
   "settings/settings.json",
+  "team/tasks.json",
+  "team/policy.json",
+  "mcp/connectors.json",
+  "schedule/routines.json",
+  "mail/outgoing-drafts.json",
 ];
 
 function isProtectedPath(value: string): boolean {
@@ -88,6 +128,10 @@ function protectedMessage(path: string): string {
   if (normalizedPath(path) === "tasks/history.json") {
     return "tasks/history.json is an internal task log and is excluded from AI context. " +
       "Use the task center for task status and summaries instead.";
+  }
+  if (/^(team|mcp|schedule)\//.test(normalizedPath(path)) || normalizedPath(path) === "mail/outgoing-drafts.json") {
+    return "This file is an agent-team control record and is excluded from AI context. " +
+      "Ask the user to manage it from the Agent Team page.";
   }
   return "This file holds private account credentials and is excluded from AI context. " +
     "Ask the user to manage accounts in Settings.";
@@ -195,7 +239,7 @@ function mediaTools(client: VaultClient, sessionId: string, allowedKinds?: Reado
   ];
 }
 
-export function createVaultTools(client: VaultClient, sessionId: string, enabledSkills?: string[]): AgentTool<any>[] {
+export function createVaultTools(client: VaultClient, sessionId: string, enabledSkills?: string[], approval?: ActionApproval): AgentTool<any>[] {
   const allowedMediaKinds = enabledSkills === undefined
     ? undefined
     : new Set(enabledSkills.filter((skill) => skill === "photos" || skill === "music" || skill === "videos"));
@@ -222,6 +266,13 @@ export function createVaultTools(client: VaultClient, sessionId: string, enabled
       method: "vault/write_file",
       toParams: (args) => ({ path: args.path, content: args.content }),
       guard: (args) => isProtectedPath(args.path) ? protectedMessage(args.path) : undefined,
+      approval,
+      confirm: {
+        kind: "write",
+        title: () => "写入文件",
+        summary: (args) => `写入 ${args.path}`,
+        preview: (args) => ({ path: args.path, content: args.content }),
+      },
       format: (result) => `Wrote ${result.size} bytes (sha256 ${result.sha256}).`,
     }),
     vaultTool(client, sessionId, {
@@ -258,6 +309,13 @@ export function createVaultTools(client: VaultClient, sessionId: string, enabled
       method: "vault/delete_file",
       toParams: (args) => ({ path: args.path }),
       guard: (args) => isProtectedPath(args.path) ? protectedMessage(args.path) : undefined,
+      approval,
+      confirm: {
+        kind: "write",
+        title: () => "删除文件",
+        summary: (args) => `删除 ${args.path}`,
+        preview: (args) => ({ path: args.path }),
+      },
       format: () => "Deleted.",
     }),
     vaultTool(client, sessionId, {
@@ -281,6 +339,13 @@ export function createVaultTools(client: VaultClient, sessionId: string, enabled
         isProtectedPath(args.path) || (args.archive_path != null && isProtectedPath(args.archive_path))
           ? protectedMessage(args.path)
           : undefined,
+      approval,
+      confirm: {
+        kind: "write",
+        title: () => "压缩文件",
+        summary: (args) => `压缩 ${args.path}`,
+        preview: (args) => ({ path: args.path, archive_path: args.archive_path }),
+      },
       format: (result) =>
         `Compressed ${result.source} into ${result.archive} (${result.files} file(s), ${result.bytes} bytes).`,
     }),
@@ -326,6 +391,19 @@ export function createVaultTools(client: VaultClient, sessionId: string, enabled
       ),
       execute: async (_toolCallId: string, args: unknown): Promise<AgentToolResult<any>> => {
         const { account } = args as { account?: string };
+        if (approval) {
+          const approved = await approval.request({
+            sessionId,
+            kind: "external",
+            tool: "fetch_mail",
+            title: "收取邮件",
+            summary: account ? `从账号「${account}」收取新邮件` : "从全部已配置账号收取新邮件",
+            preview: { account: account ?? "*" },
+          });
+          if (!approved) {
+            return { content: [{ type: "text", text: "用户未批准收取邮件。" }], details: { blocked: true, approval: "denied" } };
+          }
+        }
         const result = await fetchMail(client, { account });
         const lines = result.accounts.map((a) =>
           a.error

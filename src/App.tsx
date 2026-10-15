@@ -314,7 +314,7 @@ export default function App() {
           const provider = nextSettings.providers[a.provider_name];
           if (!provider) continue;
           try {
-            await api.agentCreateSession(a.id, provider, a.system_prompt, a.engine, a.enabled_skills, a.label);
+            await api.agentCreateSession(a.id, provider, a.system_prompt, a.engine, a.enabled_skills, a.label, a.config_dir);
             restored.push({ id: a.id, label: a.label, providerName: a.provider_name, engine: a.engine });
           } catch {
             // Sidecar unavailable; skip this session.
@@ -512,7 +512,7 @@ export default function App() {
     }
     const engine = requestedEngine ?? existing?.engine;
     const enabledSkills: api.AgentSkill[] = requestedSkills ?? existing?.enabled_skills ?? (id.startsWith("doc-") ? ["documents", "memory"] : id.startsWith("photo-") ? ["photos", "memory"] : id.startsWith("music-") ? ["music", "videos", "memory"] : id.startsWith("video-") ? ["videos", "music", "memory"] : ALL_DEFAULT_SKILLS);
-    await api.agentCreateSession(id, provider, existing?.system_prompt, engine, enabledSkills, label || existing?.label || id);
+    await api.agentCreateSession(id, provider, existing?.system_prompt, engine, enabledSkills, label || existing?.label || id, existing?.config_dir);
     setSessions((prev) => prev.some((session) => session.id === id) ? prev : [...prev, { id, label: label || id, providerName, engine }]);
     setActiveId(id);
     if (openWorkbench) setView("workbench");
@@ -541,7 +541,7 @@ export default function App() {
     setChats((current) => ({ ...current, [sid]: [] }));
     try { await api.agentAbort(sid); } catch { /* 当前没有运行中的请求也可以继续新建。 */ }
     try { await api.agentClose(sid); } catch { /* sidecar 重启后可能已经没有旧会话。 */ }
-    await api.agentCreateSession(sid, provider, agent?.system_prompt, agent?.engine ?? session.engine, agent?.enabled_skills, agent?.label ?? session.label);
+        await api.agentCreateSession(sid, provider, agent?.system_prompt, agent?.engine ?? session.engine, agent?.enabled_skills, agent?.label ?? session.label, agent?.config_dir);
   };
 
   const closeSession = async (sid: string) => {
@@ -638,10 +638,10 @@ export default function App() {
       const provider = agent ? next.providers[agent.provider_name] : undefined;
       if (!agent || !provider) continue;
       const previous = settings.agents?.find((item) => item.id === session.id);
-      if (previous?.provider_name === agent.provider_name && previous?.system_prompt === agent.system_prompt && previous?.engine === agent.engine && JSON.stringify(previous?.enabled_skills ?? []) === JSON.stringify(agent.enabled_skills ?? [])) continue;
+      if (previous?.provider_name === agent.provider_name && previous?.system_prompt === agent.system_prompt && previous?.engine === agent.engine && previous?.config_dir === agent.config_dir && JSON.stringify(previous?.enabled_skills ?? []) === JSON.stringify(agent.enabled_skills ?? [])) continue;
       try {
         await api.agentClose(session.id);
-        await api.agentCreateSession(session.id, provider, agent.system_prompt, agent.engine, agent.enabled_skills, agent.label);
+        await api.agentCreateSession(session.id, provider, agent.system_prompt, agent.engine, agent.enabled_skills, agent.label, agent.config_dir);
       } catch {
         // The session can be recreated on the next launch if the sidecar is
         // temporarily unavailable; settings remain saved in the meantime.

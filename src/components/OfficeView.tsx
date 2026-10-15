@@ -196,7 +196,7 @@ function defaultAgentFiles(label: string): Record<AgentFileName, string> {
   return {
     "agent.md": `# ${label}\n\n你是 ${label}，DepDek 的个人数据 Agent。先准确复述事实，再给出可由用户确认的建议。\n`,
     "skill.md": "# Skills\n\n- 识别主题、行动项、时间节点和风险。\n- 所有建议必须保持只读，不代替用户回复、移动、删除或发送。\n",
-    "mcp.md": "# MCP\n\n本文件只记录未来接入的 MCP 说明，不授予本次分析任何工具权限。当前分析不得调用外部服务。\n",
+    "mcp.md": "# MCP grants\n\n# 一行一个授权，格式是 连接器/工具名。其他文字仍然只是说明，不会被执行。\n# 例：notes/search\n# 分析任务不会调用这些工具。Pi 会话只注册这里列出的、且已配置的 HTTP 连接器工具。\n",
   };
 }
 
@@ -322,7 +322,7 @@ function AgentConfigPanel({
     <section className="office__tanvis" aria-label={`${agentLabel} Agent 配置`}>
       <div className="office__tanvis-head">
         <div><div className="office__eyebrow"><GearSix size={15} />{agentLabel} 配置</div><h2>{agentLabel === "Tanvis" ? "本地数据分析 Agent" : "Agent 工作配置"}</h2><p>{agentLabel === "Tanvis" ? "单封邮件的“AI 分析”会调用 Tanvis；只读本地内容并返回建议。" : "配置这个 Agent 的角色、技能和连接说明，保存后立即生效。"}</p></div>
-        <div className="office__tanvis-head-actions"><div className="office__tanvis-state"><ShieldCheck size={15} />内置工具受技能范围限制；mcp.md 是说明文件，外部 MCP 尚未连接</div>{onEnterSession && <button type="button" className="office__session-enter" onClick={onEnterSession}><ChatCircleText size={15} />进入会话</button>}</div>
+        <div className="office__tanvis-head-actions"><div className="office__tanvis-state"><ShieldCheck size={15} />内置工具受技能范围限制；mcp.md 里的「连接器/工具」行才会授权 HTTP MCP，分析任务不会调用它们</div>{onEnterSession && <button type="button" className="office__session-enter" onClick={onEnterSession}><ChatCircleText size={15} />进入会话</button>}</div>
       </div>
       <div className="office__tanvis-toolbar">
         <label className="office__agent-switcher">当前 Agent<select aria-label="选择要配置的 Agent" value={agentId} onChange={(event) => onSelectAgent(event.target.value)}>{(settings.agents ?? []).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}{!(settings.agents ?? []).some((item) => item.id === agentId) && <option value={agentId}>{agentLabel}</option>}</select></label>

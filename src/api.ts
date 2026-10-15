@@ -17,7 +17,7 @@ export type AgentEngine = "pi" | "deepseek-harness";
 export interface AuditEntry {
   ts_ms: number;
   session_id: string;
-  op: "read" | "write" | "list" | "search" | "delete" | "stat" | "team";
+  op: "read" | "write" | "list" | "search" | "delete" | "stat" | "team" | "mcp" | "approval" | "schedule";
   path: string;
   ok: boolean;
   error?: string;
@@ -79,6 +79,56 @@ export interface TeamTask {
   updated_at: string;
   result_preview?: string;
   error?: string;
+  pending_delivery?: boolean;
+}
+
+export interface TeamPolicyRule {
+  from: string;
+  to: string;
+  allow: boolean;
+}
+
+export interface TeamPolicy {
+  version: 1;
+  mode: "allow" | "deny";
+  rules: TeamPolicyRule[];
+}
+
+export type ApprovalKind = "write" | "external" | "email";
+export type ApprovalStatus = "pending" | "approved" | "denied" | "expired";
+
+export interface ApprovalCard {
+  id: string;
+  session_id: string;
+  kind: ApprovalKind;
+  tool: string;
+  title: string;
+  summary: string;
+  preview: Record<string, unknown>;
+  status: ApprovalStatus;
+  created_at: string;
+  decided_at?: string;
+}
+
+export interface McpConnector {
+  id: string;
+  label: string;
+  url: string;
+  auth: "none" | "bearer" | "oauth";
+}
+
+export interface Routine {
+  id: string;
+  label: string;
+  agent_id: string;
+  prompt: string;
+  enabled: boolean;
+  trigger: { type: "cron"; expr: string } | { type: "event"; source: "mail" | "todo"; match?: string };
+  created_at: string;
+  updated_at: string;
+  last_fired_at?: string;
+  last_status?: "ran" | "skipped" | "failed";
+  last_error?: string;
 }
 
 export interface TeamEvent {
@@ -401,11 +451,45 @@ export const agentCreateSession = (
   engine?: AgentEngine,
   enabledSkills?: AgentSkill[],
   label?: string,
-) => invoke<{ session_id: string }>("agent_create_session", { sessionId, provider, systemPrompt, engine, enabledSkills, label });
+  configDir?: string,
+) => invoke<{ session_id: string }>("agent_create_session", { sessionId, provider, systemPrompt, engine, enabledSkills, label, configDir });
 export const teamList = () => invoke<{ tasks: TeamTask[] }>("team_list");
 export const teamCancel = (taskId: string) => invoke<{ task: TeamTask }>("team_cancel", { taskId });
 export const teamRoster = (agents: Array<{ id: string; label: string }>) =>
   invoke<{ updated: number }>("team_roster", { agents });
+export const teamPolicyGet = () => invoke<{ policy: TeamPolicy }>("team_policy_get");
+export const teamPolicySet = (policy: TeamPolicy) => invoke<{ policy: TeamPolicy }>("team_policy_set", { policy });
+export const approvalList = () => invoke<{ cards: ApprovalCard[] }>("approval_list");
+export const approvalDecide = (id: string, decision: "approve" | "deny") =>
+  invoke<{ card: ApprovalCard }>("approval_decide", { id, decision });
+export const scheduleList = () => invoke<{ routines: Routine[] }>("schedule_list");
+export const schedulePut = (routine: Partial<Routine> & Pick<Routine, "label" | "agent_id" | "prompt" | "trigger">) =>
+  invoke<{ routine: Routine }>("schedule_put", { routine });
+export const scheduleDelete = (id: string) => invoke<{ deleted: boolean }>("schedule_delete", { id });
+export const mcpConnectorsGet = () => invoke<{ connectors: McpConnector[] }>("mcp_connectors_get");
+export const mcpConnectorPut = (connector: McpConnector) => invoke<{ connector: McpConnector }>("mcp_connector_put", { connector });
+export const mcpConnectorDelete = (id: string) => invoke<{ deleted: boolean }>("mcp_connector_delete", { id });
+export const mcpOauthStore = (body: {
+  connector_id: string;
+  access_token?: string;
+  refresh_token?: string;
+  token_url?: string;
+  client_id?: string;
+  client_secret?: string;
+  token?: string;
+}) => invoke<{ connector_id: string; stored: string[] }>("mcp_oauth_store", { body });
+export const mcpOauthStatus = (connectorId: string) => invoke<{
+  connector_id: string;
+  has_access_token: boolean;
+  has_refresh_token: boolean;
+  has_bearer_token: boolean;
+  has_client_id: boolean;
+}>("mcp_oauth_status", { connectorId });
+export const mcpListTools = (connectorId: string) => invoke<{
+  connector_id: string;
+  tools: Array<{ name: string; description: string }>;
+}>("mcp_list_tools", { connectorId });
+export const mcpReload = (sessionId: string) => invoke<{ grants: string[] }>("mcp_reload", { sessionId });
 export const agentSend = (sessionId: string, text: string) =>
   invoke<void>("agent_send", { sessionId, text });
 export const agentAnalyze = (provider: ProviderConfig, text: string, systemPrompt: string, engine?: AgentEngine) =>
@@ -548,6 +632,12 @@ export const onAgentEvent = (cb: (ev: AgentEvent) => void): Promise<UnlistenFn> 
 
 export const onTeamEvent = (cb: (ev: TeamEvent) => void): Promise<UnlistenFn> =>
   listen<TeamEvent>("team://event", (e) => cb(e.payload));
+
+export const onApprovalEvent = (cb: (ev: { card: ApprovalCard }) => void): Promise<UnlistenFn> =>
+  listen<{ card: ApprovalCard }>("approval://event", (e) => cb(e.payload));
+
+export const onScheduleEvent = (cb: (ev: { phase: string; routine: Routine }) => void): Promise<UnlistenFn> =>
+  listen<{ phase: string; routine: Routine }>("schedule://event", (e) => cb(e.payload));
 
 export const onAuditEntry = (cb: (entry: AuditEntry) => void): Promise<UnlistenFn> =>
   listen<AuditEntry>("vault://audit", (e) => cb(e.payload));
