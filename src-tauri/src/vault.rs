@@ -239,8 +239,9 @@ fn normalize(rel: &str) -> Result<String, VaultError> {
 /// Credential / private account files that must stay out of agent reach.
 ///
 /// Only trusted first-party sessions (`user` UI, `mail`/`calendar`/`settings`
-/// connectors) may touch these; any agent session is denied so credentials
-/// never enter model context (contract sections 2.3, 7 and 9).
+/// connectors, and the `team`/`mcp`/`schedule` control sessions) may touch
+/// these; any agent session is denied so credentials and control state never
+/// enter model context (contract sections 2.3, 2.12 and 7).
 ///
 /// Deliberately excluded: `myinfo/profile.json` (user self-description that
 /// the agent context builder reads on purpose, see sidecar/context.ts) and
@@ -250,10 +251,18 @@ const PROTECTED_PATHS: &[&str] = &[
     "mail/accounts.json",
     "calendar/accounts.json",
     "settings/settings.json",
+    "team/tasks.json",
+    "team/policy.json",
+    "mcp/connectors.json",
+    "schedule/routines.json",
+    "mail/outgoing-drafts.json",
 ];
 
 fn is_trusted_session(session_id: &str) -> bool {
-    matches!(session_id, "user" | "mail" | "calendar" | "settings")
+    matches!(
+        session_id,
+        "user" | "mail" | "calendar" | "settings" | "team" | "mcp" | "schedule"
+    )
 }
 
 /// Keep audit details on a single JSONL line and inside a char budget.
@@ -385,6 +394,25 @@ impl Vault {
     ) {
         let path = format!("team/{task_id}/{kind}/{status}/{peer_session_id}");
         let mut entry = AuditEntry::new(session_id, Op::Team, &path);
+        entry.ok = ok;
+        if !ok {
+            if let Some(detail) = detail.map(clip_audit_detail).filter(|text| !text.is_empty()) {
+                entry.error = Some(detail);
+            }
+        }
+        self.inner.audit.record(entry);
+    }
+
+    /// Append one logical (non-file) audit line. Callers validate the path.
+    pub fn record_logical_audit(
+        &self,
+        op: Op,
+        session_id: &str,
+        path: &str,
+        ok: bool,
+        detail: Option<&str>,
+    ) {
+        let mut entry = AuditEntry::new(session_id, op, path);
         entry.ok = ok;
         if !ok {
             if let Some(detail) = detail.map(clip_audit_detail).filter(|text| !text.is_empty()) {

@@ -10,6 +10,7 @@
 import { randomBytes } from "node:crypto";
 import { Type } from "@mariozechner/pi-ai";
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
+import { CONTROL_PATHS, isRootNotSet, readControlJson, writeControlJson } from "./control.js";
 import { RpcError } from "./rpc.js";
 import type { VaultClient } from "./tools.js";
 
@@ -34,7 +35,7 @@ export const TEAM_SYSTEM_NOTE =
 
 export type TeamTaskStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 export type TeamTaskKind = "delegate" | "message";
-export type TurnOrigin = "user" | "delegate" | "message" | "result";
+export type TurnOrigin = "user" | "delegate" | "message" | "result" | "schedule";
 
 export interface TurnContext {
   origin: TurnOrigin;
@@ -58,6 +59,8 @@ export interface TeamTask {
   updated_at: string;
   result_preview?: string;
   error?: string;
+  /** Terminal task whose result still needs to be delivered to the source. */
+  pending_delivery?: boolean;
 }
 
 export interface TeamSessionInfo {
@@ -134,6 +137,71 @@ function cloneTask(task: TeamTask): TeamTask {
   return { ...task, chain: [...task.chain] };
 }
 
+export interface TeamPolicyRule {
+  from: string;
+  to: string;
+  allow: boolean;
+}
+
+export interface TeamPolicy {
+  version: 1;
+  mode: "allow" | "deny";
+  rules: TeamPolicyRule[];
+}
+
+export const DEFAULT_TEAM_POLICY: TeamPolicy = { version: 1, mode: "allow", rules: [] };
+
+const POLICY_NAME = /^[A-Za-z0-9_.:*-]{1,128}$/;
+
+export function normalizePolicy(input: unknown): TeamPolicy {
+  if (!input || typeof input !== "object") throw new RpcError(-32602, "policy must be an object");
+  const raw = input as { mode?: unknown; rules?: unknown };
+  if (raw.mode !== "allow" && raw.mode !== "deny") throw new RpcError(-32602, "policy mode must be allow or deny");
+  if (!Array.isArray(raw.rules)) throw new RpcError(-32602, "policy rules must be an array");
+  if (raw.rules.length > 200) throw new RpcError(-32602, "policy has too many rules");
+  const rules: TeamPolicyRule[] = [];
+  for (const rule of raw.rules) {
+    if (!rule || typeof rule !== "object") throw new RpcError(-32602, "policy rule is invalid");
+    const from = String((rule as { from?: unknown }).from ?? "").trim();
+    const to = String((rule as { to?: unknown }).to ?? "").trim();
+    const allow = (rule as { allow?: unknown }).allow;
+    if (!POLICY_NAME.test(from) || !POLICY_NAME.test(to) || typeof allow !== "boolean") {
+      throw new RpcError(-32602, "policy rule must have from, to and allow");
+    }
+    rules.push({ from, to, allow });
+  }
+  return { version: 1, mode: raw.mode, rules };
+}
+
+function endpointScore(pattern: string, id: string, label: string): number | null {
+  if (pattern === "*") return 0;
+  if (pattern === id) return 4;
+  if (pattern.toLowerCase() === label.toLowerCase()) return 2;
+  return null;
+}
+
+/**
+ * Most specific matching rule wins. Equal specificity uses the later rule.
+ * With no match, `allow` permits delegation and `deny` blocks it.
+ */
+export function policyAllows(
+  policy: TeamPolicy,
+  from: { id: string; label: string },
+  to: { id: string; label: string },
+): boolean {
+  let best: { score: number; index: number; allow: boolean } | undefined;
+  policy.rules.forEach((rule, index) => {
+    const fromScore = endpointScore(rule.from, from.id, from.label);
+    const toScore = endpointScore(rule.to, to.id, to.label);
+    if (fromScore === null || toScore === null) return;
+    const score = fromScore + toScore;
+    if (!best || score > best.score || (score === best.score && index >= best.index)) {
+      best = { score, index, allow: rule.allow };
+    }
+  });
+  return best ? best.allow : policy.mode !== "deny";
+}
+
 function kindLabel(kind: TeamTaskKind): string {
   return kind === "message" ? "消息" : "委托";
 }
@@ -169,17 +237,46 @@ function deliveryPrompt(task: TeamTask): string {
   ].join("\n");
 }
 
+interface TaskSnapshot {
+  version: 1;
+  tasks: TeamTask[];
+}
+
 export class TeamOrchestrator {
   private readonly tasks = new Map<string, TeamTask>();
   private readonly cancelRequested = new Set<string>();
   private readonly reserved = new Set<string>();
   private deliveries: Delivery[] = [];
+  private policy: TeamPolicy = { ...DEFAULT_TEAM_POLICY, rules: [] };
+  private policyTouched = false;
+  private restored = false;
+  private restorePromise: Promise<void> | null = null;
+  private dirty = false;
+  private persistChain: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly host: TeamSessionHost,
     private readonly events: TeamEvents,
     private readonly vault: VaultClient,
-  ) {}
+  ) {
+    void this.ensureRestored();
+  }
+
+  getPolicy(): { policy: TeamPolicy } {
+    return { policy: { ...this.policy, rules: this.policy.rules.map((rule) => ({ ...rule })) } };
+  }
+
+  async setPolicy(input: unknown): Promise<{ policy: TeamPolicy }> {
+    const policy = normalizePolicy(input);
+    this.policy = policy;
+    this.policyTouched = true;
+    try {
+      await writeControlJson(this.vault, "team", CONTROL_PATHS.teamPolicy, policy);
+    } catch (err) {
+      if (!isRootNotSet(err)) console.error("[sidecar] team policy persist failed:", err);
+    }
+    return this.getPolicy();
+  }
 
   list(): { tasks: TeamTask[] } {
     const tasks = [...this.tasks.values()].map(cloneTask);
@@ -299,6 +396,13 @@ export class TeamOrchestrator {
     if (chain.includes(targetId)) {
       return reject(`这条协作链已经经过 ${this.host.labelOf(targetId)}，为避免循环已拒绝。`, safePeer(targetId));
     }
+    if (!policyAllows(
+      this.policy,
+      { id: sessionId, label: this.host.labelOf(sessionId) },
+      { id: targetId, label: this.host.labelOf(targetId) },
+    )) {
+      return reject(`团队策略不允许「${this.host.labelOf(sessionId)}」把${kindLabel(kind)}交给「${this.host.labelOf(targetId)}」。`, safePeer(targetId));
+    }
 
     const open = [...this.tasks.values()].filter((task) => task.status === "queued" || task.status === "running");
     const mine = open.filter((task) => task.from_session_id === sessionId);
@@ -346,14 +450,14 @@ export class TeamOrchestrator {
   }
 
   private kick(): void {
+    if (this.restored) this.requeueDeliveries();
     this.startDeliveries();
     for (const task of [...this.tasks.values()]) {
       if (task.status !== "queued") continue;
       if (this.reserved.has(task.to_session_id) || this.host.isBusy(task.to_session_id)) continue;
       if (!this.host.has(task.to_session_id)) {
-        task.error = "目标 Agent 已离线";
-        this.transition(task, "failed");
-        this.enqueueDelivery(task);
+        // Stay queued across sidecar restarts until the session exists again
+        // or is explicitly closed.
         continue;
       }
       this.reserved.add(task.to_session_id);
@@ -419,6 +523,10 @@ export class TeamOrchestrator {
 
   private async deliver(delivery: Delivery): Promise<void> {
     const task = this.tasks.get(delivery.taskId);
+    if (task?.pending_delivery) {
+      task.pending_delivery = false;
+      this.schedulePersist();
+    }
     const turn = task
       ? { origin: "result" as const, depth: task.depth, chain: [...task.chain], parentTaskId: task.id }
       : { origin: "result" as const, depth: TEAM_LIMITS.maxDepth, chain: [delivery.sessionId] };
@@ -439,12 +547,19 @@ export class TeamOrchestrator {
   }
 
   private enqueueDelivery(task: TeamTask): void {
-    if (!this.host.has(task.from_session_id)) return;
+    const wasPending = Boolean(task.pending_delivery);
+    task.pending_delivery = true;
+    if (!this.host.has(task.from_session_id)) {
+      if (!wasPending) this.schedulePersist();
+      return;
+    }
+    if (this.deliveries.some((delivery) => delivery.taskId === task.id)) return;
     this.deliveries.push({
       sessionId: task.from_session_id,
       taskId: task.id,
       text: deliveryPrompt(task),
     });
+    this.schedulePersist();
   }
 
   private transition(task: TeamTask, status: TeamTaskStatus): void {
@@ -453,6 +568,80 @@ export class TeamOrchestrator {
     this.events.notify("team/event", { task: cloneTask(task) });
     this.auditTask(task);
     this.trim();
+    this.schedulePersist();
+  }
+
+  private ensureRestored(): Promise<void> {
+    if (this.restored) return Promise.resolve();
+    if (!this.restorePromise) {
+      this.restorePromise = this.restore().finally(() => {
+        if (!this.restored) this.restorePromise = null;
+      });
+    }
+    return this.restorePromise;
+  }
+
+  private async restore(): Promise<void> {
+    try {
+      const snapshot = await readControlJson<TaskSnapshot>(this.vault, "team", CONTROL_PATHS.teamTasks);
+      for (const raw of snapshot?.tasks ?? []) {
+        const task = sanitizeLoadedTask(raw);
+        if (!task || this.tasks.has(task.id)) continue;
+        if (task.status === "running") {
+          task.status = "queued";
+          delete task.error;
+        }
+        this.tasks.set(task.id, task);
+      }
+      if (!this.policyTouched) {
+        const loaded = await readControlJson<TeamPolicy>(this.vault, "team", CONTROL_PATHS.teamPolicy);
+        if (loaded) {
+          try { this.policy = normalizePolicy(loaded); } catch (err) {
+            console.error("[sidecar] ignoring malformed team policy:", err);
+          }
+        }
+      }
+      this.restored = true;
+      if (this.dirty) this.schedulePersist();
+      this.requeueDeliveries();
+      this.kick();
+    } catch (err) {
+      if (isRootNotSet(err)) return;
+      console.error("[sidecar] team restore failed:", err);
+      this.restored = true;
+      this.kick();
+    }
+  }
+
+  private requeueDeliveries(): void {
+    for (const task of this.tasks.values()) {
+      if (!task.pending_delivery) continue;
+      if (task.status === "queued" || task.status === "running") continue;
+      this.enqueueDelivery(task);
+    }
+  }
+
+  private schedulePersist(): void {
+    this.dirty = true;
+    if (!this.restored) return;
+    this.persistChain = this.persistChain.then(() => this.flushPersist()).catch((err) => {
+      console.error("[sidecar] team persist failed:", err);
+    });
+  }
+
+  private async flushPersist(): Promise<void> {
+    if (!this.dirty) return;
+    this.dirty = false;
+    try {
+      await writeControlJson(this.vault, "team", CONTROL_PATHS.teamTasks, {
+        version: 1,
+        tasks: [...this.tasks.values()].map(cloneTask),
+      });
+    } catch (err) {
+      this.dirty = true;
+      if (isRootNotSet(err)) return;
+      throw err;
+    }
   }
 
   private trim(): void {
@@ -505,6 +694,20 @@ export class TeamOrchestrator {
       console.error("[sidecar] team audit failed:", err);
     });
   }
+}
+
+function sanitizeLoadedTask(raw: unknown): TeamTask | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const task = raw as TeamTask;
+  if (!/^tsk_[0-9a-f]{8,32}$/.test(task.id)) return undefined;
+  if (task.kind !== "delegate" && task.kind !== "message") return undefined;
+  if (!["queued", "running", "done", "failed", "cancelled"].includes(task.status)) return undefined;
+  if (typeof task.instruction !== "string" || !Array.isArray(task.chain)) return undefined;
+  return {
+    ...task,
+    chain: task.chain.filter((item) => typeof item === "string"),
+    pending_delivery: Boolean(task.pending_delivery),
+  };
 }
 
 function toolResult(text: string, details: Record<string, unknown>): AgentToolResult<any> {

@@ -32,14 +32,28 @@
 
 | 方法 | params | result |
 |---|---|---|
-| `agent/create_session` | `{session_id: string, provider: ProviderConfig, system_prompt?: string, engine?: "pi"\|"deepseek-harness", enabled_skills?: AgentSkill[], label?: string}` | `{session_id}` |
+| `agent/create_session` | `{session_id: string, provider: ProviderConfig, system_prompt?: string, engine?: "pi"\|"deepseek-harness", enabled_skills?: AgentSkill[], label?: string, config_dir?: string, mcp_grants?: string[]}` | `{session_id}` |
 | `agent/send` | `{session_id: string, text: string}` | `{}`（回复经 `agent/event` 流式下发） |
 | `agent/analyze` | `{provider: ProviderConfig, text: string, system_prompt: string, engine?: "pi"\|"deepseek-harness"}` | `{text: string}`（一次性只读分析；不创建持久会话，不暴露写入/删除/外部调用工具） |
 | `agent/abort` | `{session_id: string}` | `{}` |
 | `agent/close_session` | `{session_id: string}` | `{}` |
-| `team/list` | `{}` | `{tasks: TeamTask[]}`（内存队列，sidecar 重启后清空；见 2.11） |
+| `team/list` | `{}` | `{tasks: TeamTask[]}`（持久化在 `team/tasks.json`，sidecar 重启后恢复；见 2.11） |
 | `team/cancel` | `{task_id: string}` | `{task: TeamTask}`（未知 id 返回 -32013；已结束的任务原样返回） |
 | `team/roster` | `{agents: [{id: string, label: string}]}` | `{updated: number}`（只更新已存在会话的显示名） |
+| `team/policy_get` | `{}` | `{policy: TeamPolicy}` |
+| `team/policy_set` | `{policy: TeamPolicy}` | `{policy: TeamPolicy}` |
+| `approval/list` | `{}` | `{cards: ApprovalCard[]}` |
+| `approval/decide` | `{id: string, decision: "approve"\|"deny"}` | `{card: ApprovalCard}`（未知 id 返回 -32014） |
+| `schedule/list` | `{}` | `{routines: Routine[]}` |
+| `schedule/put` | `{routine: Routine}` | `{routine: Routine}` |
+| `schedule/delete` | `{id: string}` | `{deleted: boolean}` |
+| `mcp/connectors_get` | `{}` | `{connectors: McpConnector[]}`（不含令牌） |
+| `mcp/connector_put` | `{connector: McpConnector}` | `{connector: McpConnector}` |
+| `mcp/connector_delete` | `{id: string}` | `{deleted: boolean}` |
+| `mcp/oauth_store` | `{connector_id, access_token?, refresh_token?, token_url?, client_id?, client_secret?, token?}` | `{connector_id, stored: string[]}`（只返回写入了哪些字段名） |
+| `mcp/oauth_status` | `{connector_id}` | `{connector_id, has_access_token, has_refresh_token, has_bearer_token, has_client_id}` |
+| `mcp/list_tools` | `{connector_id}` | `{connector_id, tools: [{name, description}]}`（用户发起的发现，不是 Agent 工具） |
+| `mcp/reload` | `{session_id}` | `{grants: string[]}`（按 mcp.md 重新挂载该会话的 MCP 工具） |
 | `mail/fetch` | `{account?: string, refresh_body?: boolean}`（账号显示名，缺省收全部；`refresh_body` 用于修复旧缓存的正文占位符） | `{fetched: number, accounts: [{name: string, new_messages: number, error?: string}]}` |
 | `mail/delete` | `{account: string, uids: number[]}` | `{account: string, deleted: number}`（仅在 IMAP UIDPLUS 可安全定位删除目标时执行） |
 | `mail/list_mailboxes` | `{account: string}` | `{account: string, mailboxes: [{path, special_use?, subscribed?, messages?, unseen?}]}` |
@@ -83,7 +97,7 @@ type AgentEngine = "pi" | "deepseek-harness";
 
 所有方法 params 均含 `session_id`（用于审计归属，前端用户操作记为 `"user"`）。`path` 一律为**相对数据文件夹根**的 POSIX 风格相对路径（`.` 表示根）。
 
-**凭据保护（按 session）**：trusted session 集合为 `"user" | "mail" | "calendar" | "settings"`；agent session（其余任何 id）对受保护路径（`tasks/history.json`、`mail/accounts.json`、`calendar/accounts.json`、`settings/settings.json`，以及 `secrets/` 整棵子树——`master.key` 与所有 `<scope>.enc.json` 密文 blob）的全部操作（read/write/binary/list/search/stat/delete/compress）一律拒绝 -32001，且这些文件与目录对 agent 的目录列举和全文搜索不可见、目录压缩时被排除。trusted session 不受此限制。`myinfo/profile.json`（agent 上下文有意读取的用户自述）与 `todo/queue.json`（sidecar 以 TODO_SESSION_ID 维护）不在此列。会话历史位于 `agent/<id>/conversations.json`（Vault 明文，见 6.2），是 agent 自身会话的可读写文件，不在保护名单内。
+**凭据保护（按 session）**：trusted session 集合为 `"user" | "mail" | "calendar" | "settings" | "team" | "mcp" | "schedule"`。后三个只由 sidecar 的团队、MCP 和调度模块使用，Agent 工具不能自行选择 session id。agent session（其余任何 id）对受保护路径（`tasks/history.json`、`mail/accounts.json`、`calendar/accounts.json`、`settings/settings.json`、`team/tasks.json`、`team/policy.json`、`mcp/connectors.json`、`schedule/routines.json`、`mail/outgoing-drafts.json`，以及 `secrets/` 整棵子树——`master.key` 与所有 `<scope>.enc.json` 密文 blob）的全部操作（read/write/binary/list/search/stat/delete/compress）一律拒绝 -32001，且这些文件与目录对 agent 的目录列举和全文搜索不可见、目录压缩时被排除。trusted session 不受此限制。`myinfo/profile.json`（agent 上下文有意读取的用户自述）与 `todo/queue.json`（sidecar 以 TODO_SESSION_ID 维护）不在此列。会话历史位于 `agent/<id>/conversations.json`（Vault 明文，见 6.2），是 agent 自身会话的可读写文件，不在保护名单内。
 
 | 方法 | params | result |
 |---|---|---|
@@ -119,6 +133,7 @@ sidecar 另注册 `propose_memory` 工具（必须提供 `source_refs`），它�
 | -32011 | 未知 session（sidecar 返回） |
 | -32012 | session 忙（上一个请求未完成，sidecar 返回） |
 | -32013 | 未知的团队协作任务（`team/cancel`，sidecar 返回） |
+| -32014 | 未知的审批卡（`approval/decide`，sidecar 返回） |
 
 sidecar 级致命错误（不归属于某个会话）用 `session_id: "system"` 的 `agent/event` error 通知上报。
 
@@ -209,7 +224,9 @@ Pi 会话在原有技能工具之外，额外拥有三个协作工具：`list_te
 - 结束后把一段结果提示送回发起方会话（该回合 `origin=result`，协作工具会拒绝再次委托，避免结果回传把环重新打开）。
 - 循环防护：深度上限 3；链上已出现的 session 不能再次成为目标；不能委托给自己；每个发起方同时最多 4 个未完成任务，全局最多 16 个；相同发起方、目标和正文视为重复，不新建任务。委托正文上限 4000 字符，消息上限 2000 字符。
 - 用户从团队面板调用 `team/cancel`。排队中的任务直接取消；执行中的任务只中止这次协作回合，不把用户自己的对话误停掉。
-- 目标必须已经有会话。未启动的 Agent 不会被自动创建。
+- 目标必须已经有会话。未启动的 Agent 不会被自动创建。目标暂时不在线时任务保持 `queued`，直到会话出现或被关闭；关闭会话仍会取消指向它的排队任务。
+- 委托策略见 `team/policy.json`（受保护文件，session id `team`）。`mode: "allow"` 时默认允许，`mode: "deny"` 时默认拒绝。规则 `{from, to, allow}` 用 session id、显示名或 `*` 匹配；更具体的一端优先（id 高于显示名，高于 `*`），同样具体时以后写的规则为准。策略同时约束 `delegate_task` 和 `send_agent_message`。文件缺失时按允许处理，以保持旧配置可运行。
+- 队列持久化在受保护文件 `team/tasks.json`。sidecar 重启后恢复未结束任务：`running` 改回 `queued` 再执行一次（副作用可能重复，这是重启恢复的边界）。`pending_delivery: true` 的已结束任务会再次把结果送回发起方。审计日志仍然是追加的轨迹，不是队列本身。
 - 每次接受、拒绝和状态变化都由 sidecar 调用 Rust `team/audit`。Rust 追加一条 `op: "team"` 的审计记录，`path` 为逻辑主体 `team/<task_id>/<kind>/<status>/<peer>`，不是数据文件夹里的文件。`task_id` 必须匹配 `tsk_` + 8–32 位十六进制；session id 只允许 `A-Za-z0-9_.:-`，避免把审计路径写成逃逸路径。审计失败不阻断协作。
 
 ```ts
@@ -228,10 +245,46 @@ type TeamTask = {
   updated_at: string;
   result_preview?: string;
   error?: string;
+  pending_delivery?: boolean;
+};
+
+type TeamPolicy = {
+  version: 1;
+  mode: "allow" | "deny";
+  rules: Array<{ from: string; to: string; allow: boolean }>;
 };
 ```
 
-`agent/create_session` 可额外带 `label`，供名称解析。前端在会话或显示名变化时调用 `team/roster` 刷新标签。名称解析先精确匹配 session id，再按显示名大小写不敏感匹配；重名则拒绝并要求改用 id。
+`agent/create_session` 可额外带 `label`，供名称解析。前端在会话或显示名变化时调用 `team/roster` 刷新标签。名称解析先精确匹配 session id，再按显示名大小写不敏感匹配；重名则拒绝并要求改用 id。`config_dir` 指向该 Agent 的 `mcp.md`，授权规则见 2.12。
+
+### 2.12 MCP 连接器（HTTP）
+
+sidecar 内置 MCP 客户端，只使用 HTTP JSON-RPC（`initialize`、`notifications/initialized`、`tools/list`、`tools/call`）。不启动进程，不接受命令行，不把 stdio MCP server 当作连接器。
+
+- 连接器清单在受保护文件 `mcp/connectors.json`：`{id, label, url, auth}`。`url` 只能是不带 userinfo 的 `http:` 或 `https:`。`auth` 为 `none`、`bearer` 或 `oauth`。
+- 令牌放在现有加密凭据里，scope 为 `mcp`，键为 `<id>.token`、`<id>.access_token`、`<id>.refresh_token`、`<id>.token_url`、`<id>.client_id`、`<id>.client_secret`。`mcp/oauth_store` 与 `mcp/oauth_status` 只写或报告有无，响应、审计和 UI 都不回显令牌。刷新只在 HTTP 401 时尝试一次。
+- 授权来自 Agent 配置目录里的 `mcp.md`。只有整行匹配 `连接器/工具`（各段 1–64 位字母数字、`_` 或 `-`）才是授权；标题和说明文字不会变成工具。`agent/create_session` 若同时给出 `config_dir` 和 `mcp_grants`，生效集合是二者的交集；只有文件时用文件；没有 `config_dir` 时才用参数。空文件表示没有 MCP 工具。
+- 注册到 Pi 会话的工具名是 `mcp__<connector>__<tool>`。调用前再次核对授权，未授权或连接器不存在时不发网络请求。通过后先走审批卡（2.13），用户批准才 `tools/call`。
+- 每次尝试由 sidecar 调用 Rust `mcp/audit`，`op: "mcp"`，逻辑路径 `mcp/<connector>/<tool>/<ok|denied|error>`。`mcp/list_tools` 是用户按钮触发的发现，不是 Agent 工具。
+- 只读分析（`agent/analyze`）不注册这些工具。DeepSeek Harness 会话同样不注册。
+
+### 2.13 审批与邮件草稿
+
+写入和外部动作在真正执行前要等用户批准。卡片经 `approval/event` 推到前端，Rust 转发为 `approval://event`。
+
+- 需要批准的内置动作：`write_file`、`delete_file`、`compress`（kind `write`），`fetch_mail` 和已授权的 MCP 调用（kind `external`）。读文件、列目录、搜索和记忆提案不拦截。
+- Agent 不能直接发 SMTP。邮件技能额外提供 `draft_email`，它把草稿写入受保护的 `mail/outgoing-drafts.json` 并打开 kind `email` 的卡片。用户批准后才调用既有 `mail/send`。用户自己在写信窗口点发送，仍走原来的 `mail/send`，那是用户动作，不是 Agent 工具。
+- `approval/decide` 的 `approve` / `deny` 会结束等待。10 分钟没有决定则记为 `expired`，邮件不发送。sidecar 重启后，仍为 pending 的邮件草稿会重新出现在卡片里；此时没有存活的工具等待者，由用户批准直接发送。同一次批准只发送一次。
+- 卡片预览会截断正文，并隐藏字段名像 token、password、secret、authorization、api_key 的值。
+- 每次决定调用 Rust `approval/audit`，`op: "approval"`，逻辑路径 `approval/<apr_id>/<kind>/<pending|approved|denied|expired>`。
+
+### 2.14 例程调度
+
+例程存在受保护文件 `schedule/routines.json`，由团队页面管理。
+
+- 触发器二选一：五段 cron（本机本地时间；日和星期都不是 `*` 时，满足其一即触发），或事件 `mail`（`mail/fetch` 收到新邮件）/ `todo`（待办入队）。事件可用 `match` 做大小写不敏感的子串过滤。
+- 触发时若目标会话在线且空闲，就用 `origin: "schedule"` 跑一轮，使用该 Agent 已有工具。审批仍然生效，所以无人值守的例程不能自己批准写入或发信。会话不存在不会被自动创建，这次记为 `skipped`。正忙或同一例程一小时超过 8 次也跳过。
+- 每次触发调用 Rust `schedule/audit`，`op: "schedule"`，逻辑路径 `schedule/<rtn_id>/<ran|skipped|failed>`。状态变化经 `schedule/event` 转发为 `schedule://event`。
 
 ## 3. Tauri commands（前端 → Rust）
 
@@ -264,7 +317,7 @@ type TeamTask = {
 | `memory_tombstone` | `{id: string}` | `MemoryRecord`（tombstoned） |
 | `memory_stats` | — | `{total, by_status, by_scope, malformed_events, index_version}` |
 | `memory_rebuild_index` | — | `{rebuilt, items, malformed_events, index_version}` |
-| `agent_create_session` | `{session_id: string, provider: ProviderConfig, system_prompt?: string, engine?: AgentEngine, enabled_skills?: AgentSkill[], label?: string}` | `{session_id}` |
+| `agent_create_session` | `{session_id: string, provider: ProviderConfig, system_prompt?: string, engine?: AgentEngine, enabled_skills?: AgentSkill[], label?: string, config_dir?: string}` | `{session_id}` |
 | `agent_send` | `{session_id: string, text: string}` | — |
 | `agent_analyze` | `{provider: ProviderConfig, text: string, systemPrompt: string, engine?: AgentEngine}` | `{text: string}`（转发 `agent/analyze`） |
 | `agent_abort` | `{session_id: string}` | — |
@@ -272,6 +325,20 @@ type TeamTask = {
 | `team_list` | — | `{tasks: TeamTask[]}` |
 | `team_cancel` | `{taskId: string}` | `{task: TeamTask}` |
 | `team_roster` | `{agents: [{id, label}]}` | `{updated: number}` |
+| `team_policy_get` | — | `{policy: TeamPolicy}` |
+| `team_policy_set` | `{policy: TeamPolicy}` | `{policy: TeamPolicy}` |
+| `approval_list` | — | `{cards: ApprovalCard[]}` |
+| `approval_decide` | `{id: string, decision: "approve"\|"deny"}` | `{card: ApprovalCard}` |
+| `schedule_list` | — | `{routines: Routine[]}` |
+| `schedule_put` | `{routine: Routine}` | `{routine: Routine}` |
+| `schedule_delete` | `{id: string}` | `{deleted: boolean}` |
+| `mcp_connectors_get` | — | `{connectors: McpConnector[]}` |
+| `mcp_connector_put` | `{connector: McpConnector}` | `{connector: McpConnector}` |
+| `mcp_connector_delete` | `{id: string}` | `{deleted: boolean}` |
+| `mcp_oauth_store` | `{body: object}` | `{connector_id, stored: string[]}`（body 里的令牌不回显） |
+| `mcp_oauth_status` | `{connectorId: string}` | 只含布尔值，见 `mcp/oauth_status` |
+| `mcp_list_tools` | `{connectorId: string}` | `{connector_id, tools}` |
+| `mcp_reload` | `{sessionId: string}` | `{grants: string[]}` |
 | `settings_get` | — | `Settings` |
 | `settings_set` | `{settings: Settings}` | —（迁移：新写入的明文 provider api_key 自动加密到 `secrets/providers.enc.json` 并落为 `$secret:` 引用，见 6.1） |
 | `credentials_set` | `{scope: string, key: string, value: string}` | —（value 为空字符串时删除该条目） |
@@ -293,7 +360,7 @@ type TeamTask = {
 type AuditEntry = {
   ts_ms: number;           // Unix 毫秒
   session_id: string;      // "user" 或 agent session id
-  op: "read"|"write"|"list"|"search"|"delete"|"stat"|"team";
+  op: "read"|"write"|"list"|"search"|"delete"|"stat"|"team"|"mcp"|"approval"|"schedule";
   path: string;            // 相对根路径
   ok: boolean;
   error?: string;
@@ -321,7 +388,7 @@ type SavedAgent = {
 type AgentSkill = "documents" | "photos" | "music" | "videos" | "mail" | "memory";
 ```
 
-`enabled_skills` is enforced by the sidecar as an allow-list over built-in tools: `documents` grants read/list/search/write/compress; `photos`, `music`, and `videos` grant `search_media`/`open_media` restricted to that media kind; `mail` grants configured IMAP fetch; `memory` grants source-backed memory proposals. An explicit empty array grants no vault/media/mail/memory tools. Team tools (`list_teammates`, `delegate_task`, `send_agent_message`) are attached to every Pi session regardless of that allow-list; they only enqueue work on another live session and do not widen the caller's own file or network tools. The callee still runs with its own skill allow-list. Omitted values are interpreted as legacy configuration for backward compatibility. Media bytes are read only through `vault/read_binary`; the UI playback read is separately audited by Rust. The current MCP editor stores explanatory `mcp.md` text only and does not launch arbitrary MCP servers.
+`enabled_skills` is enforced by the sidecar as an allow-list over built-in tools: `documents` grants read/list/search/write/compress; `photos`, `music`, and `videos` grant `search_media`/`open_media` restricted to that media kind; `mail` grants configured IMAP fetch and `draft_email` (SMTP only after an approval card); `memory` grants source-backed memory proposals. An explicit empty array grants no vault/media/mail/memory tools. Team tools (`list_teammates`, `delegate_task`, `send_agent_message`) are attached to every Pi session regardless of that allow-list; they only enqueue work on another live session and do not widen the caller's own file or network tools. The callee still runs with its own skill allow-list. Omitted values are interpreted as legacy configuration for backward compatibility. Media bytes are read only through `vault/read_binary`; the UI playback read is separately audited by Rust. `mcp.md` grant lines authorize HTTP MCP tools for Pi sessions (section 2.12). They do not launch local servers, and write/external calls still wait for approval.
 
 所有 vault_* commands 与 sidecar 走**同一个 Vault 服务**，同样写审计日志（session_id="user"）。command 错误以字符串 message 返回（Tauri `Result<T, String>`），message 中包含错误码文本，如 `E32001 path escapes root`。
 
@@ -362,6 +429,8 @@ CLI 可以在没有 daemon 时直接操作同一状态；指定 --socket 后改�
 | `mail://action-event` | `{account, action, uid, current, total, message}`（原样转发 sidecar 的 `mail/action_event`，供远端批处理任务展示串行进度） |
 | `todo://event` | `{type, item, emittedAt}`（原样转发 sidecar 的 `todo/event`） |
 | `team://event` | `{task: TeamTask}`（原样转发 sidecar 的 `team/event`） |
+| `approval://event` | `{card: ApprovalCard}`（原样转发 sidecar 的 `approval/event`） |
+| `schedule://event` | `{phase: string, routine: Routine}`（原样转发 sidecar 的 `schedule/event`） |
 
 ## 5. 审计日志
 

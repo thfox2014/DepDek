@@ -115,7 +115,8 @@ describe("TeamOrchestrator", () => {
     expect(harness.runs[1]?.turn.origin).toBe("result");
     expect(harness.runs[1]?.text).toContain("Do not delegate");
     expect(harness.audits.some((entry) => entry.status === "done" && entry.ok === true)).toBe(true);
-    expect(harness.audits.every((entry) => entry.kind === "delegate")).toBe(true);
+    const lifecycle = harness.audits.filter((entry) => typeof entry.kind === "string");
+    expect(lifecycle.every((entry) => entry.kind === "delegate")).toBe(true);
   });
 
   it("keeps a task queued until the target is free, and lets the caller continue", async () => {

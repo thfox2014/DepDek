@@ -12,11 +12,15 @@ import { join, resolve } from "node:path";
 import { createStdioPeer } from "./rpc.js";
 import { SessionManager } from "./sessions.js";
 import { TeamOrchestrator, type RosterAgent } from "./team.js";
+import { ApprovalGate } from "./approval.js";
+import { McpRegistry, type McpSecrets } from "./mcp.js";
+import { Scheduler, mailArrivalDetail } from "./schedule.js";
+import { createCredentialsAccess } from "./credentials.js";
 import { LocalVault } from "./localVault.js";
 import { startAgentHttpServer } from "./httpServer.js";
 import { applyMailAction, deleteMail, fetchMail, listMailboxes, sendMail } from "./mail.js";
 import { pushCalendarEvent, syncCalendar } from "./calendar.js";
-import { enqueueTodo, listTodos, updateTodo } from "./todo.js";
+import { enqueueTodo, listTodos, todoBus, updateTodo } from "./todo.js";
 import { registerMemoryHandlers } from "./memory.js";
 import type { ProviderConfig } from "./providers.js";
 
@@ -38,16 +42,70 @@ const team = new TeamOrchestrator({
   runTurn: (id, text, turn) => sessions.runTurn(id, text, turn),
   abortRun: (id) => sessions.abortRun(id),
 }, peer, peer);
-sessions = new SessionManager(peer, peer, team);
+const approval = new ApprovalGate(peer, peer);
+const mcpSecrets: McpSecrets = {
+  async get(key) {
+    const access = await mcpCredentials();
+    return access.getSecret("mcp", key);
+  },
+  async set(key, value) {
+    const access = await mcpCredentials();
+    await access.setSecret("mcp", key, value);
+  },
+  async delete(key) {
+    const access = await mcpCredentials();
+    await access.deleteSecret("mcp", key);
+  },
+};
+let mcpCredentialsPromise: ReturnType<typeof createCredentialsAccess> | undefined;
+function mcpCredentials() {
+  mcpCredentialsPromise ??= createCredentialsAccess(peer, "mcp");
+  return mcpCredentialsPromise;
+}
+const mcp = new McpRegistry(peer, approval, mcpSecrets);
+const schedule = new Scheduler({
+  has: (id) => sessions.has(id),
+  isBusy: (id) => sessions.isBusy(id),
+  runTurn: (id, text, turn) => sessions.runTurn(id, text, turn),
+}, peer, peer);
+sessions = new SessionManager(peer, peer, team, { approval, mcp });
+schedule.start();
+todoBus.subscribe("*", (event) => {
+  if (event.type !== "enqueued") return;
+  schedule.onEvent("todo", `${event.item.title} ${event.item.source ?? ""}`);
+});
 
 registerMemoryHandlers(peer);
 
 peer.register("agent/create_session", (params) =>
-  sessions.createSession(params.session_id, params.provider as ProviderConfig, params.system_prompt, params.engine, params.enabled_skills, params.label),
+  sessions.createSession(
+    params.session_id,
+    params.provider as ProviderConfig,
+    params.system_prompt,
+    params.engine,
+    params.enabled_skills,
+    params.label,
+    params.config_dir,
+    params.mcp_grants,
+  ),
 );
 peer.register("team/list", () => team.list());
 peer.register("team/cancel", (params) => team.cancel(String(params?.task_id ?? "")));
 peer.register("team/roster", (params) => team.applyRoster((params?.agents ?? []) as RosterAgent[]));
+peer.register("team/policy_get", () => team.getPolicy());
+peer.register("team/policy_set", (params) => team.setPolicy(params?.policy ?? params));
+peer.register("approval/list", () => approval.list());
+peer.register("approval/decide", (params) => approval.decide(String(params?.id ?? ""), String(params?.decision ?? "")));
+peer.register("schedule/list", () => schedule.list());
+peer.register("schedule/put", (params) => schedule.put(params?.routine ?? params));
+peer.register("schedule/delete", (params) => schedule.delete(String(params?.id ?? "")));
+peer.register("mcp/connectors_get", () => mcp.listConnectors());
+peer.register("mcp/connector_put", (params) => mcp.putConnector(params?.connector ?? params));
+peer.register("mcp/connector_delete", (params) => mcp.deleteConnector(String(params?.id ?? "")));
+peer.register("mcp/oauth_store", (params) => mcp.oauthStore(params ?? {}));
+peer.register("mcp/oauth_status", (params) => mcp.oauthStatus(String(params?.connector_id ?? "")));
+peer.register("mcp/list_tools", (params) => mcp.listRemoteTools(String(params?.connector_id ?? "")));
+peer.register("mcp/reload", (params) => sessions.reloadMcp(String(params?.session_id ?? "")));
 peer.register("agent/send", (params) => sessions.send(params.session_id, params.text));
 peer.register("agent/analyze", (params) => sessions.runOnce(
   params.provider as ProviderConfig,
@@ -57,10 +115,15 @@ peer.register("agent/analyze", (params) => sessions.runOnce(
 ));
 peer.register("agent/abort", (params) => sessions.abort(params.session_id));
 peer.register("agent/close_session", (params) => sessions.closeSession(params.session_id));
-peer.register("mail/fetch", (params) => fetchMail(peer, {
-  account: params?.account,
-  refresh_body: params?.refresh_body,
-}, undefined, (event) => peer.notify("mail/event", event)));
+peer.register("mail/fetch", async (params) => {
+  const result = await fetchMail(peer, {
+    account: params?.account,
+    refresh_body: params?.refresh_body,
+  }, undefined, (event) => peer.notify("mail/event", event));
+  const arrived = mailArrivalDetail(result.accounts);
+  if (arrived) schedule.onEvent("mail", arrived);
+  return result;
+});
 peer.register("mail/delete", (params) =>
   deleteMail(peer, { account: params.account, uids: params.uids }),
 );

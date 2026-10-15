@@ -17,6 +17,8 @@ import { convertAgentEvent } from "./events.js";
 import { resolveProvider, type ProviderConfig } from "./providers.js";
 import { DeepSeekHarnessSession, HARNESS_ENGINE, HarnessAbortedError } from "./harness.js";
 import { buildPersonalContext, withPersonalContext } from "./context.js";
+import { createDraftEmailTool, type ApprovalGate } from "./approval.js";
+import type { McpRegistry } from "./mcp.js";
 import {
   TEAM_SYSTEM_NOTE,
   createTeamTools,
@@ -25,6 +27,11 @@ import {
   type TeamSessionInfo,
   type TurnContext,
 } from "./team.js";
+
+const APPROVAL_NOTE =
+  "\n\nWrite tools (write_file, delete_file, compress), mail fetch and MCP calls wait for the user to approve a card before they run. " +
+  "draft_email only prepares a message; it is sent only after the user approves that card. " +
+  "Never claim a message was sent until the tool result includes a message id.";
 
 export const ERR_SESSION_EXISTS = -32010;
 export const ERR_SESSION_NOT_FOUND = -32011;
@@ -41,6 +48,11 @@ export interface EventSink {
   notify(method: string, params?: unknown): void;
 }
 
+interface SessionExtras {
+  approval?: ApprovalGate;
+  mcp?: McpRegistry;
+}
+
 interface SessionEntry {
   engine: "pi" | typeof HARNESS_ENGINE;
   label: string;
@@ -48,6 +60,9 @@ interface SessionEntry {
   agent?: Agent;
   harness?: DeepSeekHarnessSession;
   unsubscribe: () => void;
+  enabledSkills?: string[];
+  configDir?: string;
+  mcpGrants?: string[];
 }
 
 export class SessionManager {
@@ -59,17 +74,20 @@ export class SessionManager {
     private readonly vault: VaultClient,
     private readonly sink: EventSink,
     private readonly team?: TeamOrchestrator,
+    private readonly extras: SessionExtras = {},
   ) {}
 
   /** Create a session from a contract ProviderConfig. */
-  createSession(
+  async createSession(
     sessionId: string,
     provider: ProviderConfig,
     systemPrompt?: string,
     engine: "pi" | typeof HARNESS_ENGINE = "pi",
     enabledSkills?: string[],
     label?: string,
-  ): { session_id: string } {
+    configDir?: string,
+    mcpGrants?: string[],
+  ): Promise<{ session_id: string }> {
     if (this.sessions.has(sessionId)) {
       throw new RpcError(ERR_SESSION_EXISTS, `session already exists: ${sessionId}`);
     }
@@ -87,9 +105,14 @@ export class SessionManager {
         provider,
         harness,
         unsubscribe: () => { void harness.dispose(); },
+        enabledSkills,
+        configDir,
+        mcpGrants,
       });
+      this.team?.notifyIdle(sessionId);
       return { session_id: sessionId };
     }
+    const grants = this.extras.mcp ? await this.extras.mcp.resolveGrants(configDir, mcpGrants) : [];
     const resolved = resolveProvider(provider);
     return this.createSessionWithModel(sessionId, resolved.model, {
       apiKey: resolved.apiKey,
@@ -97,6 +120,9 @@ export class SessionManager {
       provider,
       enabledSkills,
       label,
+      configDir,
+      mcpGrants,
+      grants,
     });
   }
 
@@ -108,21 +134,39 @@ export class SessionManager {
   createSessionWithModel(
     sessionId: string,
     model: Model<any>,
-    options: { apiKey?: string; systemPrompt?: string; provider?: ProviderConfig; enabledSkills?: string[]; label?: string } = {},
+    options: {
+      apiKey?: string;
+      systemPrompt?: string;
+      provider?: ProviderConfig;
+      enabledSkills?: string[];
+      label?: string;
+      configDir?: string;
+      mcpGrants?: string[];
+      grants?: string[];
+    } = {},
   ): { session_id: string } {
     if (this.sessions.has(sessionId)) {
       throw new RpcError(ERR_SESSION_EXISTS, `session already exists: ${sessionId}`);
     }
+    const grants = options.grants ?? [];
     const basePrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+    const notes = [
+      this.team ? TEAM_SYSTEM_NOTE : "",
+      this.extras.approval ? APPROVAL_NOTE : "",
+      grants.length ? `\n\nMCP tools granted to you: ${grants.join(", ")}. Tools that are not in this list are refused.` : "",
+    ].join("");
     const agent = new Agent({
       initialState: {
-        systemPrompt: this.team ? `${basePrompt}${TEAM_SYSTEM_NOTE}` : basePrompt,
+        systemPrompt: `${basePrompt}${notes}`,
         model,
       },
       getApiKey: () => options.apiKey,
     });
-    const vaultTools = createVaultTools(this.vault, sessionId, options.enabledSkills);
-    agent.state.tools = this.team ? [...vaultTools, ...createTeamTools(this.team, sessionId)] : vaultTools;
+    const vaultTools = createVaultTools(this.vault, sessionId, options.enabledSkills, this.extras.approval);
+    const teamTools = this.team ? createTeamTools(this.team, sessionId) : [];
+    const mcpTools = this.extras.mcp ? this.extras.mcp.toolsFor(sessionId, grants) : [];
+    const draftTools = this.draftTools(sessionId, options.enabledSkills);
+    agent.state.tools = [...vaultTools, ...teamTools, ...mcpTools, ...draftTools];
     const unsubscribe = agent.subscribe((event) => {
       for (const notification of convertAgentEvent(event, "pi")) {
         this.sink.notify("agent/event", {
@@ -138,8 +182,30 @@ export class SessionManager {
       provider: options.provider,
       agent,
       unsubscribe,
+      enabledSkills: options.enabledSkills,
+      configDir: options.configDir,
+      mcpGrants: options.mcpGrants,
     });
+    this.team?.notifyIdle(sessionId);
     return { session_id: sessionId };
+  }
+
+  /** Re-read mcp.md and replace this session's MCP tools. Other tools stay on the same allow-list. */
+  async reloadMcp(sessionId: string): Promise<{ grants: string[] }> {
+    const entry = this.get(sessionId);
+    if (!entry.agent || !this.extras.mcp) return { grants: [] };
+    const grants = await this.extras.mcp.resolveGrants(entry.configDir, entry.mcpGrants);
+    const vaultTools = createVaultTools(this.vault, sessionId, entry.enabledSkills, this.extras.approval);
+    const teamTools = this.team ? createTeamTools(this.team, sessionId) : [];
+    const mcpTools = this.extras.mcp.toolsFor(sessionId, grants);
+    entry.agent.state.tools = [...vaultTools, ...teamTools, ...mcpTools, ...this.draftTools(sessionId, entry.enabledSkills)];
+    return { grants };
+  }
+
+  private draftTools(sessionId: string, enabledSkills?: string[]): ReturnType<typeof createDraftEmailTool>[] {
+    if (!this.extras.approval) return [];
+    const mailEnabled = enabledSkills === undefined || enabledSkills.includes("mail");
+    return mailEnabled ? [createDraftEmailTool(this.extras.approval, sessionId)] : [];
   }
 
   /** Start a run. The reply streams back through agent/event notifications. */
@@ -323,6 +389,7 @@ export class SessionManager {
   closeSession(sessionId: string): Record<string, never> {
     const entry = this.get(sessionId);
     this.team?.onSessionClosed(sessionId);
+    this.extras.mcp?.forget(sessionId);
     if (entry.engine === HARNESS_ENGINE) {
       entry.harness?.abort();
       void entry.harness?.dispose();
