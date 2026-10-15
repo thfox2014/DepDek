@@ -32,7 +32,7 @@ docker run --name "$build_container" --privileged --platform linux/amd64 \
   -v depdek-ai-os-cargo-cache:/cargo-cache \
   -w /workspace \
   depdek-ai-os-builder:trixie \
-  bash os/build-in-container.sh 2>&1 | tee -a "$build_log"
+  bash -c 'cp /workspace/os/build-in-container.sh /tmp/depdek-build-run.sh; exec bash /tmp/depdek-build-run.sh' 2>&1 | tee -a "$build_log"
 docker rm "$build_container" >/dev/null
 
 case "$(uname -m)" in
