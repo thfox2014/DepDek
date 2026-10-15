@@ -4,9 +4,13 @@ live-config-systemd
 calamares
 calamares-settings-debian
 xorg
+xinit
+xfce4
 lightdm
 lightdm-gtk-greeter
-xfce4
+plymouth
+plymouth-themes
+user-setup
 network-manager
 network-manager-gnome
 pkexec
@@ -27,6 +31,8 @@ fonts-noto-cjk
 desktop-file-utils
 xdg-utils
 dbus-x11
+sudo
+libgomp1
 libwebkit2gtk-4.1-0
 libayatana-appindicator3-1
 firmware-iwlwifi

@@ -3,6 +3,8 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { ChatBlock, SessionInfo } from "../App";
 import * as api from "../api";
 import { APP_VERSION } from "../version";
+import { invoke } from "@tauri-apps/api/core";
+import jiahoLogo from "../assets/jiaho-boot-logo.png";
 
 type Props = {
   root: string;
@@ -258,12 +260,13 @@ export default function DepDekAiOsShell({ root, settings, sessions, activeAgentI
   return (
     <main className="os-shell">
       <header className="os-topbar">
-        <div className="os-brand-mark"><Sparkle size={18} weight="fill" /></div>
-        <div className="os-brand-name">DepDek <span>AI-OS</span></div>
+        <img src={jiahoLogo} alt="Jiaho 家合" style={{ width: 46, height: 46, objectFit: "contain" }} />
+        <div className="os-brand-name">Jiaho 家合 <span>AI-OS</span></div>
         <div className="os-topbar-center"><span className="os-live-dot" />{hasProvider ? <>已连接 <b>{currentProvider?.model}</b></> : "本地工作台已就绪 · 尚未连接模型"}</div>
         <button className="os-home-button" onClick={onOpenHome} title="打开 DepDek 工作台（DepDekHome）"><SquaresFour size={16} weight="bold" /><span>打开 DepDek 工作台</span></button>
         <span className="os-version-chip" title={`DepDek v${APP_VERSION}`}>v{APP_VERSION}</span>
         <button className="os-settings-button" onClick={() => setSettingsOpen((open) => !open)} aria-label="模型连接设置"><Gear size={19} /></button>
+        <button className="os-settings-button" onClick={() => void invoke("ai_os_logout").then(() => window.location.reload()).catch((e) => setVoiceError(String(e)))} title="锁定空间" aria-label="锁定空间"><ShieldCheck size={19} /></button>
       </header>
 
       <div className="os-layout">

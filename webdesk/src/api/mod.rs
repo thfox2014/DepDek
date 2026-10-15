@@ -2,6 +2,7 @@
 
 pub mod agent;
 pub mod business;
+pub mod room;
 pub mod files;
 pub mod processes;
 pub mod session;
@@ -27,6 +28,14 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/v2/workspaces", get(business::workspaces))
         .route("/api/v2/commands", get(business::commands))
         .route("/api/v2/commands/invoke", post(business::invoke))
+        .route("/api/v2/room/config", get(room::config))
+        .route("/api/v2/room/store", post(room::store))
+        .route("/api/v2/room/providers", post(room::provider))
+        .route("/api/v2/room/providers/test", post(room::provider_test))
+        .route("/api/v2/room/migration", post(room::migration))
+        .route("/api/v2/room/chat", post(room::chat))
+        .route("/api/v2/computer", post(room::computer))
+        .route("/api/v2/household", post(room::household))
         .route("/api/session", get(session::current))
         .route("/api/login", post(session::login))
         .route("/api/logout", post(session::logout))

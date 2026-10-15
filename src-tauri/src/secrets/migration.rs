@@ -18,6 +18,10 @@ pub struct ImportCredentials {
 #[serde(deny_unknown_fields)]
 pub struct LegacySources {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    agent_env: Option<SecretText>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    resolved_refs: BTreeMap<String, SecretText>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     settings: Option<LegacySettings>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     mail: Option<Accounts<LegacyMail>>,
@@ -102,8 +106,34 @@ pub(super) struct Candidates {
     pub skipped: usize,
 }
 impl LegacySources {
-    pub(super) fn extract(self) -> Result<Candidates, SecretError> {
-        if self.settings.is_none() && self.mail.is_none() && self.calendar.is_none() {
+    pub(super) fn extract(mut self) -> Result<Candidates, SecretError> {
+        if self.resolved_refs.len() > 128 {
+            return Err(SecretError::Capacity);
+        }
+        if let Some(s) = &mut self.settings {
+            for p in s.providers.values_mut() {
+                if let Some(secret) = &mut p.api_key {
+                    resolve(secret, &self.resolved_refs)?
+                }
+            }
+        }
+        if let Some(m) = &mut self.mail {
+            for a in &mut m.accounts {
+                resolve(&mut a.password, &self.resolved_refs)?
+            }
+        }
+        if let Some(c) = &mut self.calendar {
+            for a in &mut c.accounts {
+                for secret in [&mut a.password, &mut a.access_token].into_iter().flatten() {
+                    resolve(secret, &self.resolved_refs)?
+                }
+            }
+        }
+        if self.settings.is_none()
+            && self.mail.is_none()
+            && self.calendar.is_none()
+            && self.agent_env.is_none()
+        {
             return Err(SecretError::InvalidInput);
         }
         let mut result = Candidates {
@@ -111,6 +141,62 @@ impl LegacySources {
             skipped: 0,
         };
         let mut accounts = BTreeSet::new();
+        if let Some(env) = self.agent_env {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct P {
+                id: String,
+                name: String,
+                base_url: String,
+                protocol: String,
+                model: String,
+                api_key: SecretText,
+            }
+            let text = std::str::from_utf8(env.bytes()).map_err(|_| SecretError::InvalidInput)?;
+            if text.len() > 56000 {
+                return Err(SecretError::Capacity);
+            }
+            let encoded = text
+                .lines()
+                .filter_map(|line| line.split_once('='))
+                .filter(|(key, _)| key.trim() == "DEPDEK_AGENT_PROVIDERS_B64")
+                .map(|(_, v)| v.trim())
+                .collect::<Vec<_>>();
+            if encoded.len() != 1 {
+                return Err(SecretError::InvalidInput);
+            }
+            use base64::Engine;
+            let bytes = zeroize::Zeroizing::new(
+                base64::engine::general_purpose::STANDARD
+                    .decode(encoded[0])
+                    .map_err(|_| SecretError::InvalidInput)?,
+            );
+            if bytes.len() > 56000 {
+                return Err(SecretError::Capacity);
+            }
+            let profiles: Vec<P> =
+                serde_json::from_slice(&bytes).map_err(|_| SecretError::InvalidInput)?;
+            if profiles.len() > 24 {
+                return Err(SecretError::Capacity);
+            }
+            for p in profiles {
+                label(&p.name)?;
+                label(&p.model)?;
+                endpoint(&p.base_url)?;
+                if !matches!(
+                    p.protocol.as_str(),
+                    "openai-completions" | "openai-responses" | "anthropic-messages"
+                ) {
+                    return Err(SecretError::InvalidInput);
+                }
+                result.push(
+                    CredentialKind::Provider,
+                    p.id,
+                    CredentialField::ApiKey,
+                    p.api_key,
+                )?;
+            }
+        }
         if let Some(settings) = self.settings {
             if settings.providers.len() > 32 {
                 return Err(SecretError::Capacity);
@@ -207,6 +293,22 @@ impl LegacySources {
         }
         Ok(result)
     }
+}
+fn resolve(
+    secret: &mut SecretText,
+    refs: &BTreeMap<String, SecretText>,
+) -> Result<(), SecretError> {
+    if let Ok(value) = std::str::from_utf8(secret.bytes()) {
+        if value.starts_with("$secret:") {
+            *secret = refs.get(value).ok_or(SecretError::InvalidInput)?.clone();
+        }
+    }
+    if std::str::from_utf8(secret.bytes())
+        .is_ok_and(|v| v.starts_with("$secret:") || v.starts_with("cr_"))
+    {
+        return Err(SecretError::InvalidInput);
+    }
+    Ok(())
 }
 impl Candidates {
     fn push(

@@ -13,7 +13,7 @@ use crate::{MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES};
 use zeroize::Zeroizing;
 
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(135);
 const CONNECTION_LIMIT: usize = 16;
 
 /// Runtime socket validation is transport security, not data-root access.

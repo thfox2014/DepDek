@@ -50,6 +50,8 @@ pub enum VaultError {
     /// -32004: vault root not set.
     #[error("vault root not set")]
     RootNotSet,
+    #[error("AI-OS login required")]
+    AuthRequired,
     /// -32005: not UTF-8 text.
     #[error("not a UTF-8 text file: {0}")]
     NotUtf8(String),
@@ -72,6 +74,7 @@ impl VaultError {
             VaultError::NotFound(_) => -32002,
             VaultError::TooLarge => -32003,
             VaultError::RootNotSet => -32004,
+            VaultError::AuthRequired => -32006,
             VaultError::NotUtf8(_) => -32005,
             VaultError::UnknownMethod(_) => -32601,
             VaultError::InvalidParams(_) => -32602,
@@ -219,7 +222,7 @@ fn normalize(rel: &str) -> Result<String, VaultError> {
                 let seg = seg
                     .to_str()
                     .ok_or_else(|| VaultError::NotUtf8(rel.to_string()))?;
-                if seg == AUDIT_FILE_NAME {
+                if seg == AUDIT_FILE_NAME || seg == ".household" {
                     return Err(VaultError::Escape(
                         "access to the audit log is denied".to_string(),
                     ));
@@ -278,7 +281,8 @@ pub(crate) fn protected_paths() -> &'static [&'static str] {
 
 /// Hidden from agent listings/searches; trusted sessions see everything.
 fn hidden_from(session_id: &str, relnorm: &str) -> bool {
-    !is_trusted_session(session_id) && is_protected_path(relnorm)
+    relnorm.split('/').any(|s| s == ".household")
+        || (!is_trusted_session(session_id) && is_protected_path(relnorm))
 }
 
 /// Reject agent access to protected paths; trusted sessions pass through.
@@ -308,7 +312,15 @@ pub struct Vault {
 struct VaultInner {
     root: RwLock<Option<RootPair>>,
     audit: AuditLog,
+    #[cfg(unix)]
+    welcome: RwLock<Option<Arc<WelcomeVault>>>,
 }
+
+#[cfg(unix)]
+#[path = "vault/welcome.rs"]
+mod welcome;
+#[cfg(unix)]
+pub use welcome::{WelcomeError, WelcomePreferences, WelcomeVault};
 
 impl Vault {
     pub fn new() -> Self {
@@ -319,6 +331,7 @@ impl Vault {
     /// canonicalized so later prefix checks are exact. Also (re)opens the
     /// audit log inside the new root.
     pub fn set_root(&self, path: &Path) -> Result<PathBuf, VaultError> {
+        self.require_ai_os_login()?;
         let canonical = fs::canonicalize(path).map_err(|e| {
             if e.kind() == io::ErrorKind::NotFound {
                 VaultError::NotFound(path.display().to_string())
@@ -326,6 +339,9 @@ impl Vault {
                 VaultError::Io(e)
             }
         })?;
+        if canonical.components().any(|p| p.as_os_str() == ".jiaho-onboarding") {
+            return Err(VaultError::Escape("private AI-OS account store".into()));
+        }
         if !canonical.is_dir() {
             return Err(VaultError::InvalidParams(format!(
                 "not a directory: {}",
@@ -342,6 +358,7 @@ impl Vault {
     }
 
     pub fn root(&self) -> Option<PathBuf> {
+        if self.require_ai_os_login().is_err() { return None; }
         self.inner
             .root
             .read()
@@ -378,12 +395,34 @@ impl Vault {
     }
 
     fn root_pair(&self) -> Result<RootPair, VaultError> {
+        self.require_ai_os_login()?;
         self.inner
             .root
             .read()
             .unwrap()
             .clone()
             .ok_or(VaultError::RootNotSet)
+    }
+
+    pub fn require_ai_os_login(&self) -> Result<(), VaultError> {
+        #[cfg(unix)]
+        if let Some(welcome) = self.inner.welcome.read().unwrap().as_ref() {
+            if !welcome.authenticated() { return Err(VaultError::AuthRequired); }
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    pub fn enable_ai_os_login(&self, directory: &Path) -> Result<(), WelcomeError> {
+        let mut slot = self.inner.welcome.write().unwrap();
+        if slot.is_some() { return Err(WelcomeError::Conflict); }
+        *slot = Some(Arc::new(WelcomeVault::open(directory)?));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    pub fn ai_os_welcome(&self) -> Option<Arc<WelcomeVault>> {
+        self.inner.welcome.read().unwrap().clone()
     }
 
     /// Resolve a relative path that must already exist. Canonicalizes the
@@ -405,7 +444,11 @@ impl Vault {
             Err(e) => return Err(e.into()),
         }
         let canonical = fs::canonicalize(&candidate)?;
-        if !canonical.starts_with(&pair.canonical) {
+        if !canonical.starts_with(&pair.canonical)
+            || canonical
+                .strip_prefix(&pair.canonical)
+                .is_ok_and(|p| p.components().any(|c| c.as_os_str() == ".household"))
+        {
             return Err(VaultError::Escape(relnorm));
         }
         Ok((candidate, relnorm))
@@ -442,7 +485,11 @@ impl Vault {
             }
         }
         let canonical = fs::canonicalize(&ancestor)?;
-        if !canonical.starts_with(&pair.canonical) {
+        if !canonical.starts_with(&pair.canonical)
+            || canonical
+                .strip_prefix(&pair.canonical)
+                .is_ok_and(|p| p.components().any(|c| c.as_os_str() == ".household"))
+        {
             return Err(VaultError::Escape(relnorm));
         }
         let mut target = canonical;
@@ -1025,7 +1072,7 @@ fn append_archive_entries(
     let mut entries = fs::read_dir(path)?.flatten().collect::<Vec<_>>();
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
-        if entry.file_name() == AUDIT_FILE_NAME {
+        if entry.file_name() == AUDIT_FILE_NAME || entry.file_name() == ".household" {
             continue;
         }
         // Encrypted credential blobs and the master key never enter archives
@@ -1206,6 +1253,7 @@ pub struct ManagedReadVault {
     read_paths: Vec<String>,
     audit: AuditLog,
     access: std::sync::Mutex<access::AccessState>,
+    household: std::sync::Mutex<Option<household::HouseholdStore>>,
 }
 
 #[cfg(unix)]
@@ -1221,6 +1269,15 @@ pub use access::{
 mod profiles;
 #[cfg(unix)]
 pub use profiles::{CredentialCatalogue, ProviderProfiles, ProviderRegistration};
+
+#[cfg(unix)]
+pub(crate) use profiles::validate as validate_provider_registration;
+
+#[cfg(unix)]
+#[path = "vault/household.rs"]
+mod household;
+#[cfg(unix)]
+pub use household::HouseholdRequest;
 
 #[cfg(unix)]
 impl ManagedReadVault {
@@ -1290,6 +1347,7 @@ impl ManagedReadVault {
             read_paths: paths,
             audit,
             access: std::sync::Mutex::new(access::AccessState::default()),
+            household: std::sync::Mutex::new(None),
         })
     }
 

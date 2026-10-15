@@ -1,0 +1,12 @@
+[Unit]
+Description=Select the local Jiaho graphical session
+Before=lightdm.service
+After=systemd-user-sessions.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /usr/lib/jiaho/select-session-user
+RemainAfterExit=yes
+
+[Install]
+WantedBy=graphical.target

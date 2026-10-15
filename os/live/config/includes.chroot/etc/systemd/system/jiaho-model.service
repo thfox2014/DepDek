@@ -1,0 +1,21 @@
+[Unit]
+Description=Jiaho offline setup AI
+After=local-fs.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+ExecStart=/usr/lib/jiaho/llama-server --model /usr/share/jiaho/models/setup.gguf --alias jiaho-setup --host 127.0.0.1 --port 11435 --ctx-size 4096 --parallel 1 --threads 2 --n-gpu-layers 0
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+RestrictAddressFamilies=AF_INET AF_UNIX
+MemoryMax=1536M
+CPUQuota=200%
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

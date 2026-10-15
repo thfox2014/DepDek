@@ -33,6 +33,9 @@ fn prepare() -> (tempfile::TempDir, ServeConfig) {
     .unwrap();
     std::fs::write(root.join("private/secret.txt"), "never expose me").unwrap();
     let config = ServeConfig {
+        room_runtime: None,
+        cloud_model_hosts: vec![],
+        household_enabled: false,
         local_model_profiles: vec![],
         worker_transport: None,
         workspace_id: "family-demo".into(),

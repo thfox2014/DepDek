@@ -42,20 +42,20 @@ pub struct Command {
     command_version: String,
     input: Value,
 }
-struct Failure(StatusCode, &'static str);
+pub(super) struct Failure(pub(super) StatusCode, pub(super) &'static str);
 impl IntoResponse for Failure {
     fn into_response(self) -> Response {
         reply(self.0, json!({"error":{"code":self.1}}))
     }
 }
-fn reply(status: StatusCode, body: Value) -> Response {
+pub(super) fn reply(status: StatusCode, body: Value) -> Response {
     let mut response = (status, Json(body)).into_response();
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
     response
 }
-fn enabled(state: &AppState) -> Result<(), Failure> {
+pub(super) fn enabled(state: &AppState) -> Result<(), Failure> {
     if state.insecure_no_auth {
         return Err(Failure(StatusCode::FORBIDDEN, "BUSINESS_AUTH_DISABLED"));
     }
@@ -67,7 +67,7 @@ fn enabled(state: &AppState) -> Result<(), Failure> {
     }
     Ok(())
 }
-fn origin(state: &AppState, headers: &HeaderMap) -> Result<(), Failure> {
+pub(super) fn origin(state: &AppState, headers: &HeaderMap) -> Result<(), Failure> {
     enabled(state)?;
     if headers.get(header::ORIGIN).and_then(|h| h.to_str().ok())
         != state.config.business_origin.as_deref()
@@ -76,7 +76,7 @@ fn origin(state: &AppState, headers: &HeaderMap) -> Result<(), Failure> {
     }
     Ok(())
 }
-fn session(state: &AppState, headers: &HeaderMap) -> Result<Zeroizing<String>, Failure> {
+pub(super) fn session(state: &AppState, headers: &HeaderMap) -> Result<Zeroizing<String>, Failure> {
     enabled(state)?;
     if headers.contains_key(header::ORIGIN) {
         origin(state, headers)?;
@@ -91,7 +91,7 @@ fn session(state: &AppState, headers: &HeaderMap) -> Result<Zeroizing<String>, F
     }
     Ok(Zeroizing::new(value.to_owned()))
 }
-fn csrf(headers: &HeaderMap) -> Result<Zeroizing<String>, Failure> {
+pub(super) fn csrf(headers: &HeaderMap) -> Result<Zeroizing<String>, Failure> {
     let value = headers
         .get(CSRF)
         .and_then(|h| h.to_str().ok())
@@ -104,7 +104,7 @@ fn csrf(headers: &HeaderMap) -> Result<Zeroizing<String>, Failure> {
     }
     Ok(Zeroizing::new(value.to_owned()))
 }
-fn wipe(value: &mut Value) {
+pub(super) fn wipe(value: &mut Value) {
     match value {
         Value::String(s) => s.zeroize(),
         Value::Array(a) => a.iter_mut().for_each(wipe),
@@ -113,7 +113,11 @@ fn wipe(value: &mut Value) {
     }
 }
 #[cfg(unix)]
-async fn rpc(state: &AppState, method: &'static str, params: Value) -> Result<Value, Failure> {
+pub(super) async fn rpc(
+    state: &AppState,
+    method: &'static str,
+    params: Value,
+) -> Result<Value, Failure> {
     enabled(state)?;
     // Encoded requests are erased on timeout/connection error as well.
     let mut request = json!({"jsonrpc":"2.0","id":1,"method":method,"params":params});
@@ -125,7 +129,8 @@ async fn rpc(state: &AppState, method: &'static str, params: Value) -> Result<Va
         return Err(Failure(StatusCode::PAYLOAD_TOO_LARGE, "LIMIT_EXCEEDED"));
     }
     bytes.push(b'\n');
-    let result = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+    let limit = if method == "v2/delegated.room.chat" { 130 } else { 58 };
+    let result = tokio::time::timeout(std::time::Duration::from_secs(limit), async {
         let mut stream =
             tokio::net::UnixStream::connect(state.config.business_socket.as_ref().unwrap())
                 .await
@@ -171,6 +176,22 @@ async fn rpc(state: &AppState, method: &'static str, params: Value) -> Result<Va
             "FORBIDDEN" => Failure(StatusCode::FORBIDDEN, "FORBIDDEN"),
             "NOT_FOUND" => Failure(StatusCode::NOT_FOUND, "NOT_FOUND"),
             "INVALID_INPUT" => Failure(StatusCode::UNPROCESSABLE_ENTITY, "INVALID_INPUT"),
+            "CONFLICT" => Failure(StatusCode::CONFLICT, "CONFLICT"),
+            "SECRET_STORE_LOCKED" => Failure(StatusCode::LOCKED, "SECRET_STORE_LOCKED"),
+            "SECRET_STORE_NOT_INITIALIZED" => {
+                Failure(StatusCode::CONFLICT, "SECRET_STORE_NOT_INITIALIZED")
+            }
+            "UNLOCK_FAILED" => Failure(StatusCode::FORBIDDEN, "UNLOCK_FAILED"),
+            "ENGINE_RUN_FAILED" => Failure(StatusCode::BAD_GATEWAY, "ENGINE_RUN_FAILED"),
+            "PROVIDER_AUTH_FAILED" => Failure(StatusCode::BAD_GATEWAY,"PROVIDER_AUTH_FAILED"),
+            "PROVIDER_REQUEST_REJECTED" => Failure(StatusCode::BAD_GATEWAY,"PROVIDER_REQUEST_REJECTED"),
+            "PROVIDER_QUOTA_LIMITED" => Failure(StatusCode::TOO_MANY_REQUESTS,"PROVIDER_QUOTA_LIMITED"),
+            "PROVIDER_UNAVAILABLE" => Failure(StatusCode::BAD_GATEWAY,"PROVIDER_UNAVAILABLE"),
+            "MODEL_OUTCOME_UNKNOWN" => Failure(StatusCode::BAD_GATEWAY,"MODEL_OUTCOME_UNKNOWN"),
+            "PAGE_CHANGED" => Failure(StatusCode::CONFLICT, "PAGE_CHANGED"),
+            "HOST_NOT_ALLOWED" => Failure(StatusCode::FORBIDDEN, "HOST_NOT_ALLOWED"),
+            "INPUT_NOT_REQUESTED" => Failure(StatusCode::CONFLICT, "INPUT_NOT_REQUESTED"),
+            "COMPUTER_UNAVAILABLE" => Failure(StatusCode::SERVICE_UNAVAILABLE, "COMPUTER_UNAVAILABLE"),
             "RATE_LIMITED" => Failure(StatusCode::TOO_MANY_REQUESTS, "RATE_LIMITED"),
             "AUDIT_UNAVAILABLE" => Failure(StatusCode::SERVICE_UNAVAILABLE, "AUDIT_UNAVAILABLE"),
             _ => Failure(StatusCode::SERVICE_UNAVAILABLE, "CAPABILITY_UNAVAILABLE"),
@@ -182,7 +203,11 @@ async fn rpc(state: &AppState, method: &'static str, params: Value) -> Result<Va
         .ok_or(Failure(StatusCode::SERVICE_UNAVAILABLE, "CORE_UNAVAILABLE"))
 }
 #[cfg(not(unix))]
-async fn rpc(_: &AppState, _: &'static str, mut params: Value) -> Result<Value, Failure> {
+pub(super) async fn rpc(
+    _: &AppState,
+    _: &'static str,
+    mut params: Value,
+) -> Result<Value, Failure> {
     wipe(&mut params);
     Err(Failure(
         StatusCode::SERVICE_UNAVAILABLE,
@@ -419,6 +444,9 @@ mod tests {
         let socket = temp.path().join("runtime/command.sock");
         let core = Arc::new(
             Service::open(&ServeConfig {
+                room_runtime: None,
+                cloud_model_hosts: vec![],
+                household_enabled: false,
                 local_model_profiles: vec![],
                 worker_transport: None,
                 workspace_id: "family-demo".into(),

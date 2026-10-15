@@ -20,6 +20,9 @@ async fn main() -> anyhow::Result<()> {
     if !config.access_users.is_empty()
         || !config.provider_profiles.is_empty()
         || config.worker_transport.is_some()
+        || config.room_runtime.is_some()
+        || config.household_enabled
+        || !config.cloud_model_hosts.is_empty()
     {
         let private_bytes = agent_workbench_lib::vault::read_private_runtime_config(
             std::path::Path::new(&args[2]),
@@ -36,7 +39,16 @@ async fn main() -> anyhow::Result<()> {
         .as_ref()
         .map(bind_worker_socket)
         .transpose()?;
-    eprintln!("[depdekd] ready: local_owner_read_only (optional explicit local model gateway; no business writes)");
+    eprintln!(
+        "[depdekd] ready: {}",
+        if config.room_runtime.is_some() {
+            "core_room (trusted local SDK; encrypted gateway)"
+        } else if config.household_enabled {
+            "core_household"
+        } else {
+            "local_owner_read_only"
+        }
+    );
     let shutdown = async {
         let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
             .expect("install SIGTERM handler");

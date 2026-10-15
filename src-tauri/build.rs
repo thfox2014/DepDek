@@ -1,4 +1,5 @@
 fn main() {
+    println!("cargo:rerun-if-env-changed=VITE_DEPDEK_OS");
     // Only invoke the Tauri build script when the desktop app feature is on.
     // Feature cfgs are passed to build scripts by Cargo, so this stays
     // inert for `cargo test --no-default-features`.

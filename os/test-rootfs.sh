@@ -16,6 +16,9 @@ require_executable() {
 }
 
 require_executable usr/bin/agent-workbench
+require_executable usr/local/bin/depdek-shell
+require_file usr/share/depdek/depdek-shell
+require_file usr/share/depdek/depdek-welcome.sh
 require_executable usr/lib/DepDek/node
 require_file usr/lib/DepDek/sidecar.mjs
 require_file usr/lib/DepDek/transcribe.py
@@ -26,5 +29,22 @@ require_file usr/share/applications/depdek-install.desktop
 grep -Fq 'Exec=pkexec calamares' "$root/usr/share/applications/depdek-install.desktop"
 require_file etc/xdg/autostart/depdek-ai-os.desktop
 grep -Fq 'Exec=agent-workbench' "$root/etc/xdg/autostart/depdek-ai-os.desktop"
+test "$(readlink "$root/etc/systemd/system/default.target")" = /lib/systemd/system/graphical.target
+require_executable usr/bin/startx
+require_file usr/lib/systemd/system/graphical.target
+require_file etc/systemd/system/display-manager.service
+require_file etc/systemd/system/jiaho-session-user.service
+require_file etc/systemd/system/jiaho-model.service
+require_executable usr/lib/jiaho/select-session-user
+require_executable usr/lib/jiaho/llama-server
+require_file usr/share/jiaho/models/setup.gguf
+require_file usr/share/plymouth/themes/jiaho/jiaho.plymouth
+require_file usr/share/plymouth/themes/jiaho/jiaho-logo.png
+grep -Fq '127.0.0.1' "$root/etc/systemd/system/jiaho-model.service"
+printf '%s  %s\n' 74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db "$root/usr/share/jiaho/models/setup.gguf" | sha256sum -c -
+if ! dpkg-query --admindir="$root/var/lib/dpkg" -W -f='${Status}' user-setup 2>/dev/null | grep -Fq 'install ok installed'; then
+  echo "live user autologin support is missing" >&2
+  exit 1
+fi
 
-echo "Live rootfs assertions passed: DepDek shell, sidecar, offline voice, Calamares, and autostart."
+echo "Live rootfs assertions passed: Jiaho splash, graphical login shell, verified local AI, offline voice, CLI fallback, and Calamares."

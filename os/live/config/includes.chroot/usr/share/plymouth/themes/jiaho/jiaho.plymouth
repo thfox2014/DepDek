@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Jiaho
+Description=Jiaho home AI welcome
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/jiaho
+ScriptFile=/usr/share/plymouth/themes/jiaho/jiaho.script

@@ -34,6 +34,12 @@ pub struct ServeConfig {
     pub local_model_profiles: Vec<String>,
     #[serde(default)]
     pub worker_transport: Option<WorkerTransport>,
+    #[serde(default)]
+    pub room_runtime: Option<crate::room::RoomRuntime>,
+    #[serde(default)]
+    pub cloud_model_hosts: Vec<String>,
+    #[serde(default)]
+    pub household_enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -153,7 +159,7 @@ impl ApiError {
             retryable: false,
         }
     }
-    fn unavailable() -> Self {
+    pub(super) fn unavailable() -> Self {
         Self {
             code: "CAPABILITY_UNAVAILABLE",
             message: "command/version is not available in this read-only slice",
@@ -222,16 +228,21 @@ impl From<AccessError> for ApiError {
 /// Immutable startup registration. End-user identity is assigned from the
 /// verified Unix peer, never from RpcRequest or command input fields.
 pub struct Service {
-    owner_uid: u32,
-    workspace_id: String,
-    principal_id: String,
+    pub(super) owner_uid: u32,
+    pub(super) workspace_id: String,
+    pub(super) principal_id: String,
     request_prefix: String,
     sequence: AtomicU64,
-    vault: ManagedReadVault,
-    secret_store: Option<SecretStore>,
-    provider_profiles: ProviderProfiles,
-    local_model_profiles: Vec<String>,
+    pub(super) vault: ManagedReadVault,
+    pub(super) secret_store: Option<SecretStore>,
+    pub(super) provider_profiles: ProviderProfiles,
+    pub(super) local_model_profiles: Vec<String>,
     worker_uid: Option<u32>,
+    pub(super) room_runtime: Option<crate::room::RoomRuntime>,
+    pub(super) cloud_model_hosts: Vec<String>,
+    pub(super) room_socket: PathBuf,
+    pub(super) household_enabled: bool,
+    pub(super) room_control: std::sync::Mutex<()>,
 }
 
 impl Service {
@@ -273,9 +284,45 @@ impl Service {
             })
             .collect();
         vault.configure_access(access_users)?;
+        if config.household_enabled {
+            vault.configure_household()?;
+        }
+        if let Some(runtime) = &config.room_runtime {
+            runtime.validate()?;
+        }
+        if config.cloud_model_hosts.len() > 16
+            || config.cloud_model_hosts.iter().any(|h| {
+                h.len() > 253
+                    || !h.contains('.')
+                    || !h
+                        .bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b".-".contains(&b))
+            })
+        {
+            bail!("invalid cloud host allowlist");
+        }
+        if config.room_runtime.is_some() && config.secret_dir.is_none() {
+            bail!("Room requires explicit encrypted Secret Store");
+        }
+        if config.room_runtime.is_some() && config.worker_transport.is_some() {
+            bail!("local trusted Room launcher cannot impersonate isolated Worker uid; use the separate operator launcher");
+        }
         let provider_profiles =
             vault.register_provider_profiles(config.provider_profiles.clone())?;
-        vault.validate_local_model_profiles(&provider_profiles, &config.local_model_profiles)?;
+        if config.room_runtime.is_none() {
+            vault
+                .validate_local_model_profiles(&provider_profiles, &config.local_model_profiles)?;
+        } else if config.local_model_profiles.len() > 8
+            || config.local_model_profiles.iter().any(|id| {
+                id.is_empty()
+                    || id.len() > 48
+                    || !id
+                        .bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            })
+        {
+            bail!("invalid local Provider ids");
+        }
         if !config.local_model_profiles.is_empty() && config.secret_dir.is_none() {
             bail!("local model profiles require an explicit Secret Store");
         }
@@ -302,6 +349,11 @@ impl Service {
             provider_profiles,
             local_model_profiles: config.local_model_profiles.clone(),
             worker_uid: config.worker_transport.as_ref().map(|worker| worker.uid),
+            room_runtime: config.room_runtime.clone(),
+            cloud_model_hosts: config.cloud_model_hosts.clone(),
+            room_socket: config.socket.clone(),
+            household_enabled: config.household_enabled,
+            room_control: std::sync::Mutex::new(()),
         })
     }
 
@@ -353,13 +405,21 @@ impl Service {
 
     fn handle(&self, request_id: &str, method: &str, params: Value) -> Result<Value, ApiError> {
         match method {
+            "v2/delegated.computer" => self.computer_request(request_id, params),
+            method if method.starts_with("v2/room.") || method == "v2/delegated.room.chat" => {
+                self.room(request_id, method, params)
+            }
+            "v2/delegated.household" => self
+                .vault
+                .household_command(request_id, parse(params)?)
+                .map_err(ApiError::from),
             "v2/health" => {
                 if params != json!({}) {
                     return Err(ApiError::invalid());
                 }
                 Ok(
-                    json!({"ready":true,"version":VERSION,"mode":"local_owner_read_only",
-                    "engine_enabled":false,"business_writes_enabled":false,"local_model_gateway_enabled":!self.local_model_profiles.is_empty(),"credential_management_enabled":self.secret_store.is_some()}),
+                    json!({"ready":true,"version":VERSION,"mode":if self.room_runtime.is_some(){"core_room"}else if self.household_enabled{"core_household"}else{"local_owner_read_only"},
+                    "engine_enabled":self.room_runtime.is_some(),"business_writes_enabled":self.household_enabled,"local_model_gateway_enabled":!self.local_model_profiles.is_empty(),"cloud_model_gateway_enabled":!self.cloud_model_hosts.is_empty() && self.room_runtime.is_some(),"credential_management_enabled":self.secret_store.is_some()}),
                 )
             }
             "v2/commands.list" => {
@@ -578,7 +638,7 @@ impl Service {
         store.execute(&authority, operation).map_err(ApiError::from)
     }
 
-    fn check_workspace(&self, workspace: &str) -> Result<(), ApiError> {
+    pub(super) fn check_workspace(&self, workspace: &str) -> Result<(), ApiError> {
         if workspace != self.workspace_id {
             return Err(ApiError::forbidden());
         }

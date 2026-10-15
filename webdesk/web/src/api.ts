@@ -250,7 +250,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const message =
       payload && typeof payload === "object" && "error" in payload
-        ? String((payload as { error: unknown }).error)
+        ? typeof (payload as { error: unknown }).error === "object"
+          ? String(((payload as { error: { code?: string } }).error).code || "请求被拒绝")
+          : String((payload as { error: unknown }).error)
         : `请求失败（HTTP ${response.status}）`;
     throw new Error(message);
   }
@@ -270,6 +272,17 @@ async function download(path: string): Promise<Blob> {
 }
 
 export const api = {
+  roomConfig: () => demoMode ? Promise.resolve({enabled:false} as RoomConfig) : request<{ data: RoomConfig }>("/api/v2/room/config").then(r => r.data),
+  roomStore: (workspace_id: string, action: string, input: object) => request("/api/v2/room/store", { method: "POST", body: JSON.stringify({ workspace_id, action, input }) }),
+  roomSaveProvider: (workspace_id: string, input: object) => request("/api/v2/room/providers", { method: "POST", body: JSON.stringify({ workspace_id, input }) }),
+  roomTestProvider: (workspace_id:string,input:{provider_id:string;profile_revision:number;cloud_consent:boolean})=>request<{data:ProviderProbe}>("/api/v2/room/providers/test",{method:"POST",body:JSON.stringify({workspace_id,input})}).then(r=>r.data),
+  roomMigration: (workspace_id: string, action: string, input: object) => request<{data:unknown}>("/api/v2/room/migration", { method: "POST", body: JSON.stringify({ workspace_id, action, input }) }),
+  businessLogin: (username: string, password: string) => request<{data: BusinessSession}>("/api/v2/auth/login", {method:"POST",body:JSON.stringify({username,password})}).then(r=>r.data),
+  businessSession: () => request<{data: BusinessSession}>("/api/v2/auth/session").then(r=>r.data),
+  businessLogout: (csrf: string) => request("/api/v2/auth/logout", {method:"POST",headers:{"x-depdek-business-csrf":csrf}}),
+  roomChat: (csrf: string, input: object) => request<{data: RoomAnswer}>("/api/v2/room/chat", {method:"POST",headers:{"x-depdek-business-csrf":csrf},body:JSON.stringify(input)}).then(r=>r.data),
+  computer: (csrf:string,workspace_id:string,action:object)=>request<{data:ComputerState}>("/api/v2/computer",{method:"POST",headers:{"x-depdek-business-csrf":csrf},body:JSON.stringify({workspace_id,action})}).then(r=>r.data),
+  household: (csrf: string, workspace_id: string, command: string, input: object) => request<{data:unknown}>("/api/v2/household", {method:"POST",headers:{"x-depdek-business-csrf":csrf},body:JSON.stringify({workspace_id,command,input})}).then(r=>r.data),
   session: () => (demoMode ? demoApi.session() : request<SessionInfo>("/api/session")),
   login: (password: string) =>
     demoMode
@@ -320,6 +333,15 @@ export const api = {
           body: JSON.stringify({ agent, message, history }),
         }),
 };
+
+export interface BusinessSession {principal_id:string;workspace_id:string;csrf_token:string}
+export interface RoomProfile {id:string;name:string;base_url:string;model:string;profile_revision:number;configured:boolean}
+export interface ProviderProbe {connection_verified:boolean;purpose:string;result:{provider_id:string;profile_revision:number;model:string;reported_model:string|null;text:string;usage:{input_tokens:number;output_tokens:number}|null;source:string}}
+export interface RoomConfig {enabled:boolean;legacy_enabled?:boolean;workspace_id:string;engines:string[];store:{initialized:boolean;locked:boolean};profiles:RoomProfile[];cloud_hosts:string[];household_enabled:boolean;worker_mode:string;computer_enabled?:boolean;computer_hosts?:string[]}
+export interface ComputerElement {target:string;label:string;type:string;input:boolean;disabled:boolean}
+export interface ComputerAction {kind:string;target?:string;page_revision?:number;url?:string}
+export interface ComputerState {running:boolean;revision:number;url?:string;title?:string;text?:string;elements:ComputerElement[];request:{id:string;fields:ComputerElement[]}|null;screenshot:string|null;mime?:string;container?:string}
+export interface RoomAnswer {runtime:{engine:string;package:string;version:string};result:{status:string;result:{text:string;model:string;reported_model?:string|null;source:string;usage:{input_tokens:number;output_tokens:number}|null}};events:Array<{type:string;phase?:string;event?:string}>;computer?:ComputerState;proposed_action?:ComputerAction;continuation?:boolean}
 
 export function formatBytes(bytes: number, digits = 1): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";

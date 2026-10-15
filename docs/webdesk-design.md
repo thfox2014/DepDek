@@ -1,5 +1,7 @@
 # DepDek Webdesk 设计（远程 Web 管理控制台）
 
+可选 core-backed Agent Room / 业务登录 / 家庭凭证面板的固定 BFF 契约见 [runtime-room.md](agentos-v2/runtime-room.md)。配置 business_socket 后可发现新入口；不把 admin cookie 作为家庭身份，不读 Home/Secret 文件、不启动 Engine 进程。
+
 > 状态：v0.2.x（登录 / 四人 Agent 协作室 / 隔离 DeepSeek Harness 服务 / 文件管理 / 性能监控 / 存储与网络 / 审计）
 > 相关：`webdesk/`（Rust 服务 + 前端）、[contract.md](contract.md)（桌面端三方契约，本文档不修改该契约）
 

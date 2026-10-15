@@ -147,6 +147,8 @@ for root,dirs,files in os.walk(p,topdown=False):
                  "--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
                  "--pids-limit", "32", "--memory", "128m", "--cpus", "1", "--mount",
                  f"type=volume,src={volume},dst=/fixture/worker-runtime,volume-subpath={fixture}/worker-runtime,readonly"] +
+                ["--mount", f"type=bind,src={repo / 'sidecar/dist/r1-engine-worker.mjs'},dst=/opt/engine/r1-engine-worker.mjs,readonly",
+                 "--mount", f"type=bind,src={repo / 'sidecar/node_modules'},dst=/opt/engine/node_modules,readonly"] +
                 binary_mount + image + ["sleep", "600"])
         inspected = json.loads(command(["docker", "inspect", worker]).stdout)[0]
         assert inspected["Config"]["User"] == "1002:1002"
@@ -186,6 +188,47 @@ for root,dirs,files in os.walk(p,topdown=False):
         assert KEY not in actual.stdout
         assert worker_rpc("v2/model.invoke", model)["error"]["data"]["error"]["code"] == "CONFLICT"
         report.append("受控出口实际连接合成 Provider，usage/Unicode 完整；授权消费后重放拒绝")
+        for engine, package in [("pi", "@mariozechner/pi-agent-core"), ("deepseek-harness", "@deepseek-ai/dsh-agent-loop")]:
+            grant = cli(["model", "issue", "--workspace", "w1", "--stdin"],
+                        {**auth, "provider_id": "local-test", "profile_revision": 1, "engine": engine,
+                         "prompt": "仅分析合成空调维修材料", "max_tokens": 128, "ttl_seconds": 60})["result"]["data"]
+            runner = {"workspace_id": "w1", "lease_token": grant["lease_token"], "run_id": grant["run_id"],
+                      "call_id": "sdk-one", "engine": engine, "provider_id": grant["provider_id"],
+                      "model": grant["model"], "max_tokens": grant["max_tokens"], "prompt": "仅分析合成空调维修材料"}
+            actual = command(["docker", "exec", "-i", worker, "env", "-i", "PATH=/usr/local/bin:/usr/bin:/bin",
+                              "/usr/local/bin/node", "/opt/engine/r1-engine-worker.mjs", "--socket",
+                              "/fixture/worker-runtime/worker.sock", "--server-uid", "1001", "--worker-command",
+                              "/opt/depdek/depdek-worker"], json.dumps(runner)+"\n")
+            events = [json.loads(line) for line in actual.stdout.splitlines()]
+            assert [e["seq"] for e in events] == list(range(1, len(events)+1))
+            final = events[-1]
+            assert final["type"] == "result" and final["runtime"]["engine"] == engine
+            assert final["runtime"]["package"] == package and final["runtime"]["mode"] == "sdk-agent-loop"
+            assert final["runtime"]["tools"] == [] and not final["runtime"]["key_received"]
+            assert final["result"]["text"] == answer["text"] and final["result"]["usage"] == answer["usage"]
+            for secret in [KEY, grant["lease_token"], "仅分析合成空调维修材料"]:
+                assert secret not in actual.stdout and secret not in actual.stderr
+            def provider_count():
+                return int(command(["docker", "exec", "--user", "1001:1002", core, "python3", "-c",
+                                    "import json,urllib.request;print(json.load(urllib.request.urlopen('http://127.0.0.1:18080/test-request-count'))['requests'])"]).stdout)
+            before = provider_count()
+            denied_grant = cli(["model", "issue", "--workspace", "w1", "--stdin"],
+                              {**auth, "provider_id": "local-test", "profile_revision": 1, "engine": engine,
+                               "prompt": "仅分析合成空调维修材料", "max_tokens": 128, "ttl_seconds": 60})["result"]["data"]
+            forged = {**runner, "lease_token": denied_grant["lease_token"], "run_id": denied_grant["run_id"],
+                      "engine": "pi" if engine == "deepseek-harness" else "deepseek-harness"}
+            rejected = command(["docker", "exec", "-i", worker, "env", "-i", "PATH=/usr/local/bin:/usr/bin:/bin",
+                                "/usr/local/bin/node", "/opt/engine/r1-engine-worker.mjs", "--socket",
+                                "/fixture/worker-runtime/worker.sock", "--server-uid", "1001", "--worker-command",
+                                "/opt/depdek/depdek-worker"], json.dumps(forged)+"\n", check=False)
+            failed_events = [json.loads(line) for line in rejected.stdout.splitlines()]
+            assert rejected.returncode == 2 and failed_events[-1]["type"] == "error" and failed_events[-1]["code"] == "FORBIDDEN"
+            assert [e["seq"] for e in failed_events] == list(range(1, len(failed_events)+1))
+            assert provider_count() == before  # no model request after expansion
+            replay = {"workspace_id": "w1", "lease_token": denied_grant["lease_token"], "run_id": denied_grant["run_id"], "call_id": "bypass"}
+            assert worker_rpc("v2/model.invoke", replay)["error"]["data"]["error"]["code"] == "CONFLICT"
+            report.append(engine + " 实际 SDK loop 同 core/Context/Provider，无 Key/工具/网络；跨引擎伪造拒绝且未外发")
+        report.append("两种执行器的最终文本、模型和实际 usage 相同，有序安全事件可追溯")
         cli(["auth", "logout", "--stdin"], auth)
         params["call_id"] = "after-logout"
         assert worker_rpc("v2/worker.invoke", params)["error"]["data"]["error"]["code"] == "SESSION_EXPIRED"

@@ -295,7 +295,7 @@ export default function App() {
           return;
         }
         const loaded = await api.settingsGet().catch(() => ({ providers: {} }) as api.Settings);
-        const existingDeepSeekName = Object.entries(loaded.providers).find(([name, config]) =>
+        const existingDeepSeekName = (agentOsMode ? Object.keys(loaded.providers)[0] : undefined) ?? Object.entries(loaded.providers).find(([name, config]) =>
           name.toLocaleLowerCase().includes("deepseek") || (config.kind === "openai-compatible" && config.base_url.toLocaleLowerCase().includes("deepseek")),
         )?.[0];
         const providerName = existingDeepSeekName ?? INITIAL_PROVIDER_NAME;
@@ -323,7 +323,7 @@ export default function App() {
         setSessions(restored);
         // The Rust side auto-restores settings.last_root on startup.
         let r = await api.vaultGetRoot().catch(() => null);
-        if (agentOsMode && !r) r = await api.vaultInitHome();
+        if (agentOsMode && !r) r = nextSettings.last_root ? await api.vaultSetRoot(nextSettings.last_root) : await api.vaultInitHome();
         setRoot(r);
         // Restore conversation history from the vault (localStorage is only a
         // crash-cache fallback and gets synced back up by the debounced writer).

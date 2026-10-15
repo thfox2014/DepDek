@@ -41,6 +41,9 @@ pub struct Config {
     pub business_socket: Option<PathBuf>,
     #[serde(default)]
     pub business_origin: Option<String>,
+    /// Explicit compatibility mode only; the default Agent Room uses core.
+    #[serde(default)]
+    pub legacy_agent_room: bool,
 
     /// Serve the SPA from disk instead of the embedded copy (frontend dev).
     #[serde(default)]
@@ -168,6 +171,7 @@ impl Config {
                 agent_config_socket: default_agent_config_socket(),
                 business_socket: None,
                 business_origin: None,
+                legacy_agent_room: false,
                 web_root: None,
                 auth: AuthConfig::default(),
                 metrics: MetricsConfig::default(),
@@ -215,6 +219,9 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        if self.legacy_agent_room && self.business_socket.is_some() {
+            bail!("legacy_agent_room 与 business_socket 不能同时启用：Provider 主写入口必须唯一");
+        }
         if self
             .files_root
             .as_ref()

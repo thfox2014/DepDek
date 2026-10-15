@@ -6,7 +6,8 @@ log=/tmp/depdek-qemu-boot.log
 qmp=/tmp/depdek-qemu-qmp.sock
 pidfile=/tmp/depdek-qemu.pid
 screen=/tmp/depdek-qemu-screen.ppm
-rm -f "$log" "$qmp" "$pidfile" "$screen"
+serial_socket=/tmp/depdek-qemu-serial.sock
+rm -f "$log" "$qmp" "$pidfile" "$screen" "$serial_socket"
 cleanup() {
   if [ -f "$pidfile" ]; then kill "$(cat "$pidfile")" 2>/dev/null || true; fi
 }
@@ -16,21 +17,25 @@ file "$iso" | tee /tmp/depdek-iso-file.txt
 grep -q 'bootable' /tmp/depdek-iso-file.txt || { echo "ISO is not bootable" >&2; exit 1; }
 qemu-system-x86_64 \
   -machine q35,accel=tcg -m 4096 -smp 2 \
+  -cpu max,-avx,-avx2,-fma,-f16c \
   -boot d -cdrom "$iso" \
-  -display vnc=127.0.0.1:1 -serial "file:$log" \
+  -display vnc=127.0.0.1:1 \
+  -chardev "socket,id=serial0,path=$serial_socket,server=on,wait=off,logfile=$log" -serial chardev:serial0 \
   -qmp "unix:$qmp,server=on,wait=off" \
   -pidfile "$pidfile" \
   -no-reboot -no-shutdown \
   -daemonize
 
-# LightDM's systemd start marker precedes Xfce and the Tauri shell by several
-# minutes under ARM-hosted x86 TCG. Keep sampling until the branded shell is
-# actually on screen instead of treating a login service marker as success.
-python3 - "$qmp" "$log" "$screen" <<'PY'
+# Read-only checks through the live serial console; the VGA screen must show
+# the actual auto-started AI-OS account page, not just a systemd milestone.
+python3 - "$qmp" "$log" "$screen" "$serial_socket" <<'PY'
 import json, os, re, socket, sys, time
 
-qmp_path, serial_path, screen_path = sys.argv[1:]
+qmp_path, serial_path, screen_path, serial_socket = sys.argv[1:]
 deadline = time.monotonic() + 900
+console = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+console.connect(serial_socket)
+console.setblocking(False)
 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 sock.settimeout(30)
 sock.connect(qmp_path)
@@ -53,38 +58,36 @@ def command(name, arguments=None):
             return response.get("return")
 
 command("qmp_capabilities")
-lightdm_seen = False
-checks = 0
+last_check = 0
+last_login = 0
 while time.monotonic() < deadline:
+    try:
+        console.recv(65536)
+    except BlockingIOError:
+        pass
     try:
         serial_log = open(serial_path, errors="replace").read().lower()
     except FileNotFoundError:
         serial_log = ""
-    if not lightdm_seen and re.search(r"lightdm|depdek tty|login:", serial_log):
-        lightdm_seen = True
-        print("QEMU reached the display-manager startup stage; waiting for DepDek.", flush=True)
-    if lightdm_seen:
-        checks += 1
+    now = time.monotonic()
+    if now - last_login > 15 and re.search(r"(?:jiaho|depdek|live) login:", serial_log[-800:]):
+        console.sendall(b"live\n")
+        last_login = now
+    elif now - last_login > 5 and "password:" in serial_log[-150:]:
+        console.sendall(b"live\n")
+        last_login = now
+    if now - last_check > 25 and ("live@" in serial_log or "jiaho ai-os" in serial_log):
+        console.sendall(b"pgrep -x agent-workbench >/dev/null && echo JIAHO_APP_OK; curl -fsS --max-time 2 http://127.0.0.1:11435/health >/dev/null && echo JIAHO_MODEL_OK\n")
+        last_check = now
+    # Match standalone output lines, not the echoed command text.
+    if re.search(r"\njiaho_app_ok\s*\n", serial_log) and re.search(r"\njiaho_model_ok\s*\n", serial_log):
         command("screendump", {"filename": screen_path})
-        data = open(screen_path, "rb").read()
-        header = re.match(rb"P6\s+(\d+)\s+(\d+)\s+255\s", data)
-        if header:
-            width, height = map(int, header.groups())
-            pixels = data[header.end():]
-            if len(pixels) == width * height * 3:
-                # The DepDek shell uses a charcoal workspace with lime accents.
-                # The black boot screen and cursor have fewer than 100 such pixels.
-                lime = sum(
-                    g > 40 and g > r * 1.05 and g > b * 1.05
-                    for r, g, b in zip(pixels[0::3], pixels[1::3], pixels[2::3])
-                )
-                if lime >= 1000:
-                    print(f"DepDek shell visible: {width}x{height}; {lime} lime-accent pixels")
-                    command("quit")
-                    sock.close()
-                    raise SystemExit(0)
-        if checks % 6 == 0:
-            print(f"Still waiting for the graphical shell ({checks} screen checks).", flush=True)
+        if not os.path.getsize(screen_path):
+            raise SystemExit("QEMU did not capture the AI-OS screen")
+        print("Graphical AI-OS process and real bundled model health verified with AVX disabled; account page captured.")
+        command("quit")
+        sock.close()
+        raise SystemExit(0)
     time.sleep(10)
 
 if os.path.exists(screen_path):
@@ -93,7 +96,7 @@ try:
     print(open(serial_path, errors="replace").read()[-12000:], file=sys.stderr)
 except FileNotFoundError:
     pass
-raise SystemExit("DepDek shell did not appear within 900 seconds")
+raise SystemExit("Graphical AI-OS / bundled model did not become ready within 900 seconds")
 PY
 
 cp "$log" "$out/boot-serial.log"

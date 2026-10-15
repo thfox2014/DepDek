@@ -1,0 +1,31 @@
+desktop-color: "#fff9ee"
+title-text: ""
+message-color: "#153d35"
+terminal-font: "Unifont Regular 16"
+
++ image {
+    left = 36%
+    top = 3%
+    width = 28%
+    height = 47%
+    file = "jiaho-logo.png"
+}
++ boot_menu {
+    left = 16%
+    top = 53%
+    width = 68%
+    height = 33%
+    item_color = "#153d35"
+    selected_item_color = "#f07527"
+    item_height = 32
+    item_padding = 10
+    item_spacing = 6
+}
++ label {
+    left = 0
+    top = 91%
+    width = 100%
+    align = "center"
+    color = "#698578"
+    text = "Jiaho AI-OS  |  Your home, your AI"
+}

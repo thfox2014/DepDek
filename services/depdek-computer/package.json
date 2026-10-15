@@ -1,0 +1,11 @@
+{
+  "name": "depdek-computer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test policy.test.mjs"
+  },
+  "dependencies": {
+    "playwright": "1.58.2"
+  }
+}

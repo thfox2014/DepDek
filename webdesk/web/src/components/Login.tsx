@@ -43,6 +43,10 @@ export default function Login({ version, insecure, tls, demo, onAuthenticated, o
         {demo && <p className="login__demo">浏览器预览模式：不会真正登录，展示的是示例数据。</p>}
 
         <label className="login__field">
+          <span>管理员用户名</span>
+          <input value="admin" readOnly autoComplete="username" aria-label="管理员用户名" />
+        </label>
+        <label className="login__field">
           <span>管理员密码</span>
           <input
             type="password"

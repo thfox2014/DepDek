@@ -1,0 +1,33 @@
+Window.SetBackgroundTopColor(1.0, 0.97647, 0.93333);
+Window.SetBackgroundBottomColor(1.0, 0.97647, 0.93333);
+logo_image = Image("jiaho-logo.png");
+size = Window.GetWidth() * 0.38;
+if (size > Window.GetHeight() * 0.62) size = Window.GetHeight() * 0.62;
+logo_image = logo_image.Scale(size, size);
+logo = Sprite(logo_image);
+logo.SetX((Window.GetWidth() - size) / 2);
+logo.SetY((Window.GetHeight() - size) / 2 - 25);
+message_image = Image.Text("Preparing your home...", 0.083, 0.239, 0.208);
+message = Sprite(message_image);
+message.SetX(Window.GetWidth() / 2 - message_image.GetWidth() / 2);
+message.SetY(Window.GetHeight() * 0.79);
+fun show_password(prompt, bullets) {
+    text = prompt + " ";
+    for (i = 0; i < bullets; i++) text += "*";
+    image = Image.Text(text, 0.083, 0.239, 0.208);
+    message.SetImage(image);
+    message.SetX(Window.GetWidth() / 2 - image.GetWidth() / 2);
+}
+fun show_question(prompt, entry) {
+    image = Image.Text(prompt + " " + entry, 0.083, 0.239, 0.208);
+    message.SetImage(image);
+    message.SetX(Window.GetWidth() / 2 - image.GetWidth() / 2);
+}
+fun show_normal() {
+    image = Image.Text("Preparing your home...", 0.083, 0.239, 0.208);
+    message.SetImage(image);
+    message.SetX(Window.GetWidth() / 2 - image.GetWidth() / 2);
+}
+Plymouth.SetDisplayPasswordFunction(show_password);
+Plymouth.SetDisplayQuestionFunction(show_question);
+Plymouth.SetDisplayNormalFunction(show_normal);

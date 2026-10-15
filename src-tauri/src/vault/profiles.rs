@@ -32,6 +32,9 @@ pub enum ProfileProtocol {
 }
 pub struct ProviderProfiles(pub(super) Vec<ProviderRegistration>);
 impl ProviderProfiles {
+    pub fn registrations(&self) -> Vec<ProviderRegistration> {
+        self.0.clone()
+    }
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -43,7 +46,7 @@ pub enum CredentialCatalogue<'a> {
     Metadata(&'a Value),
 }
 
-fn validate(profile: &ProviderRegistration) -> Result<(), ManagedReadError> {
+pub(crate) fn validate(profile: &ProviderRegistration) -> Result<(), ManagedReadError> {
     let reference = profile.credential_ref.as_bytes();
     if profile.id.is_empty()
         || profile.id.len() > 48
@@ -156,7 +159,7 @@ impl ManagedReadVault {
         }
         result
     }
-    fn profile_audit<T>(
+    pub(super) fn profile_audit<T>(
         &self,
         request: &str,
         action: &str,

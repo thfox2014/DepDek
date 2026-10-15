@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type AgentChatMessage, type AgentId, type AgentProvider, type AgentProviderDraft, type AgentProviderProtocol, type AgentStatus } from "../api";
 import Markdown from "../components/Markdown";
 import WukongMosaic from "../components/WukongMosaic";
+import AgentCore from "./AgentCore";
+import { type RoomConfig } from "../api";
 
 type ChatEntry = AgentChatMessage & { id: string; kind?: "error" };
 type SpeechRecognitionResult = { 0: { transcript: string }; isFinal: boolean };
@@ -91,6 +93,18 @@ function PersonMark({ agent, small = false }: { agent: AgentId; small?: boolean 
 }
 
 export default function Agent() {
+  const [config,setConfig]=useState<RoomConfig|null>(null);
+  const [failure,setFailure]=useState("");
+  const [probe,setProbe]=useState(0);
+  useEffect(()=>{let live=true;setFailure("");api.roomConfig().then(c=>{if(live)setConfig(c)}).catch(e=>{if(live)setFailure(e instanceof Error?e.message:"核心连接失败")});return()=>{live=false}},[probe]);
+  if(failure)return <div className="agent-core-loading" role="alert"><h2>Agent 核心暂未就绪</h2><p>{failure}</p><p>不会自动回退旧执行器，请检查 core 服务和管理员登录。</p><button onClick={()=>setProbe(p=>p+1)}>重新连接</button></div>;
+  if(!config)return <div className="agent-core-loading" role="status">正在检查 Agent 核心…</div>;
+  if(config.enabled)return <AgentCore initial={config}/>;
+  if(config.legacy_enabled)return <LegacyAgent/>;
+  return <div className="agent-core-loading"><h2>Agent Room 已切到共享核心</h2><p>需要启动 depdekd 的 room_runtime，并为 Webdesk 配置 business_socket / business_origin。</p><p>旧执行器仅能通过显式 legacy_agent_room 兼容开关启用。</p><button onClick={()=>setProbe(p=>p+1)}>检查核心连接</button></div>;
+}
+
+function LegacyAgent() {
   const [selected, setSelected] = useState<AgentId>("wukong");
   const [conversations, setConversations] = useState<Record<AgentId, ChatEntry[]>>({
     wukong: [], bajie: [], master: [], shaseng: [],

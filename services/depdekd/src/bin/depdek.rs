@@ -9,6 +9,7 @@ async fn main() -> anyhow::Result<()> {
     if args.is_empty() || args == ["--help"] {
         println!("depdek {}\n  depdek auth hash-password  (hidden TTY; prints PHC only)\n  depdek --socket PATH health\n  depdek --socket PATH commands|providers --workspace ID\n  depdek --socket PATH command file.list|file.read|file.stat --workspace ID --input '{{\"path\":\"documents\"}}' --json\n  depdek --socket PATH credentials status|init|unlock|lock|list|receipt|put|revoke|import-preview|import --workspace ID [--stdin] [--operation ID]\n  depdek --socket PATH auth login|session|logout --stdin\n  depdek --socket PATH worker issue|revoke|invoke --workspace ID --stdin\nSensitive input: hidden TTY for credential init/unlock, explicit stdin JSON otherwise. No secret --input/argv/env. Always prints JSON; no shell/data fallback. Session/lease bearer appears only in its issuance response; never send it to a model.",depdekd::VERSION);
         println!("  depdek --socket PATH model issue|revoke|invoke --workspace ID --stdin\n  depdek auth hash-password --stdin  (explicit bounded password JSON)");
+        println!("  depdek --socket PATH room config --workspace ID\n  depdek --socket PATH room store|save-provider|migration-preview|migration-apply|migration-activate|chat --workspace ID --stdin\n  depdek --socket PATH household --workspace ID --stdin\nRoom/household inputs contain no caller role, endpoint override or raw secret argv.");
         return Ok(());
     }
     if args == ["auth", "hash-password"] || args == ["auth", "hash-password", "--stdin"] {
@@ -44,6 +45,55 @@ async fn main() -> anyhow::Result<()> {
         args.remove(index);
     }
     let (method, params) = match args.as_slice() {
+        [kind, action]
+            if kind == "room"
+                && input.is_none()
+                && operation.is_none()
+                && ((action == "config" && !stdin_input)
+                    || (action != "config" && stdin_input)) =>
+        {
+            let method = match action.as_str() {
+                "config" => "v2/room.config",
+                "store" => "v2/room.store",
+                "save-provider" => "v2/room.provider.save",
+                "test-provider" => "v2/room.provider.test",
+                "migration-preview" => "v2/room.migration.preview",
+                "migration-apply" => "v2/room.migration.apply",
+                "migration-activate" => "v2/room.migration.activate",
+                "chat" => "v2/delegated.room.chat",
+                _ => anyhow::bail!("unsupported room action"),
+            };
+            let mut params = if stdin_input {
+                sensitive_stdin()?
+            } else {
+                serde_json::json!({})
+            };
+            let object = params
+                .as_object_mut()
+                .ok_or_else(|| anyhow::anyhow!("stdin object required"))?;
+            if object.contains_key("workspace_id") {
+                anyhow::bail!("workspace only via --workspace");
+            }
+            object.insert(
+                "workspace_id".into(),
+                serde_json::json!(required(workspace, "workspace")?),
+            );
+            (method, params)
+        }
+        [kind] if (kind == "household" || kind == "computer") && stdin_input && input.is_none() && operation.is_none() => {
+            let mut params = sensitive_stdin()?;
+            let object = params
+                .as_object_mut()
+                .ok_or_else(|| anyhow::anyhow!("stdin object required"))?;
+            if object.contains_key("workspace_id") {
+                anyhow::bail!("workspace only via --workspace");
+            }
+            object.insert(
+                "workspace_id".into(),
+                serde_json::json!(required(workspace, "workspace")?),
+            );
+            (if kind == "computer" {"v2/delegated.computer"} else {"v2/delegated.household"}, params)
+        }
         [kind]
             if kind == "health"
                 && workspace.is_none()

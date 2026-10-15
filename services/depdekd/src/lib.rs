@@ -4,6 +4,10 @@
 //! production engine integration, persistent Job, or business writer.
 
 #[cfg(unix)]
+mod room;
+#[cfg(unix)]
+mod computer;
+#[cfg(unix)]
 pub mod service;
 #[cfg(unix)]
 pub mod transport;

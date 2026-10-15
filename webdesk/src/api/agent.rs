@@ -24,6 +24,15 @@ const MAX_HISTORY_CHARS: usize = 14_000;
 const MAX_RPC_RESPONSE_BYTES: usize = 256 * 1024;
 const MAX_CONFIG_REQUEST_BYTES: usize = 16 * 1024;
 
+fn legacy_enabled(state: &AppState) -> Result<(), ApiError> {
+    if !state.config.legacy_agent_room || state.config.business_socket.is_some() {
+        return Err(ApiError::unavailable(
+            "旧 Agent 接口已关闭；请使用共享核心 Room 接口",
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProviderProtocol {
@@ -173,6 +182,7 @@ pub async fn providers(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let session = guard(&state, &headers)?;
+    legacy_enabled(&state)?;
     let payload = serde_json::to_vec(&json!({ "op": "list" }))
         .map_err(|_| ApiError::unavailable("Provider 配置请求失败"))?;
     let reply = config_rpc(&state, &payload).await?;
@@ -222,6 +232,7 @@ pub async fn save_provider(
 ) -> Result<Response, ApiError> {
     let session = guard(&state, &headers)?;
     guard_csrf(&state, &headers, &session)?;
+    legacy_enabled(&state)?;
     if state.insecure_no_auth {
         return Err(ApiError::forbidden(
             "请启用 Webdesk 登录后再保存 Provider 密钥",
@@ -303,6 +314,7 @@ pub async fn activate_provider(
 ) -> Result<Response, ApiError> {
     let session = guard(&state, &headers)?;
     guard_csrf(&state, &headers, &session)?;
+    legacy_enabled(&state)?;
     if state.insecure_no_auth {
         return Err(ApiError::forbidden(
             "请启用 Webdesk 登录后再切换 Agent 使用的模型",
@@ -418,6 +430,7 @@ pub async fn status(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     guard(&state, &headers)?;
+    legacy_enabled(&state)?;
     let request = AgentRequest {
         op: "status",
         agent: None,
@@ -461,6 +474,7 @@ pub async fn chat(
 ) -> Result<Response, ApiError> {
     let session = guard(&state, &headers)?;
     guard_csrf(&state, &headers, &session)?;
+    legacy_enabled(&state)?;
     let message = body.message.trim();
     if message.is_empty() || message.chars().count() > MAX_MESSAGE_CHARS {
         return Err(ApiError::bad_request("请输入内容（最多 8000 个字符）"));
@@ -554,6 +568,7 @@ mod tests {
 
     fn state(temp: &std::path::Path, insecure: bool, fake_tls: bool) -> Arc<AppState> {
         let mut config = crate::config::Config::from_toml("").unwrap();
+        config.legacy_agent_room = true;
         config.agent_config_socket = temp.join("config.sock");
         if fake_tls {
             config.tls_cert = Some(temp.join("unused-cert"));

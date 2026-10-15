@@ -8,6 +8,8 @@
 
 第五批新增 Linux 独立 uid 受限 listener、默认关闭的 exact-input 本机模型出口及合成 Provider/容器验收，见 [第五批记录](implementation-status-batch5.md)。API Key 在 core 内部限定回调中使用，轮换/撤销排空已有请求；不放行云端/DNS/自动重试，不接旧引擎/真实配置，不等于完整生产 Credential Lease/Gateway。
 
+第六批已验证实际 Pi Agent/Harness AgentLoop 的最小 SDK composition，经同一 core/单 user 授权 Context/合成 Provider 工作；新入口无 Key/工具/自动记忆，core 阻止引擎/上下文扩大。见 [第六批记录](implementation-status-batch6.md)。旧 UI/SessionManager/dsh CLI 仍兼容，控制 Profile/凭据路径统一、完整 Context/Gateway、持久 Job 与业务写入仍未完成。
+
 ## 1. 重构策略
 
 采用“提取核心 → 兼容代理 → 只读投影 → 按领域切主写 → 退出旧写入”的渐进路线。禁止一次重写 Tauri、Webdesk、sidecar 和全部数据格式；禁止新旧程序同时写同一领域。

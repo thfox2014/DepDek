@@ -17,9 +17,12 @@ use thiserror::Error;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::vault::{ReadAuthority, SecretFileError, SecretFiles};
+#[path = "secrets/control.rs"]
+mod control;
 mod migration;
 #[path = "secrets/provider_use.rs"]
 mod provider_use;
+pub use control::{ActivateImportedProvider, SaveProvider};
 
 pub const IDLE_LOCK_SECONDS: u64 = 300;
 const MAX_CREDENTIALS: usize = 128;
@@ -210,6 +213,9 @@ pub enum SecretOperation {
     Receipt(String),
     ImportPreview(LegacySources),
     ImportApply(ImportCredentials),
+    Profiles,
+    SaveProvider(SaveProvider),
+    ActivateProvider(ActivateImportedProvider),
 }
 impl SecretOperation {
     fn audit_action(&self) -> &'static str {
@@ -224,6 +230,9 @@ impl SecretOperation {
             Self::Receipt(_) => "credentials/receipt",
             Self::ImportPreview(_) => "credentials/import.preview",
             Self::ImportApply(_) => "credentials/import.apply",
+            Self::Profiles => "profiles/list",
+            Self::SaveProvider(_) => "profiles/save",
+            Self::ActivateProvider(_) => "profiles/import.activate",
         }
     }
 }
@@ -254,6 +263,8 @@ struct OperationRecord {
 struct Snapshot {
     credentials: Vec<StoredCredential>,
     operations: BTreeMap<String, OperationRecord>,
+    #[serde(default)]
+    profiles: Vec<crate::vault::ProviderRegistration>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -302,6 +313,13 @@ impl SecretStore {
         operation: SecretOperation,
     ) -> Result<Value, SecretError> {
         let action = operation.audit_action();
+        let activity = !matches!(
+            &operation,
+            SecretOperation::Status
+                | SecretOperation::List
+                | SecretOperation::Profiles
+                | SecretOperation::Receipt(_)
+        );
         let mut inner = self.inner.lock().map_err(|_| SecretError::Unavailable)?;
         expire(&mut inner);
         if let Err(error) = self.files.authorize(authority) {
@@ -335,8 +353,10 @@ impl SecretStore {
             inner.unlocked = None;
             return Err(error.into());
         }
-        if let Some(unlocked) = &mut inner.unlocked {
-            unlocked.last_activity = Instant::now();
+        if activity && result.is_ok() {
+            if let Some(unlocked) = &mut inner.unlocked {
+                unlocked.last_activity = Instant::now();
+            }
         }
         result
     }
@@ -438,6 +458,11 @@ impl SecretStore {
                         )
                     }
                     SecretOperation::ImportApply(input) => self.import(unlocked, input),
+                    SecretOperation::Profiles => Ok(json!({"profiles":unlocked.snapshot.profiles})),
+                    SecretOperation::SaveProvider(input) => self.save_provider(unlocked, input),
+                    SecretOperation::ActivateProvider(input) => {
+                        self.activate_provider(unlocked, input)
+                    }
                     _ => Err(SecretError::InvalidInput),
                 }
             }
@@ -633,6 +658,7 @@ fn validate_snapshot(snapshot: &Snapshot) -> Result<(), SecretError> {
             validate_secret(&r.secret)?;
         }
     }
+    control::validate_profiles(snapshot)?;
     Ok(())
 }
 fn random(bytes: &mut [u8]) -> Result<(), SecretError> {
@@ -750,13 +776,13 @@ mod tests {
     use crate::vault::{ManagedReadOperation, ManagedReadVault};
     use std::os::unix::fs::{symlink, PermissionsExt};
 
-    const PASSPHRASE: &str = "synthetic-strong-store-passphrase";
+    pub(super) const PASSPHRASE: &str = "synthetic-strong-store-passphrase";
     const SECRET: &str = "SYNTHETIC_PROVIDER_SECRET_DO_NOT_USE";
 
-    fn owner() -> ReadAuthority {
+    pub(super) fn owner() -> ReadAuthority {
         ReadAuthority::new("local:test", "w1", 1, "secret-test")
     }
-    fn prepare() -> (tempfile::TempDir, ManagedReadVault, std::path::PathBuf) {
+    pub(super) fn prepare() -> (tempfile::TempDir, ManagedReadVault, std::path::PathBuf) {
         let temp = tempfile::tempdir().unwrap();
         let home = temp.path().join("home");
         std::fs::create_dir_all(home.join("documents")).unwrap();
@@ -767,7 +793,7 @@ mod tests {
             ManagedReadVault::open(&home, "w1", "local:test", &["documents".into()]).unwrap();
         (temp, vault, private)
     }
-    fn init(store: &SecretStore) -> Value {
+    pub(super) fn init(store: &SecretStore) -> Value {
         store
             .execute(
                 &owner(),

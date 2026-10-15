@@ -1,6 +1,15 @@
 .git
 node_modules
 sidecar/node_modules
+**/node_modules
+**/target
+**/dist
+.tools
+.env
+.env.*
+.preview-token
+webdesk/.run
+webdesk/.run-shot
 dist
 src-tauri/target
 os/artifacts

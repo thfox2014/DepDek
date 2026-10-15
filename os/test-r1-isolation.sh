@@ -12,6 +12,8 @@ case "$task_endpoint" in unix://*) ;; *) printf 'Local Unix Docker endpoint requ
 docker info --format '{{.OSType}}' | rg -q '^linux$'
 docker image inspect "$task_image" >/dev/null
 test -d "$task_registry"
+test -f "$task_repo/sidecar/dist/r1-engine-worker.mjs"
+test -d "$task_repo/sidecar/node_modules/@deepseek-ai/dsh-agent-loop"
 docker volume create "$task_volume" >/dev/null
 printf 'Disposable acceptance volume (retained): %s\n' "$task_volume"
 # Read-only repository/registry. Copy build cache into this run's separate volume.

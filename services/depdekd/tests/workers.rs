@@ -227,6 +227,9 @@ fn provider_reference_reports_locked_stored_rotated_revoked_without_exposing_key
     std::fs::create_dir(&private).unwrap();
     std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700)).unwrap();
     let mut config = ServeConfig {
+        room_runtime: None,
+        cloud_model_hosts: vec![],
+        household_enabled: false,
         local_model_profiles: vec![],
         worker_transport: None,
         workspace_id: "w1".into(),

@@ -11,6 +11,8 @@
 
 第五批新增 Linux 独立 uid 固定 Worker 通道和默认关闭的一次性本机模型出口，合成 Provider/容器验收见 [第五批记录](implementation-status-batch5.md)。未接旧 Agent Room/Pi/Harness、云端/TLS、真实配置迁移或 NAS 真机；完整计划仍未完成。
 
+第六批新增受控 Pi/Harness 最小 SDK AgentLoop Worker，engine/final-context 由 core 复验，见 [第六批记录](implementation-status-batch6.md)。实际 SDK + 合成 Provider + Linux 隔离链路不等于真实模型、完整应用技能或旧界面已切换。
+
 ## 阅读入口
 
 | 文档 | 解决的问题 |
@@ -24,11 +26,15 @@
 | [第三批实施记录](implementation-status-batch3.md) | 独立业务会话、目录授权、loopback BFF、安全测试和剩余计划总表 |
 | [第四批实施记录](implementation-status-batch4.md) | 受信 Worker 票据/独立客户端、控制 Profile 引用检查与剩余安全门 |
 | [第五批实施记录](implementation-status-batch5.md) | 分 uid Linux 容器验收、exact-input 本机出口、密钥排空及尚未接入的生产能力 |
+| [第六批实施记录](implementation-status-batch6.md) | 实际 Pi/Harness SDK 受控循环、final-context 绑定与 Linux 对比验收 |
 | [R1 本地运行时契约](runtime-r1.md) | 已实现的 daemon/CLI、只读命令、身份与审计；不是完整 V2 HTTP |
 | [R1 凭据运行时契约](runtime-r1-secrets.md) | 已实现的可选加密存储/CLI/导入预览与恢复边界；不代表已迁移真实配置 |
 | [R1 业务访问契约](runtime-r1-access.md) | 已实现的用户/会话/目录范围与固定 BFF；不是完整多租户或对象 ACL |
 | [R1 Worker/Profile 契约](runtime-r1-workers.md) | 本机受信只读委托与凭据引用；不是 API Key 租约或 OS 沙箱 |
 | [R1 Worker/Gateway 契约](runtime-r1-gateway.md) | 独立 uid 固定通道与单次本机模型授权；不是完整云端/执行器 Gateway |
+| [R1 Engine Worker 契约](runtime-r1-engines.md) | 独立 SDK 循环、绑定的单 user Context 与 CLI；未切旧客户端/真实配置 |
+| [Room 与家庭凭证接口](runtime-room.md) | 可选共享核心 Room、加密 Provider、家庭事实与资料包；真实配置仍需显式迁移 |
+| [悟空浏览器电脑](runtime-computer.md) | Docker 浏览器、用户输入接力、截图、受控动作与扁平深浅界面 |
 | [凭据迁移验收设计](secret-migration-r1.md) | Secret Store 来源盘点、导入顺序、合成夹具与待验收场景 |
 | [OpenAPI 草案](openapi.json) | P0 公共 HTTP 边界；命令参数通过版本化 Manifest 扩展 |
 | [核心 SQL 草案](schemas/workspace-core.sql) | 首条家庭事务闭环的工作空间数据库骨架，可独立验证约束 |

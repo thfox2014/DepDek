@@ -65,6 +65,8 @@ export function resolveProvider(config: ProviderConfig): ResolvedProvider {
           provider: "openai-compatible",
           baseUrl: config.base_url,
           ...baseModel(),
+          ...(config.model === "jiaho-setup" && config.base_url === "http://127.0.0.1:11435/v1"
+            ? { contextWindow: 4096, maxTokens: 256 } : {}),
         },
         apiKey: config.api_key,
       };

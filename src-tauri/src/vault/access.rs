@@ -21,6 +21,8 @@ pub use workers::{WorkerCall, WorkerIssue, WorkerRevoke};
 #[path = "access/gateway.rs"]
 mod gateway;
 pub use gateway::{ModelCall, ModelIssue, ModelRevoke};
+#[path = "access/computer.rs"]
+mod computer;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -66,6 +68,8 @@ pub enum AccessError {
     Conflict,
     #[error("model outcome unavailable; authorization consumed")]
     ModelUnknown,
+    #[error("provider rejected request")]
+    ProviderRejected(u16),
     #[error(transparent)]
     Credential(#[from] crate::secrets::SecretError),
 }
@@ -82,6 +86,10 @@ impl AccessError {
             Self::Audit => "AUDIT_UNAVAILABLE",
             Self::Conflict => "CONFLICT",
             Self::ModelUnknown => "MODEL_OUTCOME_UNKNOWN",
+            Self::ProviderRejected(401 | 403) => "PROVIDER_AUTH_FAILED",
+            Self::ProviderRejected(400 | 404 | 422) => "PROVIDER_REQUEST_REJECTED",
+            Self::ProviderRejected(402 | 429) => "PROVIDER_QUOTA_LIMITED",
+            Self::ProviderRejected(_) => "PROVIDER_UNAVAILABLE",
             Self::Credential(error) => error.code(),
         }
     }
@@ -97,6 +105,9 @@ impl AccessError {
             Self::Audit => "durable business audit unavailable",
             Self::Conflict => "worker query call already used",
             Self::ModelUnknown => "model outcome unavailable; do not retry this authorization",
+            Self::ProviderRejected(_) => {
+                "provider rejected the request; no raw error or credential is exposed"
+            }
             Self::Credential(error) => error.message(),
         }
     }
@@ -114,11 +125,12 @@ impl From<ManagedReadError> for AccessError {
     }
 }
 
-struct Session {
-    principal: String,
+pub(super) struct Session {
+    pub(super) principal: String,
     csrf_digest: String,
+    csrf_value: SecretText,
     created: Instant,
-    last_seen: Instant,
+    pub(super) last_seen: Instant,
 }
 impl Session {
     fn expired(&self) -> bool {
@@ -135,7 +147,7 @@ struct Attempt {
 pub(super) struct AccessState {
     configured: bool,
     users: BTreeMap<String, AccessUser>,
-    sessions: HashMap<String, Session>,
+    pub(super) sessions: HashMap<String, Session>,
     attempts: HashMap<String, Attempt>,
     workers: HashMap<String, workers::WorkerLease>,
     models: HashMap<String, gateway::ModelLease>,
@@ -177,7 +189,7 @@ fn token(prefix: &str) -> Result<String, AccessError> {
 fn digest(bytes: &[u8]) -> String {
     sha256_hex(bytes)
 }
-fn token_id(value: &SecretText) -> Result<String, AccessError> {
+pub(super) fn token_id(value: &SecretText) -> Result<String, AccessError> {
     let bytes = value.bytes();
     if bytes.len() != 67
         || !bytes.starts_with(b"bs_")
@@ -187,7 +199,7 @@ fn token_id(value: &SecretText) -> Result<String, AccessError> {
     }
     Ok(digest(bytes))
 }
-fn checked_session<'a>(
+pub(super) fn checked_session<'a>(
     state: &'a AccessState,
     id: &str,
     csrf: Option<&SecretText>,
@@ -338,6 +350,7 @@ impl ManagedReadVault {
                 Session {
                     principal: input.username.clone(),
                     csrf_digest: digest(csrf.as_bytes()),
+                    csrf_value: SecretText::new(csrf.clone()),
                     created: Instant::now(),
                     last_seen: Instant::now(),
                 },
@@ -372,9 +385,10 @@ impl ManagedReadVault {
                 state.models.retain(|_, lease| lease.session_id != id);
                 Ok(json!({"logged_out":true}))
             } else {
+                let csrf = state.sessions.get(&id).unwrap().csrf_value.clone();
                 state.sessions.get_mut(&id).unwrap().last_seen = Instant::now();
                 Ok(
-                    json!({"principal_id":principal,"workspace_id":self.workspace_id,"policy_revision":1,"audience":"depdek-business-read"}),
+                    json!({"principal_id":principal,"workspace_id":self.workspace_id,"policy_revision":1,"audience":"depdek-business-read","csrf_token":csrf}),
                 )
             }
         })();

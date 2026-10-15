@@ -140,12 +140,65 @@ fn vault_get_root(state: State<AppState>) -> Option<String> {
 }
 
 #[tauri::command]
+async fn ai_os_status(state: State<'_, AppState>) -> Result<Value, String> {
+    #[cfg(unix)]
+    if let Some(welcome) = state.vault.ai_os_welcome() {
+        return tokio::task::spawn_blocking(move || {
+            let mut status=welcome.status().map_err(|e|e.to_string())?;
+            status["model_ready"]=json!(crate::vault::WelcomeVault::model_ready());
+            Ok(status)
+        }).await.map_err(|_|"WELCOME_STORE_UNAVAILABLE".to_string())?;
+    }
+    Ok(json!({"enabled":false}))
+}
+
+#[tauri::command]
+async fn ai_os_register(state: State<'_, AppState>, username:String, password:String)->Result<Value,String>{
+    #[cfg(unix)]
+    if let Some(welcome)=state.vault.ai_os_welcome(){return tokio::task::spawn_blocking(move ||welcome.register(username,crate::secrets::SecretText::new(password)).map_err(|e|e.to_string())).await.map_err(|_|"WELCOME_STORE_UNAVAILABLE".to_string())?;}
+    Err("CAPABILITY_UNAVAILABLE".into())
+}
+#[tauri::command]
+async fn ai_os_login(state: State<'_, AppState>, username:String, password:String)->Result<Value,String>{
+    #[cfg(unix)]
+    if let Some(welcome)=state.vault.ai_os_welcome(){return tokio::task::spawn_blocking(move ||welcome.login(username,crate::secrets::SecretText::new(password)).map_err(|e|e.to_string())).await.map_err(|_|"WELCOME_STORE_UNAVAILABLE".to_string())?;}
+    Err("CAPABILITY_UNAVAILABLE".into())
+}
+#[tauri::command]
+async fn ai_os_logout(state: State<'_,AppState>)->Result<(),String>{
+    #[cfg(unix)]
+    if let Some(welcome)=state.vault.ai_os_welcome(){
+        welcome.logout().map_err(|e|e.to_string())?;
+        let agents=state.settings.lock().unwrap().agents.clone();
+        for agent in agents {
+            let _=state.sidecar.request("agent/abort",json!({"session_id":agent.id})).await;
+            let _=state.sidecar.request("agent/close_session",json!({"session_id":agent.id})).await;
+        }
+        return Ok(());
+    }
+    Err("CAPABILITY_UNAVAILABLE".into())
+}
+#[tauri::command]
+async fn ai_os_chat(state: State<'_,AppState>,operation_id:String,prompt:String)->Result<Value,String>{
+    #[cfg(unix)]
+    if let Some(welcome)=state.vault.ai_os_welcome(){return tokio::task::spawn_blocking(move ||welcome.chat(operation_id,prompt).map_err(|e|e.to_string())).await.map_err(|_|"WELCOME_STORE_UNAVAILABLE".to_string())?;}
+    Err("CAPABILITY_UNAVAILABLE".into())
+}
+#[tauri::command]
+fn ai_os_complete(state: State<AppState>,display_name:String,language:String,purpose:String)->Result<Value,String>{
+    #[cfg(unix)]
+    if let Some(welcome)=state.vault.ai_os_welcome(){return welcome.complete(crate::vault::WelcomePreferences{display_name,language,purpose}).map_err(|e|e.to_string());}
+    Err("CAPABILITY_UNAVAILABLE".into())
+}
+
+#[tauri::command]
 fn storage_summary() -> StorageSnapshot {
     storage_snapshot()
 }
 
 #[tauri::command]
 fn vault_init_home(state: State<AppState>, app: AppHandle) -> Result<String, String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
     let path = home.join("DepDek-Home");
     std::fs::create_dir_all(&path).map_err(|e| format!("创建 DepDek Home 失败：{e}"))?;
@@ -300,6 +353,7 @@ fn audit_read(
     offset: Option<usize>,
     limit: Option<usize>,
 ) -> AuditReadResult {
+    if state.vault.require_ai_os_login().is_err() { return AuditReadResult {entries:vec![],total:0}; }
     let (entries, total) = state
         .vault
         .audit()
@@ -442,6 +496,7 @@ async fn agent_create_session(
     enabled_skills: Option<Vec<String>>,
     label: Option<String>,
 ) -> Result<Value, String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     let mut params = json!({ "session_id": session_id, "provider": resolve_provider_secrets(&state, provider)? });
     if let Some(prompt) = system_prompt {
         params["system_prompt"] = json!(prompt);
@@ -464,6 +519,7 @@ async fn agent_send(
     session_id: String,
     text: String,
 ) -> Result<(), String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     state
         .sidecar
         .request(
@@ -482,6 +538,7 @@ async fn agent_analyze(
     system_prompt: Option<String>,
     engine: Option<String>,
 ) -> Result<Value, String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     let provider: ProviderConfig = serde_json::from_value(provider).map_err(|e| format!("invalid provider: {e}"))?;
     let provider = resolve_provider_secrets(&state, provider)?;
     state
@@ -687,11 +744,13 @@ async fn todo_update(state: State<'_, AppState>, input: Value) -> Result<Value, 
 
 #[tauri::command]
 fn settings_get(state: State<AppState>) -> Settings {
+    if state.vault.require_ai_os_login().is_err() { return Settings::default(); }
     state.settings.lock().unwrap().clone()
 }
 
 #[tauri::command]
 fn settings_set(state: State<AppState>, app: AppHandle, settings: Settings) -> Result<(), String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     // Real API keys are encrypted before they reach the settings store; see
     // migrate_provider_secrets_to_store.
     let current = state.settings.lock().unwrap().clone();
@@ -751,6 +810,7 @@ fn obsidian_set_root(
     app: AppHandle,
     path: String,
 ) -> Result<String, String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     let canonical = state.obsidian.set_root(Path::new(&path))?;
     let root = canonical.to_string_lossy().into_owned();
     let mut settings = state.settings.lock().unwrap();
@@ -761,6 +821,7 @@ fn obsidian_set_root(
 
 #[tauri::command]
 fn obsidian_get_root(state: State<AppState>) -> Option<String> {
+    if state.vault.require_ai_os_login().is_err() { return None; }
     state
         .obsidian
         .root()
@@ -769,6 +830,7 @@ fn obsidian_get_root(state: State<AppState>) -> Option<String> {
 
 #[tauri::command]
 fn obsidian_clear_root(state: State<AppState>, app: AppHandle) -> Result<(), String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     state.obsidian.clear_root();
     let mut settings = state.settings.lock().unwrap();
     settings.obsidian_root = None;
@@ -780,11 +842,13 @@ fn obsidian_list_notes(
     state: State<AppState>,
     query: Option<String>,
 ) -> Result<ObsidianListResult, String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     state.obsidian.list_notes(query.as_deref())
 }
 
 #[tauri::command]
 fn obsidian_read_note(state: State<AppState>, path: String) -> Result<ObsidianReadResult, String> {
+    state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     state.obsidian.read_note(&path)
 }
 
@@ -798,6 +862,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let vault = Vault::new();
+            #[cfg(unix)]
+            if option_env!("VITE_DEPDEK_OS") == Some("1") {
+                vault.enable_ai_os_login(&app.path().app_local_data_dir()?.join(".jiaho-onboarding"))?;
+            }
             let obsidian = ObsidianStore::new(vault.audit());
 
             // Forward audit entries to the frontend (vault://audit).
@@ -830,7 +898,7 @@ pub fn run() {
             if let Some(root) = settings.last_root.clone() {
                 let _ = vault.set_root(Path::new(&root));
             }
-            if let Some(root) = settings.obsidian_root.clone() {
+            if let Some(root) = settings.obsidian_root.clone().filter(|_|vault.require_ai_os_login().is_ok()) {
                 let _ = obsidian.set_root(Path::new(&root));
             }
 
@@ -843,6 +911,12 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            ai_os_status,
+            ai_os_register,
+            ai_os_login,
+            ai_os_logout,
+            ai_os_chat,
+            ai_os_complete,
             vault_set_root,
             vault_get_root,
             vault_init_home,

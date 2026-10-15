@@ -1,5 +1,11 @@
 # Agent Workbench 接口契约 v1
 
+可选浏览器电脑、业务授权、Room 动作协议及返回扩展见 [runtime-computer.md](agentos-v2/runtime-computer.md)。桌面旧接口不变；Node SDK 不获得 shell/fs/Docker 工具。
+
+管理员固定短句 Provider 测试与安全错误分类见 [runtime-room.md](agentos-v2/runtime-room.md)；不能用 admin 身份执行任意业务 prompt 或读取私人材料。
+
+可选 R1 Room 控制/业务接口、家庭原件与断言快照以及云端出口扩展，见 [runtime-room.md](agentos-v2/runtime-room.md)。新 sidecar SDK Worker 沿用 engine-bound exact-input；旧桌面兼容 writer 不因该接口自动迁移。
+
 本文件是 Rust 核心（`src-tauri/`）、Node sidecar（`sidecar/`）、前端（`src/`）三部分之间的**唯一接口标准**。三部分可独立开发，但不得偏离本契约；任何变更需三方同步更新本文件。
 
 ## 1. 总体架构
@@ -107,6 +113,7 @@ sidecar 另注册 `propose_memory` 工具（必须提供 `source_refs`），它�
 | -32003 | 超过大小限制（单文件读/写上限 10 MiB） |
 | -32004 | 数据文件夹根未设置 |
 | -32005 | 非 UTF-8 文本（MVP 只支持文本文件） |
+| -32006 | AI-OS 本机空间尚未登录或已锁定 |
 | -32601 | 未知方法 |
 | -32010 | session id 重复（sidecar 返回） |
 | -32011 | 未知 session（sidecar 返回） |
@@ -501,7 +508,17 @@ type TodoQueueFile = { version: 1; updatedAt: string; items: TodoItem[] };
 
 API Key 仅由 core 内部限定用途回调使用，仍无 getter/export；密钥库锁覆盖有界请求，轮换/撤销等待当前请求排空后生效。意图先持久审计再外发，失败/超时不自动重试；任何已尝试的授权均被消费。返回只解析选定文本和合法 usage，禁止回显当前 Key；服务返回前复核用户/授权期限。该单次开发出口不是持久 Job/外部行动回执、远程 TLS Gateway 或完整生产沙箱。
 
-## 14. 浏览器预览 HTTP 服务（standalone sidecar）
+## 14. AgentOS R1 第六批：受控 SDK Engine Worker
+
+新增独立 `sidecar/dist/r1-engine-worker.mjs` 入口，不改变旧 main/stdin RPC、SessionManager、ProviderConfig 或 Webdesk/React 路由。该入口仅运行新核心签发的单次、单 user 文本授权，无工具/历史/自动个人 Context，不加载现有 Settings、Home 或 dsh 默认 profile；不接收真实 Key、endpoint 或任意命令路径。
+
+`v2/delegated.model.issue` 可显式指定 `engine:pi|deepseek-harness`，响应增加已绑定的 engine/provider_id/model/max_tokens 元数据。默认 engine:null 保持第五批兼容；engine 绑定的授权必须以 `ModelCall.context={engine,provider_id,model,max_tokens,system,messages:[{role:user,content}]}` 调用。Vault 在消费授权后验证引擎/模型/预算、空 system、唯一 user 内容逐字节相等；不能在 Worker 里校验后就绕过 core，也不能用旧无 context 调用绕过绑定。未知字段拒绝，失败后无自动重试。
+
+Pi 使用实际 Agent 的自定义 streamFn，Harness 使用实际 AgentLoop + 最小 Cordis services + 自定义 LlmAdapter；两者都通过同一个固定 Rust Worker model.invoke 客户端，Key 仅 core 使用。SDK 运行时事件统一投影为有序安全阶段、最终结果和实际 usage（缺失仍 unknown），不把隐藏思维或合成 Provider 当成真实模型。新 Worker 的协议与隔离验收见 [第六批契约](agentos-v2/runtime-r1-engines.md)。
+
+Provider HTTP 请求统一发送静态公开产品 User-Agent，版本来自受 VERSION 管理的 core package metadata，不含用户/路径/session/token/prompt；符合 Harness adapter 的白标应用归因要求，不作为实际引擎认证或遥测。
+
+## 15. 浏览器预览 HTTP 服务（standalone sidecar）
 
 浏览器无法调用 Tauri commands，standalone sidecar 提供一个最小 HTTP API（仅绑定 `127.0.0.1`）承载浏览器预览；所有读写都经 `vault/*`（settings 落盘在数据文件夹内，不进入浏览器存储）：
 
@@ -519,3 +536,9 @@ API Key 仅由 core 内部限定用途回调使用，仍无 getter/export；密�
 2. CORS 只对 `http://localhost:1420`（Vite dev origin）放行；其余 origin 不返回 `access-control-allow-origin`，浏览器会阻断响应读取。
 3. 每次启动生成随机 per-launch token（`randomBytes(24).toString("hex")`），settings 与会话历史（vault）读写必须携带 `x-depdek-token`（恒定时间比较），缺失或错误返回 401。
 4. token 由 `scripts/dev-preview.mjs` 从 sidecar stderr 捕获并写入 `.preview-token`（0600），Vite proxy 在转发 `/v1/*` 时注入该请求头；浏览器 JS 永远接触不到 token。
+
+## 16. Jiaho AI-OS 本机首启入口
+
+AI-OS 原生构建新增 `ai_os_status/register/login/logout/chat/complete` Tauri commands，参数、积分和持久化语义见 [首启契约](agentos-v2/runtime-welcome.md)。默认禁用于普通桌面构建，不注册成 sidecar 工具或 R1 RPC。编译启用时 Vault 在未登录状态拒绝旧文件入口；首次登录一次性赠送配置体验积分，默认模型仅固定回环的镜像内置本地助手，不包含商业云端 Key 或余额。
+
+原生状态与积分由 Rust Vault 验证，不接受前端声明角色、余额、模型地址或赠送额度。R1 业务身份/Worker/云端同意边界保持独立。

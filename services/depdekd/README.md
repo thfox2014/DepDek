@@ -10,6 +10,8 @@
 
 第五批的 [Worker/Gateway 契约](../../docs/agentos-v2/runtime-r1-gateway.md) 提供可选分 uid 固定 listener 与 exact-input model bearer。`local_model_profiles` 只接受数值 loopback `/v1` 端点，禁止 DNS/云端/redirect/proxy/自动重试；调用次数为一次，Key 留在 core 内部，轮换/撤销排空当前请求。Linux 验收脚本只用合成 Provider，不是真实模型、Pi/Harness 或 NAS 真机验收。
 
+第六批独立 [SDK Worker](../../docs/agentos-v2/runtime-r1-engines.md) 让实际 Pi/Harness AgentLoop 经同一 core 出口运行，仍仅 text-only/无工具。ModelIssue 可绑定 engine，core 拒绝最终 context 的引擎/文本/模型/预算扩大及无 context 旁路。旧无 engine 请求保持兼容；不会因测试成功自动迁移现有 Provider/客户端。
+
 [Worker/Profile 配置示例](config.workers.example.json) 含不可直接运行的密码 PHC 占位符、合成凭据引用和 example.invalid 模型地址。必须先准备独立测试空间、生成用户 PHC、将已暂存凭据的真实引用填入受保护配置；不要用它覆盖真实服务配置。
 
 ```bash

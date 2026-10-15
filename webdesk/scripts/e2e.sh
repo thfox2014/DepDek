@@ -36,6 +36,7 @@ hash="$(DEPDEK_WEBDESK_PASSWORD_HASH= "$binary" hash-password "$password" | sed 
 
 cat > "$run_dir/webdesk.toml" <<EOF
 bind = "127.0.0.1:$port"
+legacy_agent_room = true
 data_dir = "$run_dir"
 
 [auth]

@@ -2,12 +2,29 @@
 use super::*;
 
 impl SecretStore {
-    pub(crate) fn use_provider<T>(
+    pub(crate) fn use_provider_profile<T>(
+        &self,
+        authority: &ReadAuthority,
+        profile: &crate::vault::ProviderRegistration,
+        action: impl FnOnce(&SecretText) -> T,
+    ) -> Result<T, SecretError> {
+        self.use_provider_checked(
+            authority,
+            &profile.credential_ref,
+            profile.credential_revision,
+            &profile.credential_binding,
+            Some(profile),
+            action,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn use_provider_checked<T>(
         &self,
         authority: &ReadAuthority,
         reference: &str,
         revision: u64,
         binding: &CredentialBinding,
+        profile: Option<&crate::vault::ProviderRegistration>,
         action: impl FnOnce(&SecretText) -> T,
     ) -> Result<T, SecretError> {
         let mut inner = self.inner.lock().map_err(|_| SecretError::Unavailable)?;
@@ -25,6 +42,18 @@ impl SecretStore {
                 return Err(SecretError::Forbidden);
             }
             let unlocked = inner.unlocked.as_mut().ok_or(SecretError::Locked)?;
+            if let Some(expected) = profile {
+                if let Some(current) = unlocked
+                    .snapshot
+                    .profiles
+                    .iter()
+                    .find(|p| p.id == expected.id)
+                {
+                    if json!(current) != json!(expected) {
+                        return Err(SecretError::Conflict);
+                    }
+                }
+            }
             let record = unlocked
                 .snapshot
                 .credentials

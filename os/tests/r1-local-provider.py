@@ -4,16 +4,19 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
 class Provider(BaseHTTPRequestHandler):
+    requests = 0
     def log_message(self, *_):
         pass
 
     def do_POST(self):
+        Provider.requests += 1
         length = int(self.headers.get("Content-Length", "0"))
         if self.path != "/v1/chat/completions" or not 0 < length < 20000:
             self.send_error(400)
             return
         data = json.loads(self.rfile.read(length))
         if (self.headers.get("Authorization") != "Bearer synthetic-linux-provider-key"
+                or not self.headers.get("User-Agent", "").startswith("depdek-agentos/")
                 or data != {"model": "synthetic-linux-model", "messages": [
                     {"role": "user", "content": "仅分析合成空调维修材料"}],
                     "stream": False, "max_tokens": 128}):
@@ -25,6 +28,16 @@ class Provider(BaseHTTPRequestHandler):
             ensure_ascii=False).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if self.path != "/test-request-count":
+            self.send_error(404)
+            return
+        body = json.dumps({"requests": Provider.requests}).encode()
+        self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
