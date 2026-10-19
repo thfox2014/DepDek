@@ -18,8 +18,8 @@ use crate::rpc::Sidecar;
 use crate::settings::{ProviderConfig, Settings};
 use crate::storage::{snapshot as storage_snapshot, StorageSnapshot};
 use crate::vault::{
-    CompressResult, ListDirResult, ReadBinaryResult, ReadFileResult, SearchResult, Vault,
-    WriteFileResult,
+    CompressResult, FileIndexFilter, FileIndexResult, FileIndexSummary, ListDirResult, ReadBinaryResult, ReadFileResult, SearchResult, Vault,
+    WriteFileResult, PhotoLibraryFilter, PhotoLibraryResult, PhotoTag, PhotoTagRecord,
 };
 
 pub struct AppState {
@@ -27,6 +27,7 @@ pub struct AppState {
     obsidian: ObsidianStore,
     sidecar: Sidecar,
     settings: Mutex<Settings>,
+    ai_os_mode_guard: tokio::sync::RwLock<()>,
 }
 
 fn persist_settings(app: &AppHandle, settings: &Settings) -> Result<(), String> {
@@ -152,6 +153,57 @@ async fn ai_os_status(state: State<'_, AppState>) -> Result<Value, String> {
     Ok(json!({"enabled":false}))
 }
 
+#[tauri::command]
+async fn ai_os_set_connection_mode(state: State<'_, AppState>, mode: String) -> Result<Value, String> {
+    let _guard = state.ai_os_mode_guard.write().await;
+    #[cfg(unix)]
+    if let Some(welcome) = state.vault.ai_os_welcome() {
+        let mode = match mode.as_str() { "online" => crate::vault::ConnectionMode::Online, "local" => crate::vault::ConnectionMode::Local, _ => return Err("INVALID_INPUT".into()) };
+        return welcome.set_connection_mode(mode).map_err(|error| error.to_string());
+    }
+    let _ = mode;
+    Err("CAPABILITY_UNAVAILABLE".into())
+}
+#[tauri::command]
+async fn ai_os_network_status(state: State<'_, AppState>) -> Result<crate::network::NetworkStatus, String> {
+    #[cfg(unix)]
+    if let Some(welcome) = state.vault.ai_os_welcome() { return tokio::task::spawn_blocking(move || welcome.network_status().map_err(|error| error.to_string())).await.map_err(|_| "NETWORK_SETTINGS_UNAVAILABLE".to_string())?; }
+    Err("CAPABILITY_UNAVAILABLE".into())
+}
+#[tauri::command]
+fn ai_os_open_network_settings(state: State<AppState>) -> Result<(), String> {
+    #[cfg(unix)]
+    if let Some(welcome) = state.vault.ai_os_welcome() { return welcome.open_network_settings().map_err(|error| error.to_string()); }
+    Err("CAPABILITY_UNAVAILABLE".into())
+}
+
+#[tauri::command]
+async fn ai_os_bitbay_send_code(state: State<'_, AppState>, email: String) -> Result<Value, String> {
+    #[cfg(unix)]
+    if let Some(welcome) = state.vault.ai_os_welcome() {
+        return tokio::task::spawn_blocking(move || welcome.bitbay_send_code(email).map_err(|e| e.to_string()))
+            .await.map_err(|_| "BITBAY_OUTCOME_UNKNOWN".to_string())?;
+    }
+    Err("CAPABILITY_UNAVAILABLE".into())
+}
+#[tauri::command]
+async fn ai_os_bitbay_register(state: State<'_, AppState>, email: String, code: String, password: String) -> Result<Value, String> {
+    #[cfg(unix)]
+    if let Some(welcome) = state.vault.ai_os_welcome() {
+        return tokio::task::spawn_blocking(move || welcome.bitbay_register(email, crate::secrets::SecretText::new(code), crate::secrets::SecretText::new(password)).map_err(|e| e.to_string()))
+            .await.map_err(|_| "BITBAY_OUTCOME_UNKNOWN".to_string())?;
+    }
+    Err("CAPABILITY_UNAVAILABLE".into())
+}
+#[tauri::command]
+async fn ai_os_bitbay_login(state: State<'_, AppState>, email: String, password: String, local_password: Option<String>) -> Result<Value, String> {
+    #[cfg(unix)]
+    if let Some(welcome) = state.vault.ai_os_welcome() {
+        return tokio::task::spawn_blocking(move || welcome.bitbay_login(email, crate::secrets::SecretText::new(password), local_password.map(crate::secrets::SecretText::new)).map_err(|e| e.to_string()))
+            .await.map_err(|_| "BITBAY_OUTCOME_UNKNOWN".to_string())?;
+    }
+    Err("CAPABILITY_UNAVAILABLE".into())
+}
 #[tauri::command]
 async fn ai_os_register(state: State<'_, AppState>, username:String, password:String)->Result<Value,String>{
     #[cfg(unix)]
@@ -307,6 +359,41 @@ fn vault_list_dir(state: State<AppState>, path: String) -> Result<ListDirResult,
         .vault
         .list_dir("user", &path)
         .map_err(|e| e.to_command_string())
+}
+
+#[tauri::command]
+async fn file_index_query(state: State<'_, AppState>, filter: Option<FileIndexFilter>) -> Result<FileIndexResult, String> {
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || vault.file_index_query("user", filter.unwrap_or_default()).map_err(|e| e.to_command_string()))
+        .await.map_err(|_| "E32603 file index worker failed".to_string())?
+}
+
+#[tauri::command]
+async fn photo_library_query(state: State<'_, AppState>, filter: Option<PhotoLibraryFilter>) -> Result<PhotoLibraryResult, String> {
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || vault.photo_library_query("user", filter.unwrap_or_default()).map_err(|e| e.to_command_string()))
+        .await.map_err(|_| "E32603 photo query worker failed".to_string())?
+}
+
+#[tauri::command]
+async fn photo_preview(state: State<'_, AppState>, path: String, expected_sha256: String) -> Result<ReadBinaryResult, String> {
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || vault.photo_preview("user", &path, &expected_sha256).map_err(|e| e.to_command_string()))
+        .await.map_err(|_| "E32603 photo preview worker failed".to_string())?
+}
+
+#[tauri::command]
+async fn photo_tags_set(state: State<'_, AppState>, path: String, expected_sha256: String, tags: Vec<PhotoTag>) -> Result<PhotoTagRecord, String> {
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || vault.photo_tags_set("user", &path, &expected_sha256, tags).map_err(|e| e.to_command_string()))
+        .await.map_err(|_| "E32603 photo tags worker failed".to_string())?
+}
+
+#[tauri::command]
+async fn file_index_refresh(state: State<'_, AppState>) -> Result<FileIndexSummary, String> {
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || vault.file_index_refresh("user").map_err(|e| e.to_command_string()))
+        .await.map_err(|_| "E32603 file index worker failed".to_string())?
 }
 
 #[tauri::command]
@@ -497,7 +584,9 @@ async fn agent_create_session(
     label: Option<String>,
     config_dir: Option<String>,
 ) -> Result<Value, String> {
+    let _mode_guard = state.ai_os_mode_guard.read().await;
     state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
+    state.vault.require_ai_os_provider(&provider, true)?;
     let mut params = json!({ "session_id": session_id, "provider": resolve_provider_secrets(&state, provider)? });
     if let Some(prompt) = system_prompt {
         params["system_prompt"] = json!(prompt);
@@ -542,8 +631,10 @@ async fn agent_analyze(
     system_prompt: Option<String>,
     engine: Option<String>,
 ) -> Result<Value, String> {
+    let _mode_guard = state.ai_os_mode_guard.read().await;
     state.vault.require_ai_os_login().map_err(|e|e.to_command_string())?;
     let provider: ProviderConfig = serde_json::from_value(provider).map_err(|e| format!("invalid provider: {e}"))?;
+    state.vault.require_ai_os_provider(&provider, false)?;
     let provider = resolve_provider_secrets(&state, provider)?;
     state
         .sidecar
@@ -1032,11 +1123,18 @@ pub fn run() {
                 obsidian,
                 sidecar,
                 settings: Mutex::new(settings),
+                ai_os_mode_guard: tokio::sync::RwLock::new(()),
             });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             ai_os_status,
+            ai_os_set_connection_mode,
+            ai_os_network_status,
+            ai_os_open_network_settings,
+            ai_os_bitbay_send_code,
+            ai_os_bitbay_register,
+            ai_os_bitbay_login,
             ai_os_register,
             ai_os_login,
             ai_os_logout,
@@ -1052,6 +1150,11 @@ pub fn run() {
             vault_write_file,
             vault_write_binary,
             vault_list_dir,
+            file_index_query,
+            file_index_refresh,
+            photo_library_query,
+            photo_preview,
+            photo_tags_set,
             vault_search_files,
             vault_delete_file,
             vault_compress,

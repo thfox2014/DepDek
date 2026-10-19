@@ -222,7 +222,7 @@ fn normalize(rel: &str) -> Result<String, VaultError> {
                 let seg = seg
                     .to_str()
                     .ok_or_else(|| VaultError::NotUtf8(rel.to_string()))?;
-                if seg == AUDIT_FILE_NAME || seg == ".household" || seg == ".jiaho-onboarding" {
+                if seg == AUDIT_FILE_NAME || seg == ".household" || seg == ".jiaho-onboarding" || seg == ".depdek-file-index" {
                     return Err(VaultError::Escape(
                         "access to the audit log is denied".to_string(),
                     ));
@@ -290,7 +290,7 @@ pub(crate) fn protected_paths() -> &'static [&'static str] {
 
 /// Hidden from agent listings/searches; trusted sessions see everything.
 fn hidden_from(session_id: &str, relnorm: &str) -> bool {
-    relnorm.split('/').any(|s| matches!(s, ".household" | ".jiaho-onboarding"))
+    relnorm.split('/').any(|s| matches!(s, ".household" | ".jiaho-onboarding" | ".depdek-file-index"))
         || (!is_trusted_session(session_id) && is_protected_path(relnorm))
 }
 
@@ -320,6 +320,7 @@ pub struct Vault {
 #[derive(Default)]
 struct VaultInner {
     root: RwLock<Option<RootPair>>,
+    file_index_guard: std::sync::Mutex<()>,
     audit: AuditLog,
     #[cfg(unix)]
     welcome: RwLock<Option<Arc<WelcomeVault>>>,
@@ -329,7 +330,11 @@ struct VaultInner {
 #[path = "vault/welcome.rs"]
 mod welcome;
 #[cfg(unix)]
-pub use welcome::{WelcomeError, WelcomePreferences, WelcomeVault};
+pub use welcome::{ConnectionMode, WelcomeError, WelcomePreferences, WelcomeVault};
+
+#[path = "vault/file_index.rs"]
+mod file_index;
+pub use file_index::{FileCategory, FileIndexFilter, FileIndexRecord, FileIndexResult, FileIndexSummary, PhotoLibraryFilter, PhotoLibraryResult, PhotoTag, PhotoTagKind, PhotoTagRecord};
 
 impl Vault {
     pub fn new() -> Self {
@@ -341,6 +346,7 @@ impl Vault {
     /// audit log inside the new root.
     pub fn set_root(&self, path: &Path) -> Result<PathBuf, VaultError> {
         self.require_ai_os_login()?;
+        let _index_guard = self.inner.file_index_guard.lock().unwrap();
         let canonical = fs::canonicalize(path).map_err(|e| {
             if e.kind() == io::ErrorKind::NotFound {
                 VaultError::NotFound(path.display().to_string())
@@ -348,7 +354,7 @@ impl Vault {
                 VaultError::Io(e)
             }
         })?;
-        if canonical.components().any(|p| p.as_os_str() == ".jiaho-onboarding") {
+        if canonical.components().any(|p| p.as_os_str() == ".jiaho-onboarding" || p.as_os_str() == ".depdek-file-index") {
             return Err(VaultError::Escape("private AI-OS account store".into()));
         }
         if !canonical.is_dir() {
@@ -440,6 +446,15 @@ impl Vault {
         Ok(())
     }
 
+    pub fn require_ai_os_provider(&self, provider: &crate::settings::ProviderConfig, pin_mode: bool) -> Result<(), String> {
+        #[cfg(unix)]
+        if let Some(welcome) = self.ai_os_welcome() {
+            return welcome.authorize_provider(provider, pin_mode).map_err(|error| error.to_string());
+        }
+        let _ = (provider, pin_mode);
+        Ok(())
+    }
+
     #[cfg(unix)]
     pub fn enable_ai_os_login(&self, directory: &Path) -> Result<(), WelcomeError> {
         let mut slot = self.inner.welcome.write().unwrap();
@@ -475,7 +490,7 @@ impl Vault {
         if !canonical.starts_with(&pair.canonical)
             || canonical
                 .strip_prefix(&pair.canonical)
-                .is_ok_and(|p| p.components().any(|c| c.as_os_str() == ".household" || c.as_os_str() == ".jiaho-onboarding"))
+                .is_ok_and(|p| p.components().any(|c| c.as_os_str() == ".household" || c.as_os_str() == ".jiaho-onboarding" || c.as_os_str() == ".depdek-file-index"))
         {
             return Err(VaultError::Escape(relnorm));
         }
@@ -516,7 +531,7 @@ impl Vault {
         if !canonical.starts_with(&pair.canonical)
             || canonical
                 .strip_prefix(&pair.canonical)
-                .is_ok_and(|p| p.components().any(|c| c.as_os_str() == ".household" || c.as_os_str() == ".jiaho-onboarding"))
+                .is_ok_and(|p| p.components().any(|c| c.as_os_str() == ".household" || c.as_os_str() == ".jiaho-onboarding" || c.as_os_str() == ".depdek-file-index"))
         {
             return Err(VaultError::Escape(relnorm));
         }
@@ -1100,7 +1115,7 @@ fn append_archive_entries(
     let mut entries = fs::read_dir(path)?.flatten().collect::<Vec<_>>();
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
-        if entry.file_name() == AUDIT_FILE_NAME || entry.file_name() == ".household" || entry.file_name() == ".jiaho-onboarding" {
+        if entry.file_name() == AUDIT_FILE_NAME || entry.file_name() == ".household" || entry.file_name() == ".jiaho-onboarding" || entry.file_name() == ".depdek-file-index" {
             continue;
         }
         // Encrypted credential blobs and the master key never enter archives

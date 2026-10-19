@@ -14,6 +14,30 @@ export type ProviderConfig =
 /** Agent execution engine. `deepseek-harness` is an optional local dsh CLI bridge. */
 export type AgentEngine = "pi" | "deepseek-harness";
 
+export type AiOsConnectionMode = "online" | "local";
+export interface AiOsStatus {
+  enabled: boolean; initialized: boolean; authenticated: boolean; configured: boolean;
+  username: string | null; balance: number; grant_points: number; chat_cost: number;
+  model_ready?: boolean; connection_mode?: AiOsConnectionMode; mode_locked?: boolean;
+  preferences?: { display_name: string; language: string; purpose: string };
+  /** Persisted platform association, not a live cloud session or permission grant. */
+  bitbay?: { email: string; user_id: number } | null;
+}
+export interface AiOsNetworkStatus {
+  platform: string; interfaces: { name: string; addresses: string[] }[]; settings_available: boolean;
+  /** Successful bounded HTTPS probe, no usable address, or unconfirmed reachability. */
+  connectivity: "online" | "offline" | "limited";
+}
+export const aiOsStatus = () => invoke<AiOsStatus>("ai_os_status");
+export const aiOsLogin = (username: string, password: string, register: boolean) => invoke<AiOsStatus>(register ? "ai_os_register" : "ai_os_login", { username, password });
+export const aiOsSetConnectionMode = (mode: AiOsConnectionMode) => invoke<AiOsStatus>("ai_os_set_connection_mode", { mode });
+export const aiOsNetworkStatus = () => invoke<AiOsNetworkStatus>("ai_os_network_status");
+export const aiOsOpenNetworkSettings = () => invoke<void>("ai_os_open_network_settings");
+export const aiOsBitBaySendCode = (email: string) => invoke<{ sent: true; retry_after_seconds: number }>("ai_os_bitbay_send_code", { email });
+export const aiOsBitBayRegister = (email: string, code: string, password: string) => invoke<AiOsStatus>("ai_os_bitbay_register", { email, code, password });
+export const aiOsBitBayLogin = (email: string, password: string, localPassword?: string) => invoke<AiOsStatus>("ai_os_bitbay_login", { email, password, localPassword });
+export const aiOsComplete = (displayName: string, language: string, purpose: string) => invoke<AiOsStatus>("ai_os_complete", { displayName, language, purpose });
+
 export interface AuditEntry {
   ts_ms: number;
   session_id: string;
@@ -440,6 +464,51 @@ export const vaultSearchFiles = (query: string) =>
 export const vaultDeleteFile = (path: string) => invoke<void>("vault_delete_file", { path });
 export const vaultCompress = (path: string, archivePath?: string) =>
   invoke<CompressResult>("vault_compress", { path, archivePath });
+
+export type FileCategory = "photos" | "documents" | "videos" | "mail" | "other";
+export interface FileIndexRecord {
+  path: string;
+  original_path: string;
+  name: string;
+  sha256: string;
+  category: FileCategory;
+  detected_by: "signature" | "extension" | "depdek_mail" | "fallback";
+  size: number;
+  modified_ms: number;
+  indexed_at_ms: number;
+}
+export interface FileIndexSummary {
+  indexed_at_ms: number;
+  total: number;
+  total_bytes: number;
+  categories: Record<FileCategory, number>;
+  skipped: number;
+}
+export interface FileIndexFilter {
+  category?: FileCategory;
+  query?: string;
+  sha256?: string;
+  path_prefix?: string;
+  offset?: number;
+  limit?: number;
+}
+export interface FileIndexResult {
+  items: FileIndexRecord[];
+  total: number;
+  summary: FileIndexSummary;
+}
+export const fileIndexQuery = (filter: FileIndexFilter = {}) => invoke<FileIndexResult>("file_index_query", { filter });
+export const fileIndexRefresh = () => invoke<FileIndexSummary>("file_index_refresh");
+
+export type PhotoTagKind = "person" | "place" | "event" | "captured_date" | "note" | "selection";
+export interface PhotoTag { kind: PhotoTagKind; value: string }
+export interface PhotoLibraryItem { file: FileIndexRecord; tags: PhotoTag[] }
+export interface PhotoTagRecord { path: string; sha256: string; tags: PhotoTag[]; updated_at_ms: number }
+export interface PhotoLibraryFilter { query?: string; sha256?: string; offset?: number; limit?: number }
+export interface PhotoLibraryResult { items: PhotoLibraryItem[]; total: number; summary: FileIndexSummary }
+export const photoLibraryQuery = (filter: PhotoLibraryFilter = {}) => invoke<PhotoLibraryResult>("photo_library_query", { filter });
+export const photoPreview = (path: string, expectedSha256: string) => invoke<ReadBinaryResult>("photo_preview", { path, expectedSha256 });
+export const photoTagsSet = (path: string, expectedSha256: string, tags: PhotoTag[]) => invoke<PhotoTagRecord>("photo_tags_set", { path, expectedSha256, tags });
 
 export const auditRead = (offset = 0, limit = 100) =>
   invoke<AuditReadResult>("audit_read", { offset, limit });

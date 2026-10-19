@@ -42,6 +42,9 @@ interface Props {
   extFilter?: string[];
   /** Category tabs show matching files from every folder as one flat collection. */
   flatFiles?: boolean;
+  /** Use the Vault's persisted SHA/category index for flat category views. */
+  useIndex?: boolean;
+  indexCategory?: api.FileCategory;
   viewMode?: FileViewMode;
   variant?: "sidebar" | "page";
 }
@@ -168,7 +171,7 @@ const base64ToBlobUrl = (base64: string, mime: string) => {
 
 type FlatFileEntry = { entry: api.DirEntry; path: string; folder: string };
 
-export default function FileTree({ extFilter, flatFiles = false, viewMode = "tree", variant = "sidebar" }: Props) {
+export default function FileTree({ extFilter, flatFiles = false, useIndex = false, indexCategory, viewMode = "tree", variant = "sidebar" }: Props) {
   const [nodes, setNodes] = useState<Record<string, TreeNode>>({});
   const [flatEntries, setFlatEntries] = useState<FlatFileEntry[]>([]);
   const [flatLoading, setFlatLoading] = useState(false);
@@ -235,6 +238,22 @@ export default function FileTree({ extFilter, flatFiles = false, viewMode = "tre
 
   const loadFlatFiles = async () => {
     setFlatLoading(true);
+    if (useIndex) {
+      try {
+        const result = await api.fileIndexQuery({ category: indexCategory, limit: 200 });
+        setFlatEntries(result.items.map((record) => ({
+          entry: { name: record.name, kind: "file", size: record.size },
+          path: record.path,
+          folder: folderNameOf(record.path),
+        })));
+      } catch (error) {
+        setFlatEntries([]);
+        replacePreview({ path: ".", kind: "error", message: String(error), size: 0 });
+      } finally {
+        setFlatLoading(false);
+      }
+      return;
+    }
     const visited = new Set<string>();
     const collect = async (path: string): Promise<FlatFileEntry[]> => {
       if (visited.has(path)) return [];
@@ -269,9 +288,10 @@ export default function FileTree({ extFilter, flatFiles = false, viewMode = "tre
   useEffect(() => {
     if (flatFiles) void loadFlatFiles();
     else void load(".");
-    // The tab key remounts this component whenever extFilter changes.
+    // The parent key also remounts after an explicit index refresh; these
+    // dependencies cover the initial async index-summary load.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flatFiles]);
+  }, [flatFiles, useIndex, indexCategory]);
 
   const toggleDir = (path: string) => {
     const node = nodes[path];

@@ -1,349 +1,189 @@
-import { ArrowUp, Check, CircleNotch, Database, Gear, Microphone, Robot, ShieldCheck, Sparkle, SquaresFour, Stop, X } from "@phosphor-icons/react";
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import type { ChatBlock, SessionInfo } from "../App";
+import { ArrowUp, Check, CircleNotch, Gear, LockKey, Microphone, Moon, SidebarSimple, Robot, ShieldCheck, SquaresFour, Stop, Sun, Tray, X } from "@phosphor-icons/react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import type { AgentMetrics, ChatBlock, SessionInfo } from "../App";
 import * as api from "../api";
 import { APP_VERSION } from "../version";
-import { invoke } from "@tauri-apps/api/core";
+import { followUpClues, ROOM_AGENT_ID, roomMembers, submitsChat } from "../lib/aiOsRoom";
+import { isBuiltinProvider, providerAllowedForMode, providerEndpoint } from "../lib/aiOsSetup";
+import { useAiOsConnectionMode } from "./AiOsConnectionContext";
+import AiOsModelSetup from "./AiOsModelSetup";
+import MarkdownText from "./MarkdownText";
+import ToolProcessPanel from "./ToolProcessPanel";
+import TreasurePanel, { type PhotoServices } from "./TreasurePanel";
+import RoomProgressSummary from "./RoomProgressSummary";
+import { photoQueryFromText, suggestTreasureScene, TREASURE_SCENES, type TreasureScene } from "../lib/treasure";
+import WukongHead from "./WukongHead";
+import useRoomVoice from "./useRoomVoice";
 import jiahoLogo from "../assets/jiaho-boot-logo.png";
+import "./ai-os-room.css";
+import "./ai-os-entry.css";
 
 type Props = {
-  root: string;
-  settings: api.Settings;
-  sessions: SessionInfo[];
-  activeAgentId: string | null;
-  chats: Record<string, ChatBlock[]>;
-  running: Record<string, boolean>;
+  root: string; settings: api.Settings; sessions: SessionInfo[]; activeAgentId: string | null;
+  chats: Record<string, ChatBlock[]>; running: Record<string, boolean>;
+  agentMetrics?: Record<string, AgentMetrics>; teamTasks?: api.TeamTask[];
+  onSelectAgent: (id: string) => void;
   onSend: (sessionId: string, text: string) => Promise<void>;
   onAbort: (sessionId: string) => Promise<void>;
   onCreateAgent: (label: string, providerName: string, id?: string, openWorkbench?: boolean) => Promise<void>;
   onSaveSettings: (settings: api.Settings) => Promise<void>;
-  /** Jump to the full DepDekHome workbench (the desktop/Mac main page). */
+  onCancelTask?: (id: string) => Promise<void>;
   onOpenHome: () => void;
+  photoServices?: PhotoServices;
+  initialTreasureScene?: TreasureScene;
+  preview?: boolean;
 };
-
-const AGENT_ID = "depdek-os-assistant";
-const PROVIDER_NAME = "DepDek 模型";
-
-function encodePcmWav(samples: Float32Array, sampleRate: number): string {
-  const targetRate = 16_000;
-  const count = Math.floor(samples.length * targetRate / sampleRate);
-  const bytes = new Uint8Array(44 + count * 2);
-  const view = new DataView(bytes.buffer);
-  const writeText = (offset: number, text: string) => {
-    for (let index = 0; index < text.length; index++) bytes[offset + index] = text.charCodeAt(index);
-  };
-  writeText(0, "RIFF"); view.setUint32(4, bytes.length - 8, true); writeText(8, "WAVE");
-  writeText(12, "fmt "); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true); view.setUint32(24, targetRate, true); view.setUint32(28, targetRate * 2, true);
-  view.setUint16(32, 2, true); view.setUint16(34, 16, true); writeText(36, "data"); view.setUint32(40, count * 2, true);
-  for (let index = 0; index < count; index++) {
-    const position = index * sampleRate / targetRate;
-    const left = Math.floor(position);
-    const fraction = position - left;
-    const a = samples[Math.min(left, samples.length - 1)] ?? 0;
-    const b = samples[Math.min(left + 1, samples.length - 1)] ?? a;
-    const sample = Math.max(-1, Math.min(1, a + (b - a) * fraction));
-    view.setInt16(44 + index * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
-  }
-  let binary = "";
-  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
-  }
-  return btoa(binary);
+const native = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+function initialTheme(): "light" | "dark" { try { return window.localStorage.getItem("jiaho.agent-room.theme") === "dark" ? "dark" : "light"; } catch { return "light"; } }
+function Avatar({ id, mark, active = false, busy = false, listening = false }: { id: string; mark: string; active?: boolean; busy?: boolean; listening?: boolean }) {
+  return <span className={`ai-room__avatar avatar-${id}`} aria-hidden="true">{id === ROOM_AGENT_ID ? <WukongHead active={active} busy={busy} listening={listening} /> : <span>{mark}</span>}</span>;
 }
 
-function providerFields(provider?: api.ProviderConfig) {
-  if (!provider) return { endpoint: "http://127.0.0.1:11434/v1", model: "qwen3:8b", apiKey: "" };
-  if (provider.kind === "openai-compatible") return { endpoint: provider.base_url, model: provider.model, apiKey: provider.api_key ?? "" };
-  if (provider.kind === "openai") return { endpoint: provider.base_url ?? "https://api.openai.com/v1", model: provider.model, apiKey: provider.api_key };
-  return { endpoint: "https://api.anthropic.com", model: provider.model, apiKey: provider.api_key };
-}
+/** AI-OS now opens the Wukong room; the old terminal-colored shell is retired. */
+export default function DepDekAiOsShell({ root, settings, sessions, activeAgentId, chats, running, agentMetrics = {}, teamTasks = [], onSelectAgent, onSend, onAbort, onCreateAgent, onSaveSettings, onCancelTask, onOpenHome, photoServices, initialTreasureScene, preview = false }: Props) {
+  const connectionMode = useAiOsConnectionMode();
+  const members = roomMembers(settings), selected = members.find((person) => person.id === activeAgentId) ?? members[0];
+  const agent = settings.agents?.find((item) => item.id === selected.id);
+  const providerName = agent?.provider_name ?? "", provider = settings.providers[providerName];
+  const engine = agent?.engine ?? "pi", isRunning = Boolean(running[selected.id]);
+  const blocks = chats[selected.id] ?? [];
+  const [drafts, setDrafts] = useState<Record<string, string>>({}), [consents, setConsents] = useState<Record<string, string>>({});
+  const draft = drafts[selected.id] ?? "", setDraft = (text: string) => setDrafts((items) => ({ ...items, [selected.id]: text }));
+  const [theme, setTheme] = useState(initialTheme), [panelOpen, setPanelOpen] = useState(() => typeof window === "undefined" || window.innerWidth >= 1100), [panelWidth, setPanelWidth] = useState(320);
+  const [settingsOpen, setSettingsOpen] = useState(false), [saving, setSaving] = useState(false), [notice, setNotice] = useState("");
+  const [cards, setCards] = useState<api.ApprovalCard[]>([]), [acting, setActing] = useState("");
+  const [treasureOpen, setTreasureOpen] = useState(Boolean(initialTreasureScene)), [treasureScene, setTreasureScene] = useState<TreasureScene>(initialTreasureScene ?? "memory");
+  const [photoProgress, setPhotoProgress] = useState<string[]>([]), [photoQuery, setPhotoQuery] = useState("");
+  const treasure = treasureOpen && selected.id === ROOM_AGENT_ID;
+  const recentUser = [...blocks].reverse().find((block): block is Extract<ChatBlock, { kind: "user" }> => block.kind === "user");
+  const suggestion = suggestTreasureScene(recentUser?.text ?? "");
+  const input = useRef<HTMLTextAreaElement>(null), scroll = useRef<HTMLDivElement>(null), room = useRef<HTMLElement>(null), frame = useRef<number>();
+  const sending = useRef(false), selectedRef = useRef(selected.id); selectedRef.current = selected.id;
+  const voice = useRoomVoice(selected.id, (id, text) => {
+    setDrafts((items) => ({ ...items, [id]: `${items[id] ? `${items[id]} ` : ""}${text}` }));
+    if (selectedRef.current === id) input.current?.focus();
+  }, setNotice);
+  const target = provider ? `${providerName}:${providerEndpoint(provider)}:${provider.model}` : "";
+  const modelAllowed = !!provider && providerAllowedForMode(provider, connectionMode);
+  const agreed = modelAllowed && (isBuiltinProvider(provider) || consents[selected.id] === target);
 
-export default function DepDekAiOsShell({ root, settings, sessions, activeAgentId, chats, running, onSend, onAbort, onCreateAgent, onSaveSettings, onOpenHome }: Props) {
-  const [draft, setDraft] = useState("");
-  const [endpoint, setEndpoint] = useState("");
-  const [model, setModel] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [recording, setRecording] = useState(false);
-  const [transcribing, setTranscribing] = useState(false);
-  const [voiceError, setVoiceError] = useState("");
-  const [settingsOpen, setSettingsOpen] = useState(() => Object.keys(settings.providers).length === 0);
-  const [saving, setSaving] = useState(false);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const audioRef = useRef<AudioContext | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
-  const chunksRef = useRef<Float32Array[]>([]);
-  const recordingRef = useRef(false);
-  const timeoutRef = useRef<number | undefined>(undefined);
-
-  // The shell reads whatever the user already configured in DepDek (模型与
-  // Provider / Agent Team) instead of demanding setup on this page: prefer the
-  // agent that belongs to the shell, otherwise the first saved agent, and use
-  // the provider that agent points at, otherwise the first configured provider.
-  const configuredAgents = settings.agents ?? [];
-  const shellAgent = configuredAgents.find((agent) => agent.id === AGENT_ID) ?? configuredAgents[0] ?? null;
-  const providerName = (shellAgent && settings.providers[shellAgent.provider_name] ? shellAgent.provider_name : undefined)
-    ?? Object.keys(settings.providers)[0]
-    ?? PROVIDER_NAME;
-  const currentProvider = settings.providers[providerName];
-  const hasProvider = Boolean(currentProvider);
-  const agentId = shellAgent?.id ?? AGENT_ID;
-  const agentLabel = shellAgent?.label ?? "DepDek AI";
-  const engineLabel = (shellAgent?.engine ?? "pi") === "deepseek-harness" ? "DeepSeek Harness" : "pi-agent-core";
-  const sessionId = sessions.find((session) => session.id === agentId)?.id ?? agentId;
-  const activeSessionId = activeAgentId === agentId ? agentId : sessionId;
-  const currentSession = sessions.find((session) => session.id === activeSessionId);
-  const isRunning = Boolean(running[activeSessionId]);
-  const blocks = chats[activeSessionId] ?? [];
-
+  useEffect(() => { try { window.localStorage.setItem("jiaho.agent-room.theme", theme); } catch { /* appearance only */ } }, [theme]);
+  useEffect(() => { scroll.current?.scrollTo({ top: scroll.current.scrollHeight }); }, [selected.id, blocks.length, blocks[blocks.length - 1], isRunning]);
   useEffect(() => {
-    const fields = providerFields(currentProvider);
-    setEndpoint(fields.endpoint);
-    setModel(fields.model);
-    setApiKey(fields.apiKey);
-  }, [providerName]);
-
-  useEffect(() => () => {
-    recordingRef.current = false;
-    if (timeoutRef.current) window.clearTimeout(timeoutRef.current);
-    processorRef.current?.disconnect();
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    void audioRef.current?.close();
+    if (!suggestion || selected.id !== ROOM_AGENT_ID) return;
+    setTreasureOpen(true);
+    if (typeof window === "undefined" || window.innerWidth >= 1100) setPanelOpen(true);
+    const query = photoQueryFromText(recentUser?.text ?? "");
+    if (query !== undefined) setPhotoQuery(query);
+  }, [recentUser?.id, selected.id]);
+  useEffect(() => {
+    if (!native()) return;
+    let disposed = false, unlisten: (() => void) | undefined;
+    void api.onApprovalEvent(({ card }) => { if (!disposed) setCards((items) => [card, ...items.filter((item) => item.id !== card.id)]); }).then((fn) => { if (disposed) fn(); else unlisten = fn; }).catch(() => {});
+    void api.approvalList().then(({ cards: loaded }) => { if (!disposed) setCards((current) => [...current, ...loaded.filter((item) => !current.some((saved) => saved.id === item.id))]); }).catch(() => {});
+    return () => { disposed = true; unlisten?.(); };
   }, []);
+  useEffect(() => () => { if (frame.current) cancelAnimationFrame(frame.current); }, []);
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const dialog = room.current?.querySelector<HTMLElement>('[role="dialog"]');
+    dialog?.querySelector<HTMLButtonElement>('button')?.focus();
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); setSettingsOpen(false); }
+      if (event.key !== "Tab" || !dialog) return;
+      const nodes = [...dialog.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href]')].filter((node) => node.getClientRects().length > 0);
+      const first = nodes[0], last = nodes[nodes.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    document.addEventListener("keydown", keydown);
+    return () => { document.removeEventListener("keydown", keydown); previous?.focus(); };
+  }, [settingsOpen]);
 
-  const saveProvider = async () => {
-    if (!("__TAURI_INTERNALS__" in window)) {
-      setVoiceError("浏览器页面仅用于界面预览；请在 DepDek AI-OS 桌面端保存模型连接。");
-      return undefined;
-    }
-    const normalizedEndpoint = endpoint.trim().replace(/\/$/, "");
-    if (!normalizedEndpoint || !model.trim()) {
-      setVoiceError("请填写模型服务地址和模型名称。");
-      return;
-    }
-    setSaving(true);
-    setVoiceError("");
-    try {
-      const provider: api.ProviderConfig = {
-        kind: "openai-compatible",
-        base_url: normalizedEndpoint,
-        model: model.trim(),
-        ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
-      };
-      // Reuse the provider key the shell resolved from the saved configuration;
-      // only a first-time setup creates the default "DepDek 模型" entry.
-      await onSaveSettings({
-        ...settings,
-        providers: { ...settings.providers, [providerName]: provider },
-      });
-      setSettingsOpen(false);
-      return provider;
-    } catch (error) {
-      setVoiceError(String(error));
-      return undefined;
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const sendDraft = async () => {
+  const send = async () => {
     const text = draft.trim();
-    if (!text || isRunning) return;
-    if (!("__TAURI_INTERNALS__" in window)) {
-      setVoiceError("浏览器页面仅用于界面预览；请在 DepDek AI-OS 桌面端发送消息。");
-      return;
-    }
-    setDraft("");
-    setVoiceError("");
-    try {
-      let provider = settings.providers[providerName];
-      if (!provider) {
-        const updatedProvider = await saveProvider();
-        if (!updatedProvider) return;
-        provider = updatedProvider;
-      }
-      if (!provider) return;
-      // Keep the saved agent intact and only make sure it points at the
-      // provider the shell is really using.
-      const agents = settings.agents ?? [];
-      const saved = agents.find((agent) => agent.id === agentId);
-      const next: api.Settings = {
-        ...settings,
-        agents: saved
-          ? agents.map((agent) => agent.id === agentId ? { ...agent, provider_name: providerName } : agent)
-          : [...agents, { id: agentId, label: agentLabel, provider_name: providerName }],
-      };
-      await onSaveSettings(next);
-      if (!currentSession) await onCreateAgent(agentLabel, providerName, agentId, false);
-      await onSend(agentId, text);
-    } catch (error) {
-      setDraft(text);
-      setVoiceError(String(error));
-    }
+    if (!text || isRunning || saving || !provider || !agreed || sending.current) return;
+    if (!native() && !preview) { setNotice("这里是界面预览，请在原生 AI-OS 中发送消息。"); return; }
+    sending.current = true; setNotice(""); setDraft("");
+    try { if (!sessions.some((item) => item.id === selected.id)) await onCreateAgent(selected.name, providerName, selected.id, false); await onSend(selected.id, text); }
+    catch (error) { setDrafts((items) => ({ ...items, [selected.id]: text })); setNotice(String(error)); }
+    finally { sending.current = false; }
   };
-
-  const stopAndTranscribe = async () => {
-    if (!recordingRef.current) return;
-    recordingRef.current = false;
-    if (timeoutRef.current) window.clearTimeout(timeoutRef.current);
-    const audio = audioRef.current;
-    const sampleRate = audio?.sampleRate ?? 16_000;
-    const chunks = chunksRef.current;
-    chunksRef.current = [];
-    processorRef.current?.disconnect();
-    processorRef.current = null;
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-    setRecording(false);
-    await audio?.close().catch(() => undefined);
-    audioRef.current = null;
-    const length = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-    if (!length) {
-      setVoiceError("没有收到录音，请检查麦克风权限后重试。");
-      return;
-    }
-    const samples = new Float32Array(length);
-    let offset = 0;
-    for (const chunk of chunks) { samples.set(chunk, offset); offset += chunk.length; }
-    setTranscribing(true);
-    setVoiceError("");
-    try {
-      const transcript = await api.voiceTranscribe(encodePcmWav(samples, sampleRate));
-      if (!transcript.trim()) setVoiceError("没有听清，请再说一次。");
-      else setDraft((previous) => previous ? `${previous}${previous.endsWith(" ") ? "" : " "}${transcript}` : transcript);
-      inputRef.current?.focus();
-    } catch (error) {
-      setVoiceError(String(error));
-    } finally {
-      setTranscribing(false);
-    }
+  const changeConfig = async (patch: Partial<api.SavedAgent>) => {
+    if (!agent || saving || isRunning) return;
+    setSaving(true); setNotice("");
+    try { await onSaveSettings({ ...settings, agents: settings.agents?.map((item) => item.id === agent.id ? { ...item, ...patch } : item) }); }
+    catch { setNotice("未能更新 Agent 配置，请重试。"); } finally { setSaving(false); }
   };
-
-  const startRecording = async () => {
-    if (recording || transcribing) return;
-    setVoiceError("");
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
-      const context = new AudioContext({ sampleRate: 16_000 });
-      const source = context.createMediaStreamSource(stream);
-      const processor = context.createScriptProcessor(4096, 1, 1);
-      const silent = context.createGain();
-      silent.gain.value = 0;
-      chunksRef.current = [];
-      processor.onaudioprocess = (event) => {
-        if (!recordingRef.current) return;
-        chunksRef.current.push(new Float32Array(event.inputBuffer.getChannelData(0)));
-        event.outputBuffer.getChannelData(0).fill(0);
-      };
-      source.connect(processor);
-      processor.connect(silent);
-      silent.connect(context.destination);
-      streamRef.current = stream;
-      audioRef.current = context;
-      processorRef.current = processor;
-      recordingRef.current = true;
-      setRecording(true);
-      timeoutRef.current = window.setTimeout(() => { void stopAndTranscribe(); }, 30_000);
-    } catch (error) {
-      setVoiceError(`无法启动麦克风：${String(error)}`);
-    }
+  const decide = async (card: api.ApprovalCard, decision: "approve" | "deny") => {
+    if (acting) return; setActing(card.id); setNotice("");
+    try { const result = await api.approvalDecide(card.id, decision); setCards((items) => items.map((item) => item.id === card.id ? result.card : item)); }
+    catch { setNotice("未能提交确认，操作可能已失效，请刷新后检查。"); } finally { setActing(""); }
   };
+  const activity = blocks.filter((block): block is Extract<ChatBlock, { kind: "status" }> => block.kind === "status").slice(-2);
+  const latest = [...blocks].reverse().find((block): block is Extract<ChatBlock, { kind: "assistant" }> => block.kind === "assistant");
+  const clues = followUpClues(latest?.text ?? ""), pending = cards.filter((card) => card.session_id === selected.id && card.status === "pending");
+  const tasks = teamTasks.filter((task) => task.from_session_id === selected.id || task.to_session_id === selected.id).slice(0, 6);
+  const messages: ReactNode[] = []; let tools: Extract<ChatBlock, { kind: "tool" }>[] = [];
+  const flush = () => { if (tools.length && !treasure) messages.push(<ToolProcessPanel key={`tools-${tools[0].id}`} blocks={tools} />); tools = []; };
+  for (const block of blocks) {
+    if (block.kind === "status") continue;
+    if (block.kind === "tool") { tools.push(block); continue; }
+    flush(); messages.push(<article key={block.id} className={`ai-room__message is-${block.kind}`}><small>{block.kind === "user" ? "你" : block.kind === "error" ? "执行未完成" : selected.name}</small>{block.kind === "assistant" ? <MarkdownText markdown={block.text} /> : <p>{block.kind === "error" ? block.message : block.text}</p>}</article>);
+  }
+  flush();
+  const useDraft = (text: string) => { setDraft(text); input.current?.focus(); };
+  const chooseScene = (scene: TreasureScene) => { setTreasureScene(scene); setTreasureOpen(true); setPanelOpen(true); };
 
-  const onInputKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      void sendDraft();
-    }
-  };
-
-  return (
-    <main className="os-shell">
-      <header className="os-topbar">
-        <img src={jiahoLogo} alt="Jiaho 家合" style={{ width: 46, height: 46, objectFit: "contain" }} />
-        <div className="os-brand-name">Jiaho 家合 <span>AI-OS</span></div>
-        <div className="os-topbar-center"><span className="os-live-dot" />{hasProvider ? <>已连接 <b>{currentProvider?.model}</b></> : "本地工作台已就绪 · 尚未连接模型"}</div>
-        <button className="os-home-button" onClick={onOpenHome} title="打开 DepDek 工作台（DepDekHome）"><SquaresFour size={16} weight="bold" /><span>打开 DepDek 工作台</span></button>
-        <span className="os-version-chip" title={`DepDek v${APP_VERSION}`}>v{APP_VERSION}</span>
-        <button className="os-settings-button" onClick={() => setSettingsOpen((open) => !open)} aria-label="模型连接设置"><Gear size={19} /></button>
-        <button className="os-settings-button" onClick={() => void invoke("ai_os_logout").then(() => window.location.reload()).catch((e) => setVoiceError(String(e)))} title="锁定空间" aria-label="锁定空间"><ShieldCheck size={19} /></button>
-      </header>
-
-      <div className="os-layout">
-        <aside className="os-rail">
-          <button className="os-rail-item os-rail-item--active" aria-label="AI Shell"><Sparkle size={20} weight="fill" /></button>
-          <div className="os-rail-divider" />
-          <div className="os-rail-caption">数据</div>
-          <div className="os-rail-vault"><Database size={18} /><span>Home</span></div>
-          <div className="os-rail-spacer" />
-          <div className="os-rail-avatar">D</div>
-        </aside>
-
-        <section className="os-main">
-          <div className="os-main-scroll">
-            <div className="os-greeting"><span>DEPDek · PERSONAL WORKSPACE</span><h1>你好，<em>今天想完成什么？</em></h1><p>用自然语言描述目标，DepDek 会和你一起拆解下一步。</p></div>
-
-            {settingsOpen && <section className="os-connect-card">
-              <div className="os-connect-heading"><div><b>连接你的 AI</b><span>仅首次需要填写；之后主页面直接读取已保存的模型与 Agent 配置</span></div><button className="os-icon-button" onClick={() => setSettingsOpen(false)} aria-label="关闭连接设置"><X size={17} /></button></div>
-              <div className="os-connect-fields">
-                <label>服务地址<input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder="http://127.0.0.1:11434/v1" /></label>
-                <label>模型<input value={model} onChange={(event) => setModel(event.target.value)} placeholder="qwen3:8b" /></label>
-                <label>访问密钥 <small>可留空</small><input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="本地服务通常不需要" autoComplete="new-password" /></label>
-                <button className="os-save-button" disabled={saving} onClick={() => void saveProvider()}>{saving ? <CircleNotch className="os-spin" size={16} /> : <Check size={16} />} 保存连接</button>
-              </div>
-              <div className="os-secret-note"><ShieldCheck size={14} /> 云服务密钥保存在当前用户的应用设置中；本地 Ollama 无需密钥。</div>
-            </section>}
-
-            {blocks.length > 0 && <div className="os-conversation" aria-live="polite">
-              {blocks.map((block) => <article key={block.id} className={`os-message os-message--${block.kind}`}>
-                {block.kind === "user" && <div className="os-message-label">你</div>}
-                {block.kind === "assistant" && <div className="os-message-label"><Sparkle size={14} weight="fill" /> DepDek AI</div>}
-                {block.kind === "error" && <div className="os-message-label">执行未完成</div>}
-                {block.kind === "tool" && <div className="os-message-label">本地动作 · {block.name}</div>}
-                {block.kind === "status" && <div className="os-message-label">状态</div>}
-                <div className="os-message-text">{block.kind === "error" ? block.message : block.kind === "tool" ? block.preview ?? "正在处理…" : block.text}</div>
-              </article>)}
-              {isRunning && <div className="os-thinking"><span /><span /><span /> 正在整理思路</div>}
-            </div>}
-
-            {blocks.length === 0 && !settingsOpen && <div className="os-suggestions">
-              <button onClick={() => setDraft("帮我梳理今天最重要的三件事")}>整理今天的重点 <span>↗</span></button>
-              <button onClick={() => setDraft("帮我把一个想法拆成可执行步骤")}>把想法变成步骤 <span>↗</span></button>
-            </div>}
-          </div>
-
-          <div className="os-composer-wrap">
-            {voiceError && <div className="os-inline-error">{voiceError}</div>}
-            <div className={`os-composer${recording ? " os-composer--recording" : ""}`}>
-              <textarea ref={inputRef} rows={2} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={onInputKeyDown} placeholder={recording ? "正在聆听…点击停止后会先识别并显示文字" : "说出或输入你想做的事…"} aria-label="输入给 DepDek AI 的内容" />
-              <div className="os-composer-actions">
-                <div className="os-composer-hint">录音在本机识别 · 回填后由你确认发送</div>
-                <div className="os-composer-buttons">
-                  <button className={`os-mic-button${recording ? " os-mic-button--active" : ""}`} disabled={transcribing} onClick={() => recording ? void stopAndTranscribe() : void startRecording()} aria-label={recording ? "结束录音并识别" : "开始语音输入"} title={recording ? "结束并识别" : "开始语音输入"}>
-                    {recording ? <Stop size={18} weight="fill" /> : transcribing ? <CircleNotch className="os-spin" size={18} /> : <Microphone size={19} />}
-                  </button>
-                  <button className="os-send-button" disabled={!draft.trim() || isRunning || transcribing || !settings.providers[PROVIDER_NAME] && !currentProvider} onClick={() => void sendDraft()} aria-label="发送"><ArrowUp size={19} weight="bold" /></button>
-                </div>
-              </div>
-            </div>
-            {isRunning && <button className="os-stop-run" onClick={() => void onAbort(activeSessionId)}>停止当前回复</button>}
-          </div>
-        </section>
-
-        <aside className="os-context">
-          <div className="os-context-heading">工作台 <span>01</span></div>
-          <div className="os-context-card os-home-card"><div className="os-context-icon"><Database size={17} /></div><div><b>DepDek Home</b><small>个人数据空间</small></div><i /></div>
-          <div className="os-context-path" title={root}>{root}</div>
-          <div className="os-context-rule" />
-          <div className="os-context-heading">模型与 Agent <span>已读取配置</span></div>
-          <div className="os-security-row"><Sparkle size={17} /><div><b>{currentProvider?.model ?? "尚未连接模型"}</b><small>{currentProvider ? `${providerName} · ${currentProvider.kind === "openai-compatible" ? (currentProvider.base_url.includes("127.0.0.1") ? "本地模型服务" : "OpenAI 兼容服务") : currentProvider.kind === "openai" ? "OpenAI 服务" : "Anthropic 服务"}` : "点击右上角设置完成首次连接"}</small></div></div>
-          <div className="os-security-row"><Robot size={17} /><div><b>{agentLabel}</b><small>{shellAgent ? `${engineLabel} · 来自 Agent Team 配置` : "尚未保存 Agent，将使用默认配置"}</small></div></div>
-          <div className="os-context-rule" />
-          <div className="os-context-heading">安全状态</div>
-          <div className="os-security-row"><ShieldCheck size={17} /><div><b>本机边界</b><small>录音与文件保留在本机</small></div></div>
-          <div className="os-context-bottom"><span className="os-live-dot" /> Agent Shell <small>v{APP_VERSION}</small></div>
-        </aside>
+  return <main ref={room} className={`ai-room ${panelOpen ? "" : "is-panel-collapsed"} ${treasure ? "has-treasure" : ""}`} data-theme={theme} style={{ "--room-panel": treasure ? "min(58vw, 820px)" : `${panelWidth}px` } as CSSProperties}>
+    <aside className="ai-room__sidebar" aria-label="Agent 列表">
+      <header className="ai-room__brand"><img src={jiahoLogo} alt="家合 Jiaho" /><div><b>家合</b><small>家庭资料管家</small></div></header>
+      <div className="ai-room__nav-title">你的伙伴 <span>{members.length.toString().padStart(2, "0")}</span></div>
+      <nav className="ai-room__members" aria-label="选择 Agent">{members.map((person) => {
+        const config = settings.agents?.find((item) => item.id === person.id), busy = Boolean(running[person.id]), metric = agentMetrics[person.id];
+        return <button key={person.id} className={`ai-room__member ${selected.id === person.id && !treasure ? "is-selected" : ""}`} aria-current={selected.id === person.id && !treasure ? "page" : undefined} aria-label={`${person.name} · ${person.role}`} title={`${person.name} · ${person.role}`} onClick={() => { if (voice.recording) void voice.stop(); onSelectAgent(person.id); setTreasureOpen(false); setNotice(""); }}><Avatar id={person.id} mark={person.mark} active={selected.id === person.id} busy={busy} /><span className="ai-room__member-copy"><b>{person.name}</b><small>{person.role}</small><em><i className={busy ? "is-busy" : ""} />{busy ? "正在处理" : config && settings.providers[config.provider_name] ? "待命" : "待配置"}</em><small>{metric?.completedRuns ?? 0} 次完成 · {metric?.tokenUsageKnown ? `${metric.reportedTokens.toLocaleString()} Token` : "用量未上报"}</small></span></button>;
+      })}<button className={`ai-room__treasure-link ${treasure ? "is-selected" : ""}`} aria-current={treasure ? "page" : undefined} title="悟空的宝箱 · 相册" onClick={() => { onSelectAgent(ROOM_AGENT_ID); setTreasureOpen(true); setPanelOpen(true); }}><Tray size={23} /><span>宝箱<small>照片与我们的故事</small></span></button></nav>
+      <div className="ai-room__sidebar-foot"><span>{connectionMode === "local" ? "本地模式" : "联网模式"} · {engine === "deepseek-harness" ? "DeepSeek Harness" : "Pi Agent"}</span><small>{provider?.model ?? "尚未选择模型"}</small>{provider && !modelAllowed && <small>当前模型受本地模式限制</small>}</div>
+      <div className="ai-room__sidebar-actions"><button onClick={() => setSettingsOpen(true)} disabled={saving || isRunning} title="执行器与模型"><Gear size={17} /><span>执行器与模型</span></button><button onClick={onOpenHome} title="打开工作台"><SquaresFour size={17} /><span>工作台</span></button><button title="锁定空间" onClick={() => void invoke("ai_os_logout").then(() => window.location.reload()).catch(() => setNotice("未能锁定空间，请重试。"))}><LockKey size={17} /><span>锁定空间</span></button></div>
+      <footer className="ai-room__version">Jiaho AI-OS <span>v{APP_VERSION}</span></footer>
+    </aside>
+    <section className="ai-room__conversation" aria-label="聊天区域">
+      <header className="ai-room__header"><Avatar id={selected.id} mark={selected.mark} active busy={isRunning} listening={voice.recording} /><div><span>{treasure ? `宝箱 · ${TREASURE_SCENES.find((scene) => scene.id === treasureScene)?.title}` : selected.role}</span><h1>{selected.name}<small><i className={isRunning ? "is-busy" : ""} />{isRunning ? "正在处理" : provider ? "模型已配置" : "待配置"}</small></h1></div><div className="ai-room__head-actions"><button aria-label={theme === "light" ? "切换深色模式" : "切换浅色模式"} onClick={() => setTheme((value) => value === "light" ? "dark" : "light")}>{theme === "light" ? <Moon size={18} /> : <Sun size={18} />}</button><button aria-label={panelOpen ? "收起操作面板" : "展开操作面板"} aria-expanded={panelOpen} onClick={() => setPanelOpen((value) => !value)}><SidebarSimple size={18} /></button></div></header>
+      <div className="ai-room__messages" ref={scroll} aria-label={`${selected.name}的对话`}>
+        {!blocks.some((block) => block.kind === "user" || block.kind === "assistant") && <div className="ai-room__empty"><Avatar id={selected.id} mark={selected.mark} active listening={voice.recording} /><span>{treasure ? "A PLACE FOR YOUR MEMORIES" : "YOUR EVERYDAY COMPANION"}</span><h2>{treasure ? "想找回哪一刻？" : selected.greeting}</h2><p>{treasure ? "找一张照片，留下一个瞬间，或者把成长的故事慢慢串起来。" : selected.hint}</p><div className="ai-room__starters">{(treasure ? ["找照片：海边", "帮我挑选值得保留的照片", "把孩子 0 到 18 岁的照片串成成长影片"] : ["帮我理清今天最重要的事", "把这个想法拆成可执行步骤", "帮我整理一份资料清单"]).map((text) => <button key={text} onClick={() => useDraft(text)}>{text}<span>↗</span></button>)}</div></div>}
+        {messages}{isRunning && <div className="ai-room__thinking" role="status"><CircleNotch className="room-spin" size={16} />{selected.name}正在想…</div>}
+        {treasure && <section className="treasure-scenes" aria-label="选择照片场景"><span>{suggestion ? "这次，可以这样继续" : "你想怎样打开这段回忆？"}</span><div>{TREASURE_SCENES.map((scene) => <button key={scene.id} aria-pressed={treasureScene === scene.id} className={treasureScene === scene.id ? "is-selected" : ""} onClick={() => chooseScene(scene.id)}><b>{scene.title}{suggestion === scene.id && <em>建议</em>}</b><small>{scene.hint}</small></button>)}</div></section>}
+        {treasure && pending.length > 0 && <button className="ai-room__approval-reminder" onClick={() => { setTreasureOpen(false); setPanelOpen(true); }}>{pending.length} 项操作待你确认 · 打开操作面板</button>}
       </div>
-    </main>
-  );
+      <div className="ai-room__composer-area">
+        {treasure ? <RoomProgressSummary blocks={blocks} local={photoProgress} running={isRunning} /> : activity.length > 0 && <div className="ai-room__activity" aria-label="处理进度" aria-live="polite">{activity.map((item) => <div key={item.id}><i />{item.text}</div>)}</div>}
+        {notice && <p className="ai-room__notice" role="status">{notice}</p>}
+        {!treasure && <div className="ai-room__selectors"><label><Robot size={14} /><select aria-label="当前 Agent 执行器" value={engine} disabled={isRunning || saving || !agent} onChange={(event) => void changeConfig({ engine: event.target.value as api.AgentEngine })}><option value="pi">Pi Agent</option><option value="deepseek-harness">DeepSeek Harness</option></select></label><select aria-label="当前 Agent 模型" value={providerName} disabled={isRunning || saving || !agent} onChange={(event) => void changeConfig({ provider_name: event.target.value })}>{!providerName && <option value="">选择模型</option>}{Object.entries(settings.providers).map(([name, config]) => <option key={name} value={name}>{name} · {config.model}</option>)}</select></div>}
+        <div className="ai-room__input"><textarea ref={input} rows={2} aria-label={`和${selected.name}聊天`} placeholder={voice.recording ? "正在聆听，停止后文字会填入草稿…" : `和${selected.name}说说你想做什么…`} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (submitsChat(event.key, event.shiftKey, event.nativeEvent.isComposing)) { event.preventDefault(); void send(); } }} /><div className="ai-room__input-actions"><button type="button" aria-label={voice.recording ? "停止录音并识别" : "语音输入"} className={voice.recording ? "is-recording" : ""} disabled={voice.transcribing} onClick={() => voice.recording ? void voice.stop() : void voice.start()}>{voice.transcribing ? <CircleNotch className="room-spin" size={19} /> : voice.recording ? <Stop size={19} /> : <Microphone size={19} />}</button>{isRunning ? <button aria-label="停止回复" onClick={() => void onAbort(selected.id)}><Stop size={18} weight="fill" /></button> : <button className="ai-room__send" aria-label="发送消息" disabled={!draft.trim() || saving || !provider || !agreed || voice.transcribing} onClick={() => void send()}><ArrowUp size={20} weight="bold" /></button>}</div></div>
+        {!provider ? <button className="ai-room__setup-link" onClick={() => setSettingsOpen(true)}>先配置一个大模型，再开始聊天 →</button> : !isBuiltinProvider(provider) ? <label className="ai-room__consent"><input type="checkbox" checked={agreed} onChange={(event) => setConsents((items) => ({ ...items, [selected.id]: event.target.checked ? target : "" }))} />同意将本次对话发送给 {providerName}</label> : null}
+        <div className="ai-room__input-hint"><span>{provider && !modelAllowed ? "本地模式：请在模型配置中选择本机服务" : "语音在本机识别，文字先填入草稿"}</span><span>Enter 发送 · Shift + Enter 换行</span></div>
+      </div>
+    </section>
+    {treasure ? <TreasurePanel key={`${root}:${selected.id}`} hidden={!panelOpen} scene={treasureScene} query={photoQuery} services={photoServices} onScene={chooseScene} onProgress={setPhotoProgress} onOpenHome={onOpenHome} onQuery={setPhotoQuery} chatMessage={recentUser} /> : panelOpen && <aside className="ai-room__inspector" aria-label="操作面板">
+      <div className="ai-room__resize" role="separator" aria-label="调整操作面板宽度" aria-orientation="vertical" tabIndex={0} onKeyDown={(event) => { if (event.key === "ArrowLeft") { event.preventDefault(); setPanelWidth((value) => Math.min(440, value + 20)); } if (event.key === "ArrowRight") { event.preventDefault(); setPanelWidth((value) => Math.max(280, value - 20)); } }} onPointerDown={(event) => {
+        const element = event.currentTarget, start = event.clientX, width = panelWidth; let next = width;
+        element.setPointerCapture(event.pointerId);
+        element.onpointermove = (move) => { next = Math.max(280, Math.min(440, width + start - move.clientX)); if (frame.current) cancelAnimationFrame(frame.current); frame.current = requestAnimationFrame(() => room.current?.style.setProperty("--room-panel", `${next}px`)); };
+        const finish = () => { if (frame.current) cancelAnimationFrame(frame.current); setPanelWidth(next); element.onpointermove = null; element.onpointerup = null; element.onpointercancel = null; };
+        element.onpointerup = finish; element.onpointercancel = finish;
+      }} />
+      <header><div><span>LIVE CONTEXT</span><h2>操作面板</h2></div><button aria-label="关闭操作面板" onClick={() => setPanelOpen(false)}><X size={18} /></button></header>
+      <div className="ai-room__inspector-scroll">
+        <section className="ai-room__attention"><span><ShieldCheck size={22} /></span><div><b>{pending.length ? `${pending.length} 项操作等你确认` : isRunning ? `${selected.name}正在处理` : "由你掌握节奏"}</b><p>{pending.length ? "先查看操作范围，再决定是否允许。" : "需要补充、确认和继续处理的内容，会出现在这里。"}</p></div></section>
+        {pending.length > 0 && <section className="ai-room__panel-section"><h3>待确认操作</h3>{pending.map((card) => <article className="ai-room__approval" key={card.id}><b>{card.title}</b><p>{card.summary}</p><details><summary>查看操作详情</summary><pre>{JSON.stringify(card.preview, null, 2)}</pre></details><div><button disabled={!!acting} onClick={() => void decide(card, "deny")}>拒绝</button><button disabled={!!acting} onClick={() => void decide(card, "approve")}><Check size={14} />允许本次操作</button></div></article>)}</section>}
+        <section className="ai-room__panel-section"><h3>本轮线索 <small>点击仅填入草稿</small></h3>{clues.length ? clues.map((text, index) => <button className="ai-room__clue" key={text} onClick={() => useDraft(`关于「${text}」，请进一步说明。`)}><span>{String(index + 1).padStart(2, "0")}</span><b>{text}</b><span>↗</span></button>) : <div className="ai-room__panel-empty"><span>✧</span><p>聊起来之后，<br />这里会整理值得继续追问的线索。</p></div>}</section>
+        {tasks.length > 0 && <section className="ai-room__panel-section"><h3>协作任务</h3>{tasks.map((task) => <article className="ai-room__task" key={task.id}><small>{task.from_label} → {task.to_label} · {{ queued: "排队中", running: "进行中", done: "已完成", failed: "失败", cancelled: "已取消" }[task.status]}</small><p>{task.instruction}</p>{(task.status === "queued" || task.status === "running") && onCancelTask && <button onClick={() => void onCancelTask(task.id).catch(() => setNotice("未能取消任务，请重试。"))}>取消任务</button>}</article>)}</section>}
+        <section className="ai-room__panel-section"><h3>接下来</h3>{["把刚才的内容整理成清单", "还有哪些地方需要我确认？"].map((text) => <button className="ai-room__prompt" key={text} onClick={() => useDraft(text)}>{text}<span>＋</span></button>)}</section>
+        <section className="ai-room__panel-section ai-room__connection"><h3>当前连接</h3><b>{provider?.model ?? "尚未配置模型"}</b><p>{engine === "deepseek-harness" ? "DeepSeek Harness" : "Pi Agent"} · {providerName || "请选择 Provider"}</p><small title={root}>{root}</small><button onClick={onOpenHome}>打开完整工作台 ↗</button></section>
+      </div><footer><LockKey size={13} />文件与外部操作仍受原有权限和审批约束</footer>
+    </aside>}
+    {settingsOpen && <div className="ai-room__modal-backdrop"><section className="ai-room__model-dialog" role="dialog" aria-modal="true" aria-label={`配置${selected.name}的模型`}><header><div><b>{selected.name} · 模型连接</b><small>保存到本机加密凭据服务</small></div><button aria-label="关闭模型配置" onClick={() => setSettingsOpen(false)}><X size={20} /></button></header><div className="jiaho-entry"><AiOsModelSetup variant="room" mode={connectionMode} agentId={selected.id} language="zh-CN" onSaved={async () => onSaveSettings(await api.settingsGet())} onReady={() => { setSettingsOpen(false); setNotice("模型配置已保存。实际可用性以连接测试或对话结果为准。"); }} /></div></section></div>}
+  </main>;
 }

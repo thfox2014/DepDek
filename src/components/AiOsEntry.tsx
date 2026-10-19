@@ -1,135 +1,167 @@
-import { ArrowRight, Check, CircleNotch, Eye, EyeSlash, LockKey, PaperPlaneTilt, Sparkle } from "@phosphor-icons/react";
-import { invoke } from "@tauri-apps/api/core";
+import { ArrowLeft, ArrowRight, Check, CircleNotch, Cloud, Desktop, Eye, EyeSlash, Gear, Globe, LockKey, SlidersHorizontal, UserCircle, WifiHigh } from "@phosphor-icons/react";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import * as api from "../api";
 import { APP_VERSION } from "../version";
 import logo from "../assets/jiaho-boot-logo.png";
-import MarkdownText from "./MarkdownText";
+import AiOsModelSetup, { type ModelSetupServices } from "./AiOsModelSetup";
+import { AiOsConnectionContext } from "./AiOsConnectionContext";
+import { providerAllowedForMode, type SetupSelection } from "../lib/aiOsSetup";
+import { useWelcomeNetwork } from "./useWelcomeNetwork";
+import BitBayAccountSetup, { type BitBayServices } from "./BitBayAccountSetup";
 import "./ai-os-entry.css";
+import "./ai-os-wizard.css";
 
-type Welcome = {
-  enabled: boolean; initialized: boolean; authenticated: boolean; configured: boolean;
-  username: string | null; balance: number; grant_points: number; chat_cost: number; model_ready?: boolean;
-  preferences?: { display_name: string; language: string; purpose: string };
-};
-type Message = { role: "user" | "assistant"; text: string };
+export type WelcomeServices = {
+  aiOsStatus: typeof api.aiOsStatus; aiOsLogin: typeof api.aiOsLogin;
+  aiOsSetConnectionMode: typeof api.aiOsSetConnectionMode;
+  aiOsNetworkStatus: typeof api.aiOsNetworkStatus; aiOsOpenNetworkSettings: typeof api.aiOsOpenNetworkSettings;
+  aiOsComplete: typeof api.aiOsComplete;
+} & ModelSetupServices & BitBayServices;
+type Step = "network" | "account" | "model" | "mode";
+const STEPS = [
+  { id: "network", label: "网络", hint: "检查联网状态", icon: WifiHigh },
+  { id: "account", label: "账户", hint: "BitBay 邮箱注册", icon: UserCircle },
+  { id: "model", label: "大模型", hint: "保存并测试连接", icon: Desktop },
+  { id: "mode", label: "工作模式", hint: "联网或本地", icon: SlidersHorizontal },
+] as const;
 const ERRORS: Record<string, string> = {
   LOGIN_FAILED: "账号或密码不正确，请再试一次。", LOGIN_RATE_LIMITED: "尝试次数较多，请稍等 30 秒再登录。",
   INVALID_INPUT: "请检查输入。账号用 3–32 位字母、数字、_ 或 -，密码至少 12 位。",
-  CONFLICT: "这次操作已完成或内容已变化，请刷新后继续。", LOGIN_REQUIRED: "空间已锁定，请重新登录。",
-  LOCAL_MODEL_UNAVAILABLE: "本地助手还在准备或暂时无法连接，这次积分已退回。你也可以先填写右侧配置。",
-  MODEL_OUTCOME_UNKNOWN: "这次回复未能确认，请不要重复发送同一请求。可稍后发起新的对话。",
-  CREDITS_EXHAUSTED: "配置体验积分已用完。你仍可手动完成配置，进入工作台连接自己的模型。",
-  WELCOME_STORE_UNAVAILABLE: "无法打开本机账号数据，请检查用户目录空间与权限。",
-  AUDIT_UNAVAILABLE: "操作记录暂时无法保存，请检查磁盘空间后重试。",
+  CONFLICT: "操作已完成或内容已变化，请重新打开应用后检查。", LOGIN_REQUIRED: "空间已锁定，请重新登录。",
+  WELCOME_STORE_UNAVAILABLE: "无法保存本机配置，请检查用户目录空间与权限。",
+  AUDIT_UNAVAILABLE: "操作记录暂时无法保存，请检查磁盘空间。",
+  LOCAL_MODE_PROVIDER_DENIED: "当前为本地模式，请选择数值回环地址的本机模型。",
+  CONNECTION_MODE_LOCKED: "工作区已经启动。请重新启动应用后，在登录页切换模式。",
+  NETWORK_SETTINGS_UNAVAILABLE: "无法打开系统网络设置，请从操作系统中手动打开。",
 };
-function message(error: unknown) { const code = String(error); return ERRORS[code] || "暂时无法完成操作，请重试。"; }
+function message(error: unknown) { return ERRORS[String(error)] || "暂时无法完成，请重试。"; }
 
-export default function AiOsEntry({ children }: { children: ReactNode }) {
-  const [status, setStatus] = useState<Welcome | null>(null);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("");
-  const [repeat, setRepeat] = useState("");
-  const [visible, setVisible] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [name, setName] = useState("我的家");
-  const [language, setLanguage] = useState("zh-CN");
-  const [purpose, setPurpose] = useState("family");
-  const scroll = useRef<HTMLDivElement>(null);
+/** A small real setup flow; no speculative LLM configuration reports. */
+export default function AiOsEntry({ children, services = api }: { children: ReactNode; services?: WelcomeServices }) {
+  const [status, setStatus] = useState<api.AiOsStatus | null>(null), [step, setStep] = useState<Step>("network");
+  const [mode, setMode] = useState<api.AiOsConnectionMode>("online"), [error, setError] = useState("");
+  const [busy, setBusy] = useState(false), [modelBusy, setModelBusy] = useState(false), [accountBusy, setAccountBusy] = useState(false);
+  const [username, setUsername] = useState("admin"), [password, setPassword] = useState(""), [repeat, setRepeat] = useState(""), [visible, setVisible] = useState(false);
+  const [name, setName] = useState("我的家"), [language, setLanguage] = useState("zh-CN"), [purpose, setPurpose] = useState("family");
+  const [pendingSelection, setPendingSelection] = useState<SetupSelection | null>(null);
+  const touchedMode = useRef(false), operation = useRef(false);
+  const locked = busy || modelBusy || accountBusy, authenticated = Boolean(status?.authenticated), initial = Boolean(status && !status.initialized);
+  const networkState = useWelcomeNetwork(services, Boolean(status?.enabled && step === "network" && !(authenticated && status?.configured)));
+  const { network, busy: networkBusy, error: networkError } = networkState;
+  const acceptStatus = (next: api.AiOsStatus, nextStep?: Step) => {
+    setStatus(next);
+    if (!touchedMode.current) setMode(next.connection_mode ?? "online");
+    if (next.preferences) { setName(next.preferences.display_name || "我的家"); setLanguage(next.preferences.language || "zh-CN"); setPurpose(next.preferences.purpose || "family"); }
+    if (nextStep) setStep(nextStep);
+    else if (next.authenticated) setStep("network");
+  };
   const refresh = async () => {
     setError("");
-    try { setStatus(await invoke<Welcome>("ai_os_status")); }
-    catch { setError("无法连接本机登录服务，请在 Jiaho AI-OS 应用内打开，或重试连接。"); }
+    try { acceptStatus(await services.aiOsStatus()); }
+    catch { setError("无法连接本机服务，请在家合原生应用内打开。"); }
   };
-  useEffect(() => { void refresh(); }, []);
-  useEffect(() => { scroll.current?.scrollTo({ top: scroll.current.scrollHeight, behavior: "smooth" }); }, [messages, busy]);
+  useEffect(() => {
+    let active = true;
+    void services.aiOsStatus().then((next) => { if (active) acceptStatus(next); }).catch(() => { if (active) setError("无法连接本机服务，请在家合原生应用内打开。"); });
+    return () => { active = false; };
+  }, [services]);
 
+  const changeMode = async (next: api.AiOsConnectionMode) => {
+    if (next === mode || operation.current || locked) return;
+    touchedMode.current = true; setError("");
+    if (!authenticated) { setMode(next); return; }
+    operation.current = true; setBusy(true);
+    try { const saved = await services.aiOsSetConnectionMode(next); setMode(saved.connection_mode ?? next); setStatus((old) => ({ ...old!, ...saved })); }
+    catch (e) { setError(message(e)); } finally { setBusy(false); operation.current = false; }
+  };
   const login = async (event: FormEvent) => {
-    event.preventDefault(); if (!status || busy) return;
-    if (!status.initialized && password !== repeat) { setError("两次输入的密码不一致。"); return; }
-    setBusy(true); setError("");
+    event.preventDefault(); if (!status || operation.current || locked) return;
+    if (initial && password !== repeat) { setError("两次输入的密码不一致。"); return; }
+    operation.current = true; setBusy(true); setError("");
     try {
-      const next = await invoke<Welcome>(status.initialized ? "ai_os_login" : "ai_os_register", { username, password });
-      setPassword(""); setRepeat(""); setStatus(next);
-      const fresh = await invoke<Welcome>("ai_os_status"); setStatus(fresh);
-    } catch (e) { setError(message(e)); }
-    finally { setBusy(false); }
+      await services.aiOsLogin(username, password, initial);
+      setPassword(""); setRepeat("");
+      // Apply an explicit pre-login choice before allowing the workspace to mount.
+      if (touchedMode.current) await services.aiOsSetConnectionMode(mode);
+      acceptStatus(await services.aiOsStatus(), "account");
+    } catch (e) { setError(message(e)); } finally { setBusy(false); operation.current = false; }
   };
-  const send = async (text: string) => {
-    if (!text.trim() || busy || !status) return;
-    setBusy(true); setError(""); setDraft("");
-    setMessages((items) => [...items, { role: "user", text }]);
-    try {
-      const result = await invoke<{ reply: string; balance: number }>("ai_os_chat", { operationId: crypto.randomUUID(), prompt: text });
-      setMessages((items) => [...items, { role: "assistant", text: result.reply }]);
-      setStatus((current) => current ? { ...current, balance: result.balance, model_ready: true } : current);
-    } catch (e) { setError(message(e)); await invoke<Welcome>("ai_os_status").then(setStatus).catch(() => {}); }
-    finally { setBusy(false); }
+  const acceptPlatformAccount = async (next: api.AiOsStatus) => {
+    acceptStatus(next, "account");
+    if (touchedMode.current) {
+      try { acceptStatus(await services.aiOsSetConnectionMode(mode), "account"); }
+      catch (e) { setError(message(e)); }
+    }
   };
-  const finish = async (event: FormEvent) => {
-    event.preventDefault(); if (busy) return;
-    setBusy(true); setError("");
+  const prepareMode = async (selection: SetupSelection) => {
+    if (operation.current || !status) return;
+    if (!providerAllowedForMode(selection.provider, mode)) { setError(ERRORS.LOCAL_MODE_PROVIDER_DENIED); return; }
+    setPendingSelection(selection); setError(""); setStep("mode");
+  };
+  const finish = async () => {
+    if (operation.current || !status || !pendingSelection) return;
+    operation.current = true; setBusy(true); setError("");
     try {
-      const settings = await api.settingsGet();
-      if (settings.last_root) await api.vaultSetRoot(settings.last_root);
-      else await api.vaultInitHome();
-      if (!Object.keys(settings.providers).length) {
-        const provider = "Jiaho 本地助手";
-        await api.settingsSet({ ...settings, providers: { [provider]: { kind: "openai-compatible", base_url: "http://127.0.0.1:11435/v1", model: "jiaho-setup" } }, agents: [{ id: "depdek-os-assistant", label: "家合助手", provider_name: provider, engine: "pi", system_prompt: language === "en" ? "You are Jiaho, a helpful family AI setup assistant. Reply in English." : "你是家合，一个亲切可靠的家庭 AI 配置助手，请用简体中文交流。", enabled_skills: [] }] });
-      }
-      setStatus(await invoke<Welcome>("ai_os_complete", { displayName: name.trim(), language, purpose }));
-    } catch (e) { setError(message(e)); }
-    finally { setBusy(false); }
+      const saved = await services.settingsGet();
+      if (!saved.providers[pendingSelection.name] || !providerAllowedForMode(saved.providers[pendingSelection.name], mode)) { setError("模型配置已变化，请返回上一步重新保存。"); return; }
+      const savedMode = await services.aiOsSetConnectionMode(mode);
+      const next = await services.aiOsComplete(name.trim() || "我的家", language, purpose);
+      setStatus({ ...savedMode, ...next });
+      setMode(savedMode.connection_mode ?? next.connection_mode ?? mode);
+    } catch (e) { setError(message(e)); } finally { setBusy(false); operation.current = false; }
+  };
+  const goto = (next: Step) => {
+    if (locked || (!authenticated && next !== "account" && next !== "network")) return;
+    setStep(next); setError("");
   };
 
-  if (status && (!status.enabled || status.authenticated && status.configured)) return <>{children}</>;
-  const initial = status && !status.initialized;
-  return <main className={`jiaho-entry ${status?.authenticated ? "jiaho-entry--setup" : ""}`}>
-    <div className="jiaho-entry__apricot" aria-hidden="true" /><div className="jiaho-entry__mint" aria-hidden="true" />
-    <header className="jiaho-entry__header"><span>家合 <small>家庭 AI 中心</small></span><span>AI-OS <small>v{APP_VERSION}</small></span></header>
-    {!status || !status.authenticated ? <section className="jiaho-entry__welcome">
-      <div className="jiaho-entry__brand"><img src={logo} alt="Jiaho 家合" /><p>让 AI，走进每个家。</p><span>家的资料、记忆与日常，在这里相聚。</span></div>
-      <div className="jiaho-entry__account">
-        {!status ? <><h1>你的家，正在准备。</h1><p>{error || "正在连接本机空间…"}</p>{error ? <button onClick={() => void refresh()}>重新连接</button> : <CircleNotch size={24} className="jiaho-spin" />}</> : <>
-          <span className="jiaho-entry__eyebrow">{initial ? "HELLO, JIAHO" : "WELCOME HOME"}</span>
-          <h1>{initial ? <>给你的家，<br />一个智能的开始。</> : "欢迎回家。"}</h1>
-          <p>{initial ? "先创建你的本机账号，配置助手会陪你完成接下来的设置。" : "登录你的家庭空间，继续上一次的生活。"}</p>
-          {initial && <div className="jiaho-entry__gift"><Sparkle size={19} weight="fill" /><span>首次登录即送 <b>{status.grant_points.toLocaleString()}</b> 配置积分</span></div>}
-          <form onSubmit={(e) => void login(e)}>
-            <label>账号<input autoFocus autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} minLength={3} maxLength={32} pattern="[A-Za-z0-9_-]+" required /></label>
-            <label>密码<div className="jiaho-entry__password"><input type={visible ? "text" : "password"} autoComplete={initial ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} minLength={initial ? 12 : 1} maxLength={1024} placeholder={initial ? "至少 12 位，设置你自己的密码" : "输入你的密码"} required /><button type="button" aria-label={visible ? "隐藏密码" : "显示密码"} onClick={() => setVisible(!visible)}>{visible ? <EyeSlash size={20} /> : <Eye size={20} />}</button></div></label>
-            {initial && <label>确认密码<input type="password" autoComplete="new-password" value={repeat} onChange={(e) => setRepeat(e.target.value)} placeholder="再输入一次密码" required /></label>}
-            {error && <p className="jiaho-entry__error" role="alert">{error}</p>}
-            <button className="jiaho-entry__primary" disabled={busy} type="submit">{busy ? <CircleNotch className="jiaho-spin" size={20} /> : <>{initial ? "创建账号，开启我的家" : "登录我的空间"}<ArrowRight size={19} /></>}</button>
-          </form>
-          <p className="jiaho-entry__private"><LockKey size={15} />本机账号 · 数据由你掌握</p>
-        </>}
-      </div>
-    </section> : <section className="jiaho-entry__configuration">
-      <div className="jiaho-entry__assistant">
-        <div className="jiaho-entry__assistant-heading"><img src={logo} alt="Jiaho" /><div><span className="jiaho-entry__eyebrow">LET'S MAKE IT YOURS</span><h1>一起把家，安顿好。</h1></div></div>
-        <p className="jiaho-entry__intro">我是你的本地配置助手。说说你的需要，我们从最有用的一步开始。</p>
-        <div className="jiaho-entry__conversation" ref={scroll} aria-live="polite">
-          {!messages.length && <><p>账号已经准备好了，<b>{status.grant_points.toLocaleString()} 配置积分</b>也已到账。你可以问我，也可以直接填写右侧的偏好。</p><div className="jiaho-entry__suggestions">{["第一次使用，我应该先配置什么？", "我想整理家里的照片，怎么开始？", "怎样连接我自己的云端 AI？"].map((text) => <button key={text} disabled={busy} onClick={() => void send(text)}>{text}<ArrowRight size={16} /></button>)}</div></>}
-          {messages.map((item, i) => <div key={i} className={`jiaho-entry__message is-${item.role}`}><small>{item.role === "user" ? "你" : "家合助手"}</small><MarkdownText markdown={item.text} /></div>)}
-          {busy && <div className="jiaho-entry__thinking"><CircleNotch size={16} className="jiaho-spin" />正在本机想一想…</div>}
-        </div>
+  if (status && (!status.enabled || status.authenticated && status.configured)) return <AiOsConnectionContext.Provider value={status.connection_mode ?? mode}>{children}</AiOsConnectionContext.Provider>;
+  return <main className="jiaho-entry jiaho-wizard">
+    <header className="jiaho-wizard__header"><div className="jiaho-wizard__brand"><img src={logo} alt="家合 Jiaho" /><span>家合<small>家庭 AI 中心</small></span></div>
+      <div className="jiaho-wizard__default-mode"><Cloud size={17} /><span>默认联网模式</span><small>第 4 步可调整</small></div>
+      <span className="jiaho-wizard__version">AI-OS <small>v{APP_VERSION}</small></span>
+    </header>
+    <div className="jiaho-wizard__layout">
+      <aside className="jiaho-wizard__rail"><span className="jiaho-entry__eyebrow">WELCOME TO JIAHO</span><h1>四步，<br />准备好你的家。</h1><p>先确认网络，再配置账户与模型。<br />最后选择家合的工作方式。</p><nav aria-label="初始配置步骤">{STEPS.map(({ id, label, hint, icon: Icon }, index) => <button key={id} aria-current={step === id ? "step" : undefined} className={step === id ? "is-current" : ""} disabled={locked || (!authenticated && id !== "account" && id !== "network")} onClick={() => goto(id)}><span className="jiaho-wizard__step-icon"><Icon size={20} /></span><span><b>{label}</b><small>{hint}</small></span><em>0{index + 1}</em></button>)}</nav><div className="jiaho-wizard__privacy"><LockKey size={15} /><span>空间数据保存在本机，密钥加密保存。<br />模型只在你主动测试或提问时调用。</span></div></aside>
+      <section className="jiaho-wizard__panel" aria-label="配置内容">
+        <div className="jiaho-wizard__panel-label"><span>0{STEPS.findIndex((item) => item.id === step) + 1} / 04</span><span>{mode === "local" ? "本机 AI · 不使用云端 Provider" : "联网 AI · 可选云端或本机模型"}</span></div>
         {error && <p className="jiaho-entry__error" role="alert">{error}</p>}
-        <form className="jiaho-entry__composer" onSubmit={(e) => { e.preventDefault(); void send(draft); }}><textarea aria-label="向配置助手提问" placeholder="告诉我，你想让 AI 帮家里做些什么？" value={draft} onChange={(e) => setDraft(e.target.value)} maxLength={1000} disabled={busy} /><button type="submit" disabled={busy || !draft.trim()} aria-label="发送"><PaperPlaneTilt size={23} /></button></form>
-        <div className="jiaho-entry__usage"><span><i />本地 AI · 每次 {status.chat_cost} 积分</span><span>剩余 <b>{status.balance.toLocaleString()}</b> 积分</span></div>
-      </div>
-      <form className="jiaho-entry__preferences" onSubmit={(e) => void finish(e)}>
-        <span className="jiaho-entry__eyebrow">YOUR FIRST SPACE</span><h2>让这里，更像你的家。</h2><p>以后可以随时调整。</p>
-        <label>怎么称呼这个空间<input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} required /></label>
-        <label>助手交流语言<select value={language} onChange={(e) => setLanguage(e.target.value)}><option value="zh-CN">简体中文</option><option value="en">English</option></select></label>
-        <fieldset><legend>你想先从哪里开始？</legend>{[["family", "家庭资料与日常"], ["photos", "照片与家庭记忆"], ["documents", "文档与个人工作"]].map(([value, label]) => <label className="jiaho-entry__choice" key={value}><input type="radio" value={value} checked={purpose === value} onChange={() => setPurpose(value)} /><span>{label}</span>{purpose === value && <Check size={18} />}</label>)}</fieldset>
-        <div className="jiaho-entry__local"><span className="jiaho-entry__eyebrow">已为你准备</span><p><Check size={16} />本机账号与家庭空间</p><p><Check size={16} />{status.grant_points.toLocaleString()} 配置体验积分</p><p><span className={`jiaho-entry__model-dot ${status.model_ready ? "is-ready" : ""}`} />{status.model_ready ? "默认本地 AI 已连接" : "本地 AI 启动中，可先完成配置"}</p><button type="button" onClick={() => void refresh()} disabled={busy}>刷新模型状态</button></div>
-        <button type="submit" className="jiaho-entry__primary" disabled={busy || !name.trim()}>保存，进入我的家<ArrowRight size={18} /></button>
-      </form>
-    </section>}
-    <footer className="jiaho-entry__footer"><span>AI, at home.</span><span>你的空间 · 你的选择</span></footer>
+        {step === "account" ? <>
+          <h2>用邮箱，连接 BitBay。</h2><p className="jiaho-wizard__description">使用邮箱注册 BitBay 平台账户。这是你的在线身份，与本机空间账户分开。</p>
+          <BitBayAccountSetup status={status} services={services} onReady={acceptPlatformAccount} onBusyChange={setAccountBusy} />
+          {!status ? <div className="jiaho-wizard__loading"><CircleNotch className="jiaho-spin" size={23} />正在读取本机配置…<button onClick={() => void refresh()}>重试连接</button></div> : authenticated ? <>
+            <div className="jiaho-wizard__account-ready"><div><UserCircle size={28} /><span><b>{status.username}</b><small>已登录 · 本机账户</small></span><Check size={19} /></div><label>空间名称<input value={name} maxLength={40} onChange={(event) => setName(event.target.value)} /></label><label>交流语言<select value={language} onChange={(event) => setLanguage(event.target.value)}><option value="zh-CN">简体中文</option><option value="en">English</option></select></label></div>
+            {!status.bitbay && <p className="jiaho-wizard__hint">本机空间已解锁，尚未关联 BitBay。可先配置本机模型。</p>}
+            <button className="jiaho-entry__primary" onClick={() => goto("model")}>继续配置大模型<ArrowRight size={18} /></button>
+          </> : <details className="jiaho-wizard__local-account"><summary>{initial ? "暂不连接平台？先建立本机空间" : "已有本机空间？解锁继续"}</summary><p className="jiaho-wizard__hint">仅用于保护这台设备上的 Home，不会注册 BitBay 平台账户。</p><form className="jiaho-wizard__account-form" onSubmit={(event) => void login(event)}>
+            <label>本机账号或邮箱<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} minLength={3} maxLength={initial ? 32 : 254} pattern={initial ? "[A-Za-z0-9_-]+" : undefined} required disabled={locked} /></label>
+            <label>密码<div className="jiaho-entry__password"><input type={visible ? "text" : "password"} autoComplete={initial ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)} minLength={initial ? 12 : 1} maxLength={1024} placeholder={initial ? "至少 12 位" : "输入本机账户密码"} required disabled={locked} /><button type="button" disabled={locked} aria-label={visible ? "隐藏密码" : "显示密码"} onClick={() => setVisible(!visible)}>{visible ? <EyeSlash size={18} /> : <Eye size={18} />}</button></div></label>
+            {initial && <label>确认密码<input type="password" autoComplete="new-password" value={repeat} onChange={(event) => setRepeat(event.target.value)} required disabled={locked} /></label>}
+            {initial && <p className="jiaho-wizard__gift">首次创建，赠送 {status.grant_points.toLocaleString()} 本地配置体验积分。</p>}
+            <button className="jiaho-entry__primary" type="submit" disabled={locked}>{busy ? <CircleNotch className="jiaho-spin" size={18} /> : <>{initial ? "仅创建本机空间" : "解锁本机空间"}<ArrowRight size={18} /></>}</button>
+          </form></details>}
+        </> : step === "network" ? <>
+          <h2>先连接你的网络。</h2><p className="jiaho-wizard__description">打开即检查联网状态，无需先登录账户。未联网时会打开系统 Wi-Fi 设置，连接后返回这里即可重新检测。</p>
+          <section className={`jiaho-wizard__connectivity is-${!network && networkError ? "error" : networkBusy || !network ? "checking" : network.connectivity}`} aria-label="联网状态" role="status" aria-live="polite" aria-busy={networkBusy}>
+            <span className="jiaho-wizard__connectivity-icon">{networkBusy ? <CircleNotch className="jiaho-spin" size={27} /> : network?.connectivity === "online" && !networkError ? <Check size={27} /> : <WifiHigh size={27} />}</span>
+            <div><b>{networkBusy ? "正在查找网络…" : !network && networkError ? "检测暂不可用" : network?.connectivity === "online" ? "已联网" : network?.connectivity === "offline" ? "未联网，请连接 Wi-Fi" : network ? "尚未确认联网" : "准备检查网络…"}</b><p>{networkBusy ? "正在检测 BitBay 公共接口是否可达，不发送账号资料。" : network?.connectivity === "online" ? "BitBay 公共接口已连通，可以继续配置邮箱账户。" : network?.connectivity === "limited" ? "已发现网络接口，但 BitBay 公共接口暂不可达。可能是平台暂不可用，也可检查 Wi-Fi 认证、代理或网络限制。" : "请在系统 Wi-Fi 设置中选择网络并连接。"}</p></div>
+          </section>
+          {networkError && <p className="jiaho-entry__error" role="status">{networkError}</p>}
+          <div className="jiaho-wizard__network-actions"><button className="jiaho-wizard__system-settings" disabled={network?.settings_available === false || locked || networkBusy} onClick={() => void networkState.openSettings()}><Gear size={18} />打开 Wi-Fi 设置<ArrowRight size={16} /></button><button disabled={networkBusy || locked || !status} onClick={networkState.refresh}>重新检测</button></div>
+          {network?.settings_available === false && <p className="jiaho-wizard__hint">这台设备暂不支持直接打开设置，请在系统网络菜单中连接 Wi-Fi。</p>}
+          <details className="jiaho-wizard__network"><summary>网络详情</summary>{network?.interfaces.map((item) => <div key={item.name}><WifiHigh size={18} /><b>{item.name}</b><span>{item.addresses.join(" · ")}</span></div>)}<small>使用 BitBay 公共登录接口的空参数校验确认连通，不登录账户、不上传家庭资料，也不收集 Wi-Fi 密码。接口可达不代表邮件投递或模型服务已就绪。</small></details>
+          <button className="jiaho-entry__primary" disabled={locked || !status} onClick={() => goto("account")}>{network?.connectivity === "online" ? "下一步，配置账户" : "暂时跳过，配置账户"}<ArrowRight size={18} /></button>
+        </> : step === "model" ? <><AiOsModelSetup key={mode} variant="wizard" mode={mode} modelReady={status?.model_ready} language={language} services={services} onBusyChange={setModelBusy} onReady={prepareMode} /><button className="jiaho-wizard__back" disabled={locked} onClick={() => goto("account")}><ArrowLeft size={16} />返回账户配置</button></> : <>
+          <h2>选择当前工作模式。</h2><p className="jiaho-wizard__description">联网模式是默认选项，适合使用云端大模型和 BitBay 平台服务。本地模式只允许连接本机模型，不等于关闭系统网络。</p>
+          <div className="jiaho-wizard__mode-options" role="group" aria-label="工作模式">
+            <button aria-pressed={mode === "online"} className={mode === "online" ? "is-selected" : ""} disabled={locked} onClick={() => void changeMode("online")}><Cloud size={26} /><span><b>联网模式</b><small>默认 · 可使用云端 Provider 和平台服务</small></span><i>{mode === "online" ? <Check size={18} /> : ""}</i></button>
+            <button aria-pressed={mode === "local"} className={mode === "local" ? "is-selected" : ""} disabled={locked} onClick={() => void changeMode("local")}><LockKey size={26} /><span><b>本地模式</b><small>只连接 127.0.0.1 / 本机模型，数据路由更收敛</small></span><i>{mode === "local" ? <Check size={18} /> : ""}</i></button>
+          </div>
+          <div className="jiaho-wizard__mode-summary"><span>{mode === "local" ? <LockKey size={22} /> : <Globe size={22} />}</span><div><b>{mode === "local" ? "当前：本地模式" : "当前：联网模式"}</b><p>{mode === "local" ? "家合不会把模型请求发送到公网；系统网络仍可用于其他明确授权的服务。" : "家合可以连接你明确配置的云端模型；发送家庭资料仍受原有权限和审计约束。"}</p></div></div>
+          <div className="jiaho-wizard__navigation"><button onClick={() => goto("model")}><ArrowLeft size={16} />返回大模型</button><button className="jiaho-entry__primary" disabled={locked || !pendingSelection} onClick={() => void finish()}>{busy ? <CircleNotch className="jiaho-spin" size={18} /> : <>完成配置，进入 DepDek<ArrowRight size={18} /></>}</button></div>
+        </>}
+      </section>
+    </div>
+    <footer className="jiaho-wizard__footer"><span>AI, at home.</span><span>本地模式不是系统断网或防火墙开关。</span></footer>
   </main>;
 }

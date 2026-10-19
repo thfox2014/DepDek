@@ -1,0 +1,132 @@
+/* Shared, previously confirmed Jiaho palette. Isolated preview, no global app styles. */
+* { box-sizing: border-box; }
+body { margin: 0; }
+.first-mile { --canvas: #fbf8f0; --paper: #fffdf8; --ink: #23463c; --muted: #77867a; --line: #e2e4d9; --selected: #eaf0e8; --accent: #a66d36; height: 100dvh; min-height: 520px; display: flex; background: var(--canvas); color: var(--ink); font: 16px/1.7 "PingFang SC", "Noto Sans SC", sans-serif; }
+.first-mile[data-theme="dark"] { --canvas: #18251f; --paper: #20322a; --ink: #edf2e9; --muted: #becabd; --line: #3d5144; --selected: #304c3e; color-scheme: dark; }
+.first-mile button, .first-mile input, .first-mile textarea, .first-mile select { font: inherit; color: inherit; }
+.first-mile button { border: 0; background: none; cursor: pointer; min-height: 44px; padding: 8px 12px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 10px; transition: background 120ms ease, opacity 120ms ease; }
+.first-mile button:hover { background: var(--selected); }
+.first-mile button:active { opacity: .72; }
+.first-mile button:disabled { opacity: .4; cursor: not-allowed; }
+.first-mile :is(button, input, textarea, select, a, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.first-mile :is(h1,h2,h3,p) { text-wrap: pretty; }
+.first-mile h1, .first-mile h2, .first-mile p { margin-top: 0; }
+.first-mile .room-wukong { width: 100%; height: 100%; display: block; overflow: visible; }
+.first-mile .room-wukong__eyes { transform-box: fill-box; transform-origin: center; animation: fm-blink 8s infinite; }
+@keyframes fm-blink { 0%, 45%, 48%, 100% { transform: scaleY(1); } 46.5% { transform: scaleY(.12); } }
+.fm-rail { width: 208px; flex: 0 0 208px; padding: 28px 16px 14px; border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+.fm-brand { color: var(--ink); display: flex; align-items: center; gap: 12px; text-decoration: none; padding: 0 10px 32px; }
+.fm-brand img { width: 32px; height: 48px; object-fit: contain; }
+.fm-brand > span { font-weight: 600; font-size: 21px; letter-spacing: .08em; }
+.fm-brand small { display: block; font-weight: 400; font-size: 12px; letter-spacing: .02em; color: var(--muted); }
+.fm-rail nav { display: grid; gap: 8px; }
+.fm-rail nav button { width: 100%; justify-content: flex-start; text-align: left; padding: 12px; gap: 12px; }
+.fm-rail nav .is-current { background: var(--selected); }
+.fm-rail nav small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.fm-small-head { width: 30px; height: 32px; flex-shrink: 0; }
+.fm-rail-foot { margin-top: auto; padding-top: 40px; }
+.fm-rail-foot > button { width: 100%; justify-content: flex-start; font-size: 13px; color: var(--muted); gap: 12px; }
+.fm-bottom { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.fm-bottom > span { font-size: 12px; color: var(--muted); }
+.fm-bottom > span > span { font-size: 10px; }
+.fm-bottom button { width: 36px; padding: 0; }
+.fm-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+.fm-top { display: flex; align-items: center; justify-content: space-between; min-height: 80px; padding: 16px 40px; gap: 12px; }
+.fm-top > span { font-size: 13px; color: var(--muted); }
+.fm-top button { font-size: 12px; color: var(--muted); }
+.fm-stream { min-height: 0; overflow-y: auto; flex: 1; display: flex; flex-direction: column; padding: 0 36px; }
+.fm-welcome { width: 100%; max-width: 680px; margin: auto auto 0; text-align: center; padding-top: 28px; padding-bottom: 36px; }
+.fm-hero-head { width: 88px; height: 88px; margin: 0 auto 26px; }
+.fm-welcome h1 { font-size: clamp(28px, 3.2vw, 40px); line-height: 1.4; font-weight: 500; letter-spacing: -.035em; margin-bottom: 14px; }
+.fm-welcome p { color: var(--muted); font-size: 16px; line-height: 1.8; margin: 0; }
+.first-mile .fm-memory-caption { font-size: 12px; color: var(--muted); margin-top: 10px; }
+.fm-compose-area { width: calc(100% - 72px); max-width: 680px; margin: 0 auto; padding-bottom: clamp(36px, 13vh, 130px); }
+.fm-composer { background: var(--paper); border: 1px solid var(--line); border-radius: 18px; padding: 18px 18px 12px; }
+.fm-composer:focus-within { border-color: var(--muted); }
+.fm-composer textarea { display: block; width: 100%; resize: vertical; background: transparent; border: 0; font-size: 18px; line-height: 1.7; min-height: 65px; max-height: 180px; outline: none; padding: 0 3px; }
+.fm-composer textarea:focus-visible { outline: none; }
+.fm-composer textarea::placeholder { color: var(--muted); opacity: 1; }
+.fm-input-tools { display: flex; align-items: center; justify-content: space-between; }
+.first-mile .fm-voice { font-size: 13px; color: var(--muted); padding-left: 4px; }
+.first-mile .fm-send { background: var(--ink); color: var(--paper); width: 42px; height: 42px; min-height: 42px; border-radius: 50%; padding: 0; }
+.first-mile .fm-send:hover { opacity: .85; }
+.fm-starts { display: flex; justify-content: center; gap: 14px; padding: 12px 0 0; }
+.first-mile .fm-starts button { font-size: 14px; min-height: 44px; color: var(--ink); padding: 4px 12px; }
+.first-mile .fm-scope { display: flex; flex-wrap: wrap; gap: 6px; color: var(--muted); font-size: 11px; margin: 0 auto; padding: 0 5px; min-height: 32px; }
+.fm-scope span { text-decoration: underline; text-underline-offset: 3px; }
+.fm-demo-label { font-size: 10px; color: var(--muted); text-align: center; padding: 10px 46px; line-height: 1.7; flex-shrink: 0; }
+.fm-notice { font-size: 12px; color: var(--muted); margin: 0 0 12px; }
+.fm-messages { width: 100%; max-width: 680px; margin: 30px auto; }
+.fm-message { margin: 0 0 30px; }
+.fm-message small { font-size: 12px; color: var(--muted); }
+.fm-message p { font-size: 16px; margin: 5px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.fm-message.is-user { margin-left: auto; padding: 12px 18px; background: var(--selected); border-radius: 14px; max-width: 85%; width: fit-content; }
+.has-messages .fm-compose-area { padding-bottom: 8px; }
+.first-mile .fm-result { width: 100%; justify-content: flex-start; text-align: left; margin-top: 18px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); gap: 14px; }
+.fm-result > span { flex: 1; min-width: 0; }
+.fm-result b { font-size: 15px; overflow-wrap: anywhere; }
+.fm-result small { display: block; font-size: 12px; margin-top: 2px; }
+.fm-voice-help { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; font-size: 12px; color: var(--muted); }
+.first-mile .fm-voice-help button { padding: 3px 8px; font-size: 12px; }
+.fm-consent { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; font-size: 12px; margin-top: 10px; }
+.fm-consent input { accent-color: var(--ink); }
+.fm-consent > span { color: var(--muted); }
+.fm-panel { width: 348px; flex: 0 0 348px; background: var(--paper); border-left: 1px solid var(--line); display: flex; flex-direction: column; outline: none; min-height: 0; }
+.fm-panel > header { padding: 18px 24px; min-height: 80px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 14px; }
+.fm-panel > header button { padding: 4px; width: 38px; }
+.fm-panel-content { padding: 32px 26px; overflow-y: auto; flex: 1; min-height: 0; }
+.fm-eyebrow { display: block; color: var(--muted); font-size: 12px; margin-bottom: 18px; }
+.fm-panel h2 { font-size: 26px; line-height: 1.55; font-weight: 500; letter-spacing: -.03em; margin-bottom: 18px; white-space: pre-line; }
+.fm-panel p { color: var(--muted); font-size: 14px; line-height: 1.9; margin-bottom: 20px; }
+.fm-folder { display: flex; align-items: center; gap: 14px; padding: 20px 0; margin: 14px 0 24px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.fm-folder b { font-size: 15px; font-weight: 500; }
+.fm-folder small { display: block; color: var(--muted); font-size: 11px; margin-top: 4px; }
+.first-mile .fm-primary { display: flex; width: 100%; justify-content: space-between; padding: 12px 16px; background: var(--ink); color: var(--paper); font-size: 14px; border-radius: 10px; }
+.first-mile .fm-primary:hover { opacity: .88; }
+.first-mile .fm-plain { display: flex; gap: 8px; margin: 8px auto 0; font-size: 13px; color: var(--muted); }
+.fm-limit { display: block; font-size: 11px; color: var(--muted); line-height: 1.9; margin-top: 22px; }
+.fm-ok { display: flex; align-items: center; gap: 8px; margin: 16px 0; font-size: 13px; }
+.fm-panel > footer { padding: 12px 20px; border-top: 1px solid var(--line); font-size: 10px; color: var(--muted); }
+.fm-file-title { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; }
+.fm-file-title b { font-weight: 500; overflow-wrap: anywhere; }
+.fm-document { white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.9 "PingFang SC", "Noto Sans SC", sans-serif; border: 1px solid var(--line); border-radius: 10px; background: var(--canvas); padding: 18px; margin: 20px 0; }
+.fm-provenance { margin-top: 24px; }
+.fm-provenance dt { font-size: 11px; color: var(--muted); }
+.fm-provenance dd { font-size: 12px; margin: 4px 0 16px; overflow-wrap: anywhere; }
+.fm-field { display: block; font-size: 12px; }
+.fm-field textarea { display: block; background: var(--canvas); border: 1px solid var(--line); border-radius: 10px; padding: 12px; width: 100%; font-size: 16px; line-height: 1.8; resize: vertical; margin-top: 8px; }
+.fm-panel .fm-small { font-size: 12px; margin-top: 12px; }
+.fm-source { padding-bottom: 20px; margin-bottom: 14px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.fm-source summary { cursor: pointer; color: var(--muted); padding: 8px 0; }
+.fm-source p { font-size: 13px; overflow-wrap: anywhere; margin: 12px 0 4px; }
+.fm-source small { font-size: 11px; color: var(--muted); }
+.fm-forget { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 16px; }
+.first-mile .fm-forget button { font-size: 12px; padding: 6px 8px; }
+.fm-forget p { font-size: 12px; margin-bottom: 8px; }
+.fm-privacy-list dt { font-size: 14px; margin: 20px 0 6px; }
+.fm-privacy-list dd { font-size: 13px; color: var(--muted); margin: 0; line-height: 1.9; }
+.fm-cloud-scope { padding-top: 24px; border-top: 1px solid var(--line); margin-top: 24px; }
+.fm-cloud-scope b { font-size: 13px; font-weight: 500; }
+.fm-cloud-scope p { font-size: 12px; margin: 8px 0; }
+.fm-cloud-scope details { font-size: 12px; }
+.fm-cloud-scope pre { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.fm-tweaks { position: fixed; z-index: 20; bottom: 52px; right: 20px; width: 290px; max-width: calc(100vw - 32px); background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 18px; box-shadow: 0 10px 30px #00000012; }
+.fm-tweaks > header { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+.fm-tweaks label { display: block; font-size: 12px; margin: 12px 0; }
+.fm-tweaks select { display: block; width: 100%; background: var(--canvas); border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin-top: 5px; }
+.fm-tweaks .fm-check { display: flex; align-items: center; gap: 8px; }
+.fm-tweaks input { accent-color: var(--ink); }
+.fm-tweaks small { font-size: 11px; color: var(--muted); }
+.first-mile .fm-preview-control { position: fixed; bottom: 8px; right: 12px; z-index: 21; color: var(--muted); width: 36px; height: 36px; min-height: 36px; padding: 0; }
+.layout-left .fm-welcome { text-align: left; }
+.layout-left .fm-hero-head { margin-left: 0; }
+.layout-left .fm-starts { justify-content: flex-start; }
+.layout-bottom:not(.has-messages) .fm-compose-area { padding-bottom: 12px; }
+.layout-bottom:not(.has-messages) .fm-welcome { margin: auto; }
+.is-large .fm-message p, .is-large .fm-welcome p { font-size: 19px; }
+.is-large .fm-panel p, .is-large .fm-privacy-list dd { font-size: 16px; }
+.is-large .fm-composer textarea { font-size: 20px; }
+@media (max-width: 1100px) { .fm-rail { width: 176px; flex-basis: 176px; padding-inline: 10px; } .fm-panel { width: 320px; flex-basis: 320px; } .fm-stream { padding-inline: 24px; } .fm-compose-area { width: calc(100% - 48px); } .fm-top { padding-inline: 24px; } .fm-welcome h1 { font-size: 30px; } }
+@media (max-width: 850px) { .fm-panel { position: fixed; top: 0; bottom: 0; right: 0; z-index: 10; width: min(400px, 100vw); border-left: 1px solid var(--line); box-shadow: -12px 0 40px #00000012; } .fm-rail { width: 176px; flex-basis: 176px; } }
+@media (max-width: 600px) { .first-mile { min-height: 100dvh; } .fm-rail { width: 64px; flex-basis: 64px; padding: 14px 8px; } .fm-brand { padding: 0 0 24px; justify-content: center; } .fm-brand > span, .fm-rail nav button > span:not(.fm-small-head), .fm-rail-foot > button > span, .fm-bottom > span, .fm-bottom > button:first-child { display: none; } .fm-brand img { width: 28px; height: 42px; } .fm-rail nav button, .fm-rail-foot > button { justify-content: center; padding: 8px; min-width: 44px; } .fm-rail-foot > button { margin-top: 4px; } .fm-bottom { justify-content: center; } .fm-rail-foot { padding-top: 24px; } .fm-top { padding: 10px 18px; min-height: 62px; } .fm-top > span { font-size: 12px; } .fm-top button { font-size: 10px; gap: 5px; padding: 4px; } .fm-stream { padding-inline: 18px; } .fm-compose-area { width: calc(100% - 36px); padding-bottom: 30px; } .fm-hero-head { width: 68px; height: 68px; margin-bottom: 22px; } .fm-welcome { padding-bottom: 26px; } .fm-welcome h1 { font-size: 27px; } .fm-welcome p { font-size: 14px; } .fm-composer { padding: 14px 12px 10px; } .fm-composer textarea { font-size: 16px; } .fm-starts { flex-wrap: wrap; gap: 2px; } .first-mile .fm-starts button { font-size: 12px; padding-inline: 6px; } .fm-demo-label { font-size: 9px; padding-inline: 24px; } .fm-messages { margin-top: 18px; } .fm-message p { font-size: 16px; } .fm-result { flex-wrap: wrap; } .fm-panel { width: calc(100vw - 20px); } }
+@media (prefers-reduced-motion: reduce) { .first-mile *, .first-mile .room-wukong__eyes { animation: none !important; transition: none !important; } }

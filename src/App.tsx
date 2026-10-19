@@ -10,6 +10,7 @@ import SettingsPanel from "./components/SettingsPanel";
 import DepDekHome from "./components/DepDekHome";
 import DepDekAiOsShell from "./components/DepDekAiOsShell";
 import MediaViewer from "./components/MediaViewer";
+import { ensureAiOsRoom, roomStartupAgents, sessionSettingsChanged } from "./lib/aiOsRoom";
 
 export interface SessionInfo {
   id: string;
@@ -148,8 +149,7 @@ export default function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [view, setView] = useState<"home" | "office" | "workbench">("home");
-  // In AI-OS mode the voice shell is the entry point; DepDekHome (the desktop
-  // main page) is one button away. On macOS/Windows the shell is not used.
+  // AI-OS opens the Wukong room; the full desktop workbench stays one click away.
   const [osView, setOsView] = useState<"shell" | "home">("shell");
   const [showDock, setShowDock] = useState(true);
   const [chats, setChats] = useState<Record<string, ChatBlock[]>>({});
@@ -288,7 +288,7 @@ export default function App() {
             served && fromService
               ? fromService
               : { providers: { [INITIAL_PROVIDER_NAME]: INITIAL_DEEPSEEK_PROVIDER }, agents: INITIAL_AGENTS };
-          setSettings(preview);
+          setSettings(agentOsMode ? ensureAiOsRoom(preview) : preview);
           setRoot(preview.last_root || "~/DepDek-Home · 浏览器 UX 预览");
           if (!served) setTeamTasks(PREVIEW_TEAM_TASKS);
           await restoreConversationHistory((preview.agents ?? []).map((a) => a.id));
@@ -301,16 +301,16 @@ export default function App() {
         const providerName = existingDeepSeekName ?? INITIAL_PROVIDER_NAME;
         const needsProvider = !existingDeepSeekName;
         const hasLegacyAgents = Boolean(loaded.agents?.length && loaded.agents.some((agent) => !agent.enabled_skills));
-        const nextSettings: api.Settings = {
+        const nextSettings: api.Settings = agentOsMode ? ensureAiOsRoom(loaded) : {
           ...loaded,
           providers: needsProvider ? { ...loaded.providers, [INITIAL_PROVIDER_NAME]: INITIAL_DEEPSEEK_PROVIDER } : loaded.providers,
           agents: loaded.agents?.length ? loaded.agents.map((agent) => ({ ...agent, enabled_skills: agent.enabled_skills ?? ALL_DEFAULT_SKILLS })) : INITIAL_AGENTS.map((agent) => ({ ...agent, provider_name: providerName })),
         };
-        if (needsProvider || !loaded.agents?.length || hasLegacyAgents) await api.settingsSet(nextSettings).catch(() => {});
+        if (agentOsMode ? JSON.stringify(nextSettings) !== JSON.stringify(loaded) : needsProvider || !loaded.agents?.length || hasLegacyAgents) await api.settingsSet(nextSettings);
         setSettings(nextSettings);
         // Recreate saved agent sessions (same config, fresh conversation).
         const restored: SessionInfo[] = [];
-        for (const a of nextSettings.agents ?? []) {
+        for (const a of agentOsMode ? roomStartupAgents(nextSettings) : nextSettings.agents ?? []) {
           const provider = nextSettings.providers[a.provider_name];
           if (!provider) continue;
           try {
@@ -628,23 +628,25 @@ export default function App() {
   };
 
   const saveSettings = async (next: api.Settings) => {
-    await api.settingsSet(next);
-    setSettings(next);
+    await api.settingsSet(agentOsMode ? ensureAiOsRoom(next) : next);
+    // Reload encrypted references instead of retaining newly entered keys.
+    const persisted = await api.settingsGet();
+    setSettings(persisted);
     // Apply updated Agent Team prompt/provider settings to already-open
     // sessions immediately. The one-shot Tanvis analysis reads vault files on
     // demand; persistent chats need a fresh session to receive new prompts.
     for (const session of sessions) {
-      const agent = next.agents?.find((item) => item.id === session.id);
-      const provider = agent ? next.providers[agent.provider_name] : undefined;
+      const agent = persisted.agents?.find((item) => item.id === session.id);
+      const provider = agent ? persisted.providers[agent.provider_name] : undefined;
       if (!agent || !provider) continue;
-      const previous = settings.agents?.find((item) => item.id === session.id);
-      if (previous?.provider_name === agent.provider_name && previous?.system_prompt === agent.system_prompt && previous?.engine === agent.engine && previous?.config_dir === agent.config_dir && JSON.stringify(previous?.enabled_skills ?? []) === JSON.stringify(agent.enabled_skills ?? [])) continue;
+      if (!sessionSettingsChanged(settings, persisted, session.id)) continue;
       try {
         await api.agentClose(session.id);
         await api.agentCreateSession(session.id, provider, agent.system_prompt, agent.engine, agent.enabled_skills, agent.label, agent.config_dir);
+        setSessions((current) => current.map((item) => item.id === session.id ? { ...item, label: agent.label, providerName: agent.provider_name, engine: agent.engine } : item));
       } catch {
-        // The session can be recreated on the next launch if the sidecar is
-        // temporarily unavailable; settings remain saved in the meantime.
+        // Retry creation on the next send, not against a stale closed session.
+        setSessions((current) => current.filter((item) => item.id !== session.id));
       }
     }
   };
@@ -673,6 +675,10 @@ export default function App() {
           activeAgentId={activeId}
           chats={chats}
           running={running}
+          agentMetrics={agentMetrics}
+          teamTasks={teamTasks}
+          onSelectAgent={setActiveId}
+          onCancelTask={cancelTeamTask}
           onSend={send}
           onAbort={abort}
           onCreateAgent={createSession}

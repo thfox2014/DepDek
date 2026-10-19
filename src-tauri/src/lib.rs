@@ -6,6 +6,7 @@
 //! `cargo test --no-default-features`.
 
 pub mod audit;
+mod bitbay_public_api;
 pub mod credentials;
 pub mod memory;
 pub mod obsidian;
@@ -14,6 +15,7 @@ pub mod rpc;
 pub mod secrets;
 pub mod settings;
 pub mod storage;
+pub mod network;
 pub mod vault;
 pub mod voice;
 

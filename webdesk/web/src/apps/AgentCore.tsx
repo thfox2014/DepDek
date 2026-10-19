@@ -16,10 +16,7 @@ import "./agent-core.css";
 import "./agent-flat.css";
 
 const PEOPLE = [
-  { id: "wukong", name: "悟空", role: "探索与统筹", mark: "悟" },
-  { id: "bajie", name: "八戒", role: "资料与执行", mark: "戒" },
-  { id: "master", name: "师傅", role: "分析与指引", mark: "师" },
-  { id: "shaseng", name: "沙僧", role: "整理与守护", mark: "僧" },
+  { id: "wukong", name: "悟空", role: "家庭资料管家", mark: "悟" },
 ];
 type Message = {
   role: "user" | "assistant";
@@ -553,12 +550,12 @@ export default function AgentCore({ initial }: { initial: RoomConfig }) {
           <span className="agent-flat__brandmark">D</span>
           <div>
             <b>DepDek</b>
-            <small>你的 Agent 团队</small>
+            <small>家庭资料管家</small>
           </div>
         </header>
         <div className="agent-room__members-heading">
-          <span>房间成员</span>
-          <b>04</b>
+          <span>你的伙伴</span>
+          <b>{PEOPLE.length.toString().padStart(2, "0")}</b>
         </div>
         <nav className="agent-room__members" aria-label="选择 Agent">
           {PEOPLE.map((p) => (

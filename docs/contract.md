@@ -301,6 +301,11 @@ sidecar 内置 MCP 客户端，只使用 HTTP JSON-RPC（`initialize`、`notific
 | `vault_search_files` | `{query: string}` | `{matches: [...]}` |
 | `vault_delete_file` | `{path: string}` | — |
 | `vault_compress` | `{path: string, archivePath?: string}` | `{source, archive, files, bytes, archive_size}` |
+| `file_index_refresh` | — | `FileIndexSummary`（用户显式触发 Home 文件 SHA-256 扫描及原子索引更新；不搬动原件） |
+| `file_index_query` | `{filter?: {category?, query?, sha256?, path_prefix?, offset?, limit?}}` | `{items: FileIndexRecord[], total, summary: FileIndexSummary}`（类型、分类规则与限制见 [文件索引契约](file-index.md)） |
+| `photo_library_query` | `{filter?: {query?, sha256?, offset?, limit?}}` | `{items: [{file: FileIndexRecord, tags: PhotoTag[]}], total, summary}`；仅照片，文件名/路径及用户标签搜索，分页最多 100 |
+| `photo_preview` | `{path, expectedSha256}` | `ReadBinaryResult`；Vault no-follow 打开已索引照片，12 MiB 上限，复验内容 SHA 与图片魔数，仅原生用户预览 |
+| `photo_tags_set` | `{path, expectedSha256, tags: [{kind, value}]}` | `{path, sha256, tags, updated_at_ms}`；确认的用户标签，最多 16 条，每值 120 字；kind 为 `person|place|event|captured_date|note|selection`，selection 仅 `keep` |
 | `vault_read_binary` | `{path: string}` | `{data_base64, size, sha256, mime}` |
 | `vault_write_binary` | `{path: string, dataBase64: string}` | `{size, sha256}`（前端显式保存邮件附件副本） |
 | `obsidian_set_root` | `{path: string}` | `string`（规范化后的只读 Obsidian Vault 路径） |
@@ -608,6 +613,12 @@ Provider HTTP 请求统一发送静态公开产品 User-Agent，版本来自受 
 
 ## 16. Jiaho AI-OS 本机首启入口
 
-AI-OS 原生构建新增 `ai_os_status/register/login/logout/chat/complete` Tauri commands，参数、积分和持久化语义见 [首启契约](agentos-v2/runtime-welcome.md)。默认禁用于普通桌面构建，不注册成 sidecar 工具或 R1 RPC。编译启用时 Vault 在未登录状态拒绝旧文件入口；首次登录一次性赠送配置体验积分，默认模型仅固定回环的镜像内置本地助手，不包含商业云端 Key 或余额。
+悟空“宝箱”复用此原生工作台，三种场景为回忆、挑选、成长选片。上述 `photo_*` 命令只作为 Tauri 用户入口，不注册 sidecar 工具或 R1/Webdesk API；sidecar 与其他运行时权限不变。标签存入文件索引私有 redb 的独立 `photo_tags_v1` 表，绑定路径与内容 SHA，重扫不覆盖确认，源内容变化不继续返回旧标签。没有人脸识别、自动垃圾判定或真实视频渲染回执；场景建议由最近的用户话语在本机匹配，不能据此更改原件或发送照片。完整边界与界面状态见 [宝箱设计](jiaho-wukong-treasure.md)。
+
+2026-10-18 首启交互更新：网络 → 账户 → 大模型 → 工作模式，完成后直接进入悟空；新增 `ai_os_set_connection_mode`、`ai_os_network_status`、`ai_os_open_network_settings` Tauri-only 命令。2026-10-19 网络检测与固定 Wi-Fi 设置入口允许在首启登录前使用，仍由 WelcomeVault 审计，不解锁其他命令；网络结果新增 `connectivity: online|offline|limited`。按用户要求，检测、验证码、注册和登录统一使用 BitBay 已部署的公共 `/v2` 接口：`https://api.bitbay.site/v2/email/send-code`、`/v2/user/register`、`/v2/user/login`；固定枚举 URL，不允许内部路由、任意 URL 或旧 `/api` 自动回退。连通检测只向公共登录接口发送固定空 JSON，要求其缺少必填字段的 HTTP 400/code 400 校验响应；不携带账号、密码或 Token，不产生真实登录，非在线时只自动打开一次 Wi-Fi 设置，返回后复查。不接入尚未部署的 PaaS `/v1/tenants/...` 草案。`ai_os_bitbay_send_code/register/login` 在真实回执验证成功后才关联/首次建立本机账户，不保存/返回平台 Token，不替换旧空间或扩大权限。`ai_os_status.bitbay` 仅已登录时返回 `{email,user_id}` 或 null。`ai_os_status.connection_mode` 为 `online|local`，缺省为 `online`；输入、冷却、失败/不确定结果、数值回环模型校验、会话启动后锁定及网络设置的边界以 [首启契约](agentos-v2/runtime-welcome.md#四步首启向导与-ai-连接模式2026-10-18) 为准。不是断网/防火墙开关，不改变 R1、Webdesk、邮件或 MCP 的接口/权限；不新增 sidecar 工具。
+
+AI-OS 原生构建提供 `ai_os_status/register/login/logout/chat/complete` Tauri commands，参数、积分和持久化语义见 [首启契约](agentos-v2/runtime-welcome.md)。默认禁用于普通桌面构建，不注册成 sidecar 工具或 R1 RPC。编译启用时 Vault 在未登录状态拒绝旧文件入口；首次登录一次性赠送配置体验积分，默认本地助手仅固定回环，不包含商业云端 Key 或余额。简化向导中不再有自由配置对话，模型使用 `settings_get/set` 保存，用户可显式选择测试固定文本（现有只读 `agent_analyze`）；完成后直接进入悟空。不改变兼容 `ai_os_chat` 的固定本机出口或 R1 授权。Key 仍按 §6.1 加密，不在前端持久化/回显，连接测试不得在保存或加载时自动发出。
 
 原生状态与积分由 Rust Vault 验证，不接受前端声明角色、余额、模型地址或赠送额度。`.jiaho-onboarding` 私有子树不通过通用 Vault 的读取、写入、列表、检索或压缩接口暴露，即使用户选择其父目录；指向该子树的符号链接同样拒绝。R1 业务身份/Worker/云端同意边界保持独立。
+
+完成首启后默认进入悟空三栏协作室（左侧 Agent、中间聊天、右侧可收起的操作面板），仍由原生 `DepDekAiOsShell` 承载，可往返完整工作台。新增伙伴默认不授予任何技能；模型保存、会话和审批沿用现有接口，不接入 Webdesk HTTP/业务身份。详见首启契约的“悟空协作室”一节。

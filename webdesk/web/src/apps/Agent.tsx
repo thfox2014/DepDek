@@ -19,10 +19,7 @@ type SpeechRecognitionLike = {
 };
 
 const AGENTS: Array<{ id: AgentId; name: string; title: string; mark: string; line: string }> = [
-  { id: "wukong", name: "悟空", title: "探索与统筹", mark: "悟", line: "眼明手快，陪你把问题拆开" },
-  { id: "bajie", name: "八戒", title: "资料与执行", mark: "戒", line: "接住琐事，把事情办妥" },
-  { id: "master", name: "师傅", title: "分析与指引", mark: "师", line: "先看清来路，再决定方向" },
-  { id: "shaseng", name: "沙僧", title: "整理与守护", mark: "僧", line: "稳稳整理，不漏每个细节" },
+  { id: "wukong", name: "悟空", title: "家庭资料管家", mark: "悟", line: "找文件、理资料，留住和家有关的重要信息" },
 ];
 
 const QUICK_PROMPTS = ["把这件事拆成几步", "还有什么需要我确认？", "帮我整理成待办草稿"];
@@ -341,8 +338,8 @@ function LegacyAgent() {
   return (
     <div className={`agent-room ${panelOpen ? "has-inspector" : "is-inspector-closed"} ${resizing ? "is-resizing" : ""}`} style={{ "--agent-panel-width": `${panelWidth}px` } as React.CSSProperties}>
       <aside className="agent-room__sidebar" aria-label="房间成员">
-        <div className="agent-room__room-title"><span className="agent-room__room-icon">✦</span><div><b>西游协作室</b><small>一个房间 · 四位伙伴</small></div></div>
-        <div className="agent-room__member-label">房间成员 <span>04</span></div>
+        <div className="agent-room__room-title"><span className="agent-room__room-icon">✦</span><div><b>悟空</b><small>你的家庭资料管家</small></div></div>
+        <div className="agent-room__member-label">你的伙伴 <span>{AGENTS.length.toString().padStart(2, "0")}</span></div>
         <nav className="agent-room__members" aria-label="选择 Agent">
           {AGENTS.map((agent) => {
             const selectedNow = selected === agent.id;
@@ -364,7 +361,7 @@ function LegacyAgent() {
       <main className="agent-room__conversation">
         <header className="agent-room__header">
           <PersonMark agent={selected} small />
-          <div className="agent-room__header-copy"><div className="agent-room__eyebrow">西游协作室 <span>·</span> 私人对话</div><h1>{selectedAgent.name}<small>{selectedAgent.title}</small></h1></div>
+          <div className="agent-room__header-copy"><div className="agent-room__eyebrow">家庭资料管家 <span>·</span> 私人对话</div><h1>{selectedAgent.name}<small>{selectedAgent.title}</small></h1></div>
           <span className={`agent-room__connection ${status?.configured ? "is-online" : ""}`}><i />{busy === selected ? "正在思考" : engineStatus}</span>
         </header>
 
@@ -427,7 +424,7 @@ function LegacyAgent() {
                 </select>
                 <button onClick={() => void activateProvider(providerChoice || activeProviderId)} disabled={activatingProvider || !providerChoice || providerChoice === activeProviderId}>{activatingProvider ? "正在切换…" : "应用到执行器"}</button>
               </div>
-              <small>切换后服务端会重启 Agent；西游房间里的新对话将使用所选模型。</small>
+              <small>切换后服务端会重启 Agent；悟空的新对话将使用所选模型。</small>
             </section>
             <section className="agent-config__test" aria-label="模型连通性测试">
               <div className="agent-config__test-head"><div><b>测试对话</b><small>消息将发给当前绑定模型；云端模型会产生少量 Token 用量。</small></div></div>
