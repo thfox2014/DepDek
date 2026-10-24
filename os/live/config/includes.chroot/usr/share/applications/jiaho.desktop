@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=家合 AI-OS
+GenericName=家庭 AI 中心
+Comment=手动打开家合 AI-OS
+Exec=/usr/local/bin/jiaho
+TryExec=/usr/bin/agent-workbench
+Icon=/usr/share/plymouth/themes/jiaho/jiaho-logo.png
+Terminal=false
+Categories=Utility;System;
+Keywords=家合;Jiaho;DepDek;AI;
+StartupWMClass=agent-workbench

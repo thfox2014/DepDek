@@ -1,0 +1,25 @@
+{
+  "name": "jiaho-mobile",
+  "version": "0.2.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1444 --strictPort",
+    "build": "node ../scripts/version.mjs check && tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 1444 --strictPort",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@phosphor-icons/react": "2.1.10",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "@types/react": "^18.3.10",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "4.3.2",
+    "typescript": "~5.6.2",
+    "vite": "~5.4.8"
+  }
+}

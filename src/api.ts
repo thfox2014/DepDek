@@ -1,6 +1,24 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { TodoEnqueueInput, TodoItem, TodoUpdateInput } from "./todoTypes";
+
+export const AI_OS_LOGIN_REQUIRED = "jiaho-ai-os-login-required";
+export const AI_OS_LOGIN_RESTORED = "jiaho-ai-os-login-restored";
+
+function isAiOsLoginRequired(error: unknown): boolean {
+  const value = error instanceof Error ? error.message : String(error);
+  return /\bE32006\b/.test(value) || value.trim() === "LOGIN_REQUIRED";
+}
+
+/** Central Tauri boundary: surface only the local Vault's explicit login gate. */
+function invoke<T>(command: string, args?: Record<string, unknown> | number[] | ArrayBuffer | Uint8Array, options?: { headers: HeadersInit }): Promise<T> {
+  return tauriInvoke<T>(command, args, options).catch((error: unknown) => {
+    if (isAiOsLoginRequired(error) && typeof window !== "undefined") {
+      window.dispatchEvent(new Event(AI_OS_LOGIN_REQUIRED));
+    }
+    throw error;
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Types shared with the Rust core / sidecar (see docs/contract.md).
@@ -29,6 +47,10 @@ export interface AiOsNetworkStatus {
   connectivity: "online" | "offline" | "limited";
 }
 export const aiOsStatus = () => invoke<AiOsStatus>("ai_os_status");
+export const aiOsLogout = () => invoke<void>("ai_os_logout");
+export interface ModelConnection { state: "available" | "unavailable" | "unknown"; reason: string }
+/** Metadata only: no prompts, file content or paid inference. */
+export const aiOsModelStatus = (providerName: string) => invoke<ModelConnection>("ai_os_model_status", { providerName });
 export const aiOsLogin = (username: string, password: string, register: boolean) => invoke<AiOsStatus>(register ? "ai_os_register" : "ai_os_login", { username, password });
 export const aiOsSetConnectionMode = (mode: AiOsConnectionMode) => invoke<AiOsStatus>("ai_os_set_connection_mode", { mode });
 export const aiOsNetworkStatus = () => invoke<AiOsNetworkStatus>("ai_os_network_status");
@@ -467,6 +489,7 @@ export const vaultCompress = (path: string, archivePath?: string) =>
 
 export type FileCategory = "photos" | "documents" | "videos" | "mail" | "other";
 export interface FileIndexRecord {
+  file_id?: string;
   path: string;
   original_path: string;
   name: string;
@@ -478,6 +501,8 @@ export interface FileIndexRecord {
   indexed_at_ms: number;
 }
 export interface FileIndexSummary {
+  library_id?: string;
+  coverage?: "imports" | "home_snapshot";
   indexed_at_ms: number;
   total: number;
   total_bytes: number;
@@ -499,6 +524,9 @@ export interface FileIndexResult {
 }
 export const fileIndexQuery = (filter: FileIndexFilter = {}) => invoke<FileIndexResult>("file_index_query", { filter });
 export const fileIndexRefresh = () => invoke<FileIndexSummary>("file_index_refresh");
+export interface FileLibraryImportInput { libraryId: string; operationId: string; name: string; dataBase64: string }
+export interface FileLibraryImportResult { file: FileIndexRecord; summary: FileIndexSummary; status: "indexed" }
+export const fileLibraryImport = (input: FileLibraryImportInput) => invoke<FileLibraryImportResult>("file_library_import", { input });
 
 export type PhotoTagKind = "person" | "place" | "event" | "captured_date" | "note" | "selection";
 export interface PhotoTag { kind: PhotoTagKind; value: string }
@@ -509,6 +537,48 @@ export interface PhotoLibraryResult { items: PhotoLibraryItem[]; total: number; 
 export const photoLibraryQuery = (filter: PhotoLibraryFilter = {}) => invoke<PhotoLibraryResult>("photo_library_query", { filter });
 export const photoPreview = (path: string, expectedSha256: string) => invoke<ReadBinaryResult>("photo_preview", { path, expectedSha256 });
 export const photoTagsSet = (path: string, expectedSha256: string, tags: PhotoTag[]) => invoke<PhotoTagRecord>("photo_tags_set", { path, expectedSha256, tags });
+
+export interface VideoReference { path: string; sha256: string }
+export interface VideoLibraryItem { file: FileIndexRecord; tags: PhotoTag[]; revision: number }
+export interface VideoTagRecord extends PhotoTagRecord { revision: number }
+export interface VideoStory { id: string; title: string; references: VideoReference[]; revision: number; updated_at_ms: number }
+export interface VideoLibraryResult { items: VideoLibraryItem[]; total: number; summary: FileIndexSummary; stories: VideoStory[] }
+export const videoLibraryQuery = (filter: PhotoLibraryFilter = {}) => invoke<VideoLibraryResult>("video_library_query", { filter });
+export const videoPreview = (input: { libraryId: string; reference: VideoReference }) => invoke<ReadBinaryResult>("video_preview", { input });
+export const videoTagsSet = (input: { libraryId: string; reference: VideoReference; tags: PhotoTag[]; expectedRevision: number }) => invoke<VideoTagRecord>("video_tags_set", { input });
+export const videoStoryPut = (input: { libraryId: string; id: string; title: string; references: VideoReference[]; expectedRevision: number }) => invoke<VideoStory>("video_story_put", { input });
+
+export interface DocumentReference { path: string; sha256: string; group?: string }
+export interface DocumentPreview { kind: "text" | "pdf" | "unsupported"; content?: string; data_base64?: string; size: number; sha256: string; truncated: boolean }
+export interface DocumentFavorite { path: string; sha256: string; favorite: boolean; revision: number; updated_at_ms: number }
+export interface DocumentCollection {
+  id: string; kind: "organization" | "packet"; status: "active" | "reverted"; title: string;
+  references: DocumentReference[]; missing: string[]; revision: number; updated_at_ms: number;
+}
+export interface DocumentLibraryState { library_id: string; favorites: DocumentFavorite[]; collections: DocumentCollection[] }
+export interface DocumentMatch { file: FileIndexRecord; snippet: string | null; line: number | null }
+export interface DocumentSearchResult { items: DocumentMatch[]; catalog_total: number; body_examined: number; skipped: number; incomplete: boolean }
+export type DocumentCollectionInput = Omit<DocumentCollection, "revision" | "updated_at_ms"> & { libraryId: string; expectedRevision: number };
+export const documentLibraryState = () => invoke<DocumentLibraryState>("document_library_state");
+export const documentPreview = (input: { libraryId: string; reference: DocumentReference }) => invoke<DocumentPreview>("document_preview", { input });
+export const documentSearch = (input: { libraryId: string; query: string }) => invoke<DocumentSearchResult>("document_search", { input });
+export const documentFavoriteSet = (input: { libraryId: string; reference: DocumentReference; favorite: boolean; expectedRevision: number }) => invoke<DocumentFavorite>("document_favorite_set", { input });
+export const documentCollectionPut = (input: DocumentCollectionInput) => invoke<DocumentCollection>("document_collection_put", { input });
+export const documentBundleExport = (input: { libraryId: string; title: string; references: DocumentReference[]; missing: string[] }) => invoke<ReadBinaryResult>("document_bundle_export", { input });
+
+export interface ContentReference { path: string; sha256: string }
+export interface ContentEvidence { text: string; images: { data: string; mimeType: string; label: string }[]; coverage: string }
+export interface ContentAnnotation {
+  path: string; sha256: string; title: string; description: string; tags: string[];
+  observations: { label: string; value: string }[]; uncertainties: string[]; coverage: string;
+  provider_name: string; model: string; source: "ai" | "user_corrected"; total_tokens: number;
+  revision: number; created_at_ms: number; updated_at_ms: number;
+}
+export interface ContentAnalyzeInput { libraryId: string; reference: ContentReference; providerName: string; evidence: ContentEvidence; expectedRevision: number }
+export interface ContentUpdateInput { libraryId: string; reference: ContentReference; expectedRevision: number; title: string; description: string; tags: string[] }
+export const contentAnnotationGet = (input: { libraryId: string; reference: ContentReference }) => invoke<ContentAnnotation | null>("content_annotation_get", { input });
+export const contentAnalyze = (input: ContentAnalyzeInput) => invoke<ContentAnnotation>("content_analyze", { input });
+export const contentAnnotationUpdate = (input: ContentUpdateInput) => invoke<ContentAnnotation>("content_annotation_update", { input });
 
 export const auditRead = (offset = 0, limit = 100) =>
   invoke<AuditReadResult>("audit_read", { offset, limit });
@@ -588,6 +658,7 @@ export const settingsGet = async (): Promise<Settings> => {
   return invoke<Settings>("settings_get");
 };
 
+export const SETTINGS_CHANGED = "jiaho-settings-saved";
 export const settingsSet = async (settings: Settings): Promise<void> => {
   if (isBrowserPreview()) {
     await agentService<void>("/settings", {
@@ -595,9 +666,10 @@ export const settingsSet = async (settings: Settings): Promise<void> => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(settings),
     });
-    return;
+  } else {
+    await invoke<void>("settings_set", { settings });
   }
-  return invoke<void>("settings_set", { settings });
+  window.dispatchEvent(new Event(SETTINGS_CHANGED));
 };
 
 // Conversation history (contract 6.2): the authoritative copy lives in the

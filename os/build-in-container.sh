@@ -5,7 +5,8 @@ export CARGO_TARGET_DIR=/cargo-cache
 
 src=/workspace
 work=/tmp/depdek-mvp
-out="$src/os/artifacts"
+out="${DEPDEK_OS_OUTPUT_DIR:-$src/os/artifacts}"
+case "$out" in "$src/os/artifacts"|"$src/os/artifacts/"*) ;; *) echo "OS output must stay under /workspace/os/artifacts" >&2; exit 1 ;; esac
 mkdir -p "$work" "$out"
 tar -C "$src" \
   --exclude=.git --exclude=node_modules --exclude=target --exclude=dist \
@@ -48,6 +49,11 @@ fi
 if [ "$deb" != "$out/depdek-ai-os-amd64.deb" ]; then
   cp "$deb" "$out/depdek-ai-os-amd64.deb"
 fi
+if [ "${DEPDEK_APP_ONLY:-0}" = 1 ]; then
+  sha256sum "$out/depdek-ai-os-amd64.deb"
+  echo "Current AI-OS application package is ready; OS remaster is a separate explicit step."
+  exit 0
+fi
 mkdir -p os/live/config/includes.chroot/usr/share/depdek
 mkdir -p os/live/config/packages.chroot
 install -D "$deb" os/live/config/packages.chroot/depdek-ai-os_amd64.deb
@@ -57,7 +63,7 @@ bash os/prepare-local-ai.sh "$work/os/live/config/includes.chroot" /live-cache/j
 # The resulting wheels are installed without network access by the voice hook.
 wheelhouse="$work/os/live/config/includes.chroot/usr/share/depdek/wheels"
 mkdir -p "$wheelhouse"
-python3 -m pip wheel --no-cache-dir --retries 4 --timeout 30 \
+/usr/bin/python3 -m pip wheel --no-cache-dir --retries 4 --timeout 30 \
   --wheel-dir "$wheelhouse" 'vosk==0.3.45'
 
 cd os/live
@@ -73,6 +79,7 @@ lb config \
   --mirror-chroot https://deb.debian.org/debian \
   --mirror-chroot-security https://security.debian.org/debian-security \
   --archive-areas "main contrib non-free-firmware" \
+  --apt-recommends false \
   --bootappend-live "boot=live components nocomponents=locales username=live hostname=jiaho quiet splash plymouth.ignore-serial-consoles console=ttyS0,115200n8 console=tty0" \
   --bootloaders "grub-pc grub-efi"
 lb build
@@ -82,8 +89,24 @@ bash "$src/os/test-vosk.sh" "$PWD/chroot" "$src/os/tests/fixtures/mandarin-mvp.w
 
 iso=$(find . -maxdepth 1 -name '*.iso' -print -quit)
 test -n "$iso"
+file "$iso" | grep -q bootable
 # Checks above no longer need the unpacked rootfs. Reclaim staging before
-# copying the ISO across Docker Desktop's host bind mount.
+# replacing the existing image across Docker Desktop's host bind mount.
 lb clean --chroot
-cp "$iso" "$out/DepDek-AI-OS-amd64.iso.partial"
-mv "$out/DepDek-AI-OS-amd64.iso.partial" "$out/DepDek-AI-OS-amd64.iso"
+output_iso="$out/DepDek-AI-OS-amd64.iso"
+source_bytes=$(stat -c '%s' "$iso")
+existing_bytes=0
+if [ -f "$output_iso" ]; then existing_bytes=$(stat -c '%s' "$output_iso"); fi
+available_kib=$(df -Pk "$out" | awk 'END { print $4 }')
+[[ "$source_bytes" =~ ^[0-9]+$ && "$existing_bytes" =~ ^[0-9]+$ && "$available_kib" =~ ^[0-9]+$ ]]
+reserve_bytes=$((512 * 1024 * 1024))
+if [ "$((available_kib * 1024 + existing_bytes))" -lt "$((source_bytes + reserve_bytes))" ]; then
+  printf 'Not replacing the existing ISO: need %s bytes plus 512 MiB reserve; available after replacement would be %s bytes.\n' \
+    "$source_bytes" "$((available_kib * 1024 + existing_bytes))" >&2
+  exit 1
+fi
+# The new ISO has already passed rootfs and voice checks. Replacing the named
+# artifact in place avoids requiring two 1.7 GiB ISO files on small build disks.
+cp "$iso" "$output_iso"
+file "$output_iso" | grep -q bootable
+sha256sum "$output_iso"

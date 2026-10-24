@@ -33,6 +33,8 @@ const paths = {
   webdeskCargoToml: join(repoRoot, "webdesk", "Cargo.toml"),
   webdeskCargoLock: join(repoRoot, "webdesk", "Cargo.lock"),
   webdeskWebPackage: join(repoRoot, "webdesk", "web", "package.json"),
+  mobilePackage: join(repoRoot, "mobile", "package.json"),
+  mobileLock: join(repoRoot, "mobile", "package-lock.json"),
   spaceCargoToml: join(repoRoot, "space-service", "Cargo.toml"),
   spaceCargoLock: join(repoRoot, "space-service", "Cargo.lock"),
   agentCargoToml: join(repoRoot, "agent-service", "Cargo.toml"),
@@ -79,11 +81,16 @@ function collectManifests() {
   const sidecarPackage = JSON.parse(readText(paths.sidecarPackage));
   const tauriConf = JSON.parse(readText(paths.tauriConf));
   const webdeskWebPackage = JSON.parse(readText(paths.webdeskWebPackage));
+  const mobilePackage = JSON.parse(readText(paths.mobilePackage));
+  const mobileLock = JSON.parse(readText(paths.mobileLock));
 
   return [
     { label: "package.json", current: rootPackage.version },
     { label: "sidecar/package.json", current: sidecarPackage.version },
     { label: "webdesk/web/package.json", current: webdeskWebPackage.version },
+    { label: "mobile/package.json", current: mobilePackage.version },
+    { label: "mobile/package-lock.json", current: mobileLock.version },
+    { label: "mobile/package-lock.json (root)", current: mobileLock.packages?.[""]?.version },
     { label: "src-tauri/tauri.conf.json", current: tauriConf.version },
     { label: "src-tauri/Cargo.toml", current: cargoTomlVersion(paths.cargoToml, "src-tauri/Cargo.toml") },
     { label: "src-tauri/Cargo.lock", current: cargoLockVersion(paths.cargoLock, CARGO_PACKAGE_NAME) },
@@ -158,6 +165,11 @@ function writeVersion(version, dryRun) {
   writeJsonVersion(paths.sidecarPackage, version, dryRun);
   writeJsonVersion(paths.tauriConf, version, dryRun);
   writeJsonVersion(paths.webdeskWebPackage, version, dryRun);
+  writeJsonVersion(paths.mobilePackage, version, dryRun);
+  const mobileLock = JSON.parse(readText(paths.mobileLock));
+  mobileLock.version = version;
+  mobileLock.packages[""].version = version;
+  writeText(paths.mobileLock, `${JSON.stringify(mobileLock, null, 2)}\n`, dryRun);
 
   writeCargoTomlVersion(paths.cargoToml, version, dryRun);
   writeCargoLockVersion(paths.cargoLock, CARGO_PACKAGE_NAME, version, dryRun);

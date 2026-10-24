@@ -1,0 +1,10 @@
+import { build } from "esbuild";
+import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
+const version = readFileSync(new URL("../../VERSION", import.meta.url), "utf8").trim();
+const entry = process.argv.includes("--workbench") ? "WorkbenchFilm" : "FileLibraryFilm";
+const result = await build({ entryPoints: [`scripts/brand-film/${entry}.tsx`], bundle: true, format: "esm", write: false, outdir: "/virtual", loader: { ".png": "dataurl" }, define: { __APP_VERSION__: JSON.stringify(version), "process.env.NODE_ENV": '"development"' }, jsx: "automatic" });
+const assets = new Map(result.outputFiles.map((file) => ["/" + file.path.split("/").at(-1), file.contents]));
+const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>家合 · 品牌片示例</title><link rel="stylesheet" href="/${entry}.css"></head><body><div id="root"></div><script type="module" src="/${entry}.js"></script></body></html>`;
+const port = entry === "WorkbenchFilm" ? 14435 : 14434;
+createServer((req, res) => { const asset = assets.get((req.url ?? "/").split("?")[0]); res.setHeader("Cache-Control", "no-store"); res.setHeader("Content-Type", asset ? req.url.endsWith(".css") ? "text/css" : "text/javascript" : "text/html; charset=utf-8"); res.end(asset ?? html); }).listen(port, "127.0.0.1", () => console.log(`Film-only UI: http://127.0.0.1:${port}`));

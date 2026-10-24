@@ -18,8 +18,12 @@ use crate::rpc::Sidecar;
 use crate::settings::{ProviderConfig, Settings};
 use crate::storage::{snapshot as storage_snapshot, StorageSnapshot};
 use crate::vault::{
-    CompressResult, FileIndexFilter, FileIndexResult, FileIndexSummary, ListDirResult, ReadBinaryResult, ReadFileResult, SearchResult, Vault,
+    CompressResult, FileIndexFilter, FileIndexResult, FileIndexSummary, FileLibraryImportInput, FileLibraryImportResult, ListDirResult, ReadBinaryResult, ReadFileResult, SearchResult, Vault,
     WriteFileResult, PhotoLibraryFilter, PhotoLibraryResult, PhotoTag, PhotoTagRecord,
+    DocumentReadInput, DocumentPreview, DocumentFavoriteInput, DocumentFavorite, DocumentCollectionInput,
+    DocumentCollection, DocumentLibraryState, DocumentSearchInput, DocumentSearchResult, DocumentBundleInput,
+    VideoReadInput, VideoTagRecord, VideoTagsInput, VideoStory, VideoStoryInput, VideoLibraryResult,
+    ContentReadInput, ContentAnalyzeInput, ContentUpdateInput, ContentAnnotation, ContentResult,
 };
 
 pub struct AppState {
@@ -151,6 +155,22 @@ async fn ai_os_status(state: State<'_, AppState>) -> Result<Value, String> {
         }).await.map_err(|_|"WELCOME_STORE_UNAVAILABLE".to_string())?;
     }
     Ok(json!({"enabled":false}))
+}
+
+#[tauri::command]
+async fn ai_os_model_status(state: State<'_, AppState>, provider_name: String) -> Result<crate::model_connection::ModelConnection, String> {
+    let _guard = state.ai_os_mode_guard.read().await;
+    let result = async {
+        state.vault.require_ai_os_login().map_err(|e| e.to_command_string())?;
+        let provider = state.settings.lock().unwrap().providers.get(&provider_name).cloned()
+            .ok_or_else(|| "MODEL_PROVIDER_NOT_FOUND".to_string())?;
+        state.vault.require_ai_os_provider(&provider, false)?;
+        let provider = resolve_provider_secrets(&state, provider)?;
+        tokio::task::spawn_blocking(move || crate::model_connection::probe(&provider))
+            .await.map_err(|_| "MODEL_STATUS_UNAVAILABLE".to_string())
+    }.await;
+    state.vault.record_logical_audit(crate::audit::Op::Stat, "user", "model/connection", result.as_ref().is_ok_and(|status| status.state == "available"), Some("MODEL_STATUS_NOT_AVAILABLE"));
+    result
 }
 
 #[tauri::command]
@@ -376,6 +396,31 @@ async fn photo_library_query(state: State<'_, AppState>, filter: Option<PhotoLib
 }
 
 #[tauri::command]
+async fn video_library_query(state: State<'_, AppState>, filter: Option<PhotoLibraryFilter>) -> Result<VideoLibraryResult, String> {
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || vault.video_library_query("user", filter.unwrap_or_default()).map_err(|e| e.to_command_string()))
+        .await.map_err(|_| "E32603 video worker failed".to_string())?
+}
+#[tauri::command]
+async fn video_preview(state: State<'_, AppState>, input: VideoReadInput) -> Result<ReadBinaryResult, String> {
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || vault.video_preview("user", input).map_err(|e| e.to_command_string()))
+        .await.map_err(|_| "E32603 video worker failed".to_string())?
+}
+#[tauri::command]
+async fn video_tags_set(state: State<'_, AppState>, input: VideoTagsInput) -> Result<VideoTagRecord, String> {
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || vault.video_tags_set("user", input).map_err(|e| e.to_command_string()))
+        .await.map_err(|_| "E32603 video worker failed".to_string())?
+}
+#[tauri::command]
+async fn video_story_put(state: State<'_, AppState>, input: VideoStoryInput) -> Result<VideoStory, String> {
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || vault.video_story_put("user", input).map_err(|e| e.to_command_string()))
+        .await.map_err(|_| "E32603 video worker failed".to_string())?
+}
+
+#[tauri::command]
 async fn photo_preview(state: State<'_, AppState>, path: String, expected_sha256: String) -> Result<ReadBinaryResult, String> {
     let vault = state.vault.clone();
     tokio::task::spawn_blocking(move || vault.photo_preview("user", &path, &expected_sha256).map_err(|e| e.to_command_string()))
@@ -390,10 +435,59 @@ async fn photo_tags_set(state: State<'_, AppState>, path: String, expected_sha25
 }
 
 #[tauri::command]
+async fn file_library_import(state: State<'_, AppState>, input: FileLibraryImportInput) -> Result<FileLibraryImportResult, String> {
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || vault.file_library_import("user", input).map_err(|e| e.to_command_string()))
+        .await.map_err(|_| "E32603 file import worker failed".to_string())?
+}
+
+#[tauri::command]
 async fn file_index_refresh(state: State<'_, AppState>) -> Result<FileIndexSummary, String> {
     let vault = state.vault.clone();
     tokio::task::spawn_blocking(move || vault.file_index_refresh("user").map_err(|e| e.to_command_string()))
         .await.map_err(|_| "E32603 file index worker failed".to_string())?
+}
+
+#[tauri::command]
+async fn document_library_state(state: State<'_, AppState>) -> Result<DocumentLibraryState, String> {
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || vault.document_library_state("user").map_err(|e| e.to_command_string()))
+        .await.map_err(|_| "E32603 document worker failed".to_string())?
+}
+
+#[tauri::command]
+async fn document_preview(state: State<'_, AppState>, input: DocumentReadInput) -> Result<DocumentPreview, String> {
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || vault.document_preview("user", input).map_err(|e| e.to_command_string()))
+        .await.map_err(|_| "E32603 document worker failed".to_string())?
+}
+
+#[tauri::command]
+async fn document_search(state: State<'_, AppState>, input: DocumentSearchInput) -> Result<DocumentSearchResult, String> {
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || vault.document_search("user", input).map_err(|e| e.to_command_string()))
+        .await.map_err(|_| "E32603 document worker failed".to_string())?
+}
+
+#[tauri::command]
+async fn document_favorite_set(state: State<'_, AppState>, input: DocumentFavoriteInput) -> Result<DocumentFavorite, String> {
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || vault.document_favorite_set("user", input).map_err(|e| e.to_command_string()))
+        .await.map_err(|_| "E32603 document worker failed".to_string())?
+}
+
+#[tauri::command]
+async fn document_collection_put(state: State<'_, AppState>, input: DocumentCollectionInput) -> Result<DocumentCollection, String> {
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || vault.document_collection_put("user", input).map_err(|e| e.to_command_string()))
+        .await.map_err(|_| "E32603 document worker failed".to_string())?
+}
+
+#[tauri::command]
+async fn document_bundle_export(state: State<'_, AppState>, input: DocumentBundleInput) -> Result<ReadBinaryResult, String> {
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || vault.document_bundle_export("user", input).map_err(|e| e.to_command_string()))
+        .await.map_err(|_| "E32603 document worker failed".to_string())?
 }
 
 #[tauri::command]
@@ -648,6 +742,45 @@ async fn agent_analyze(
             }),
         )
         .await
+}
+
+#[tauri::command]
+async fn content_annotation_get(state: State<'_, AppState>, input: ContentReadInput) -> Result<Option<ContentAnnotation>, String> {
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || vault.content_annotation_get("user", input).map_err(|e| e.to_command_string()))
+        .await.map_err(|_| "CONTENT_SERVICE_UNAVAILABLE".to_string())?
+}
+
+#[tauri::command]
+async fn content_annotation_update(state: State<'_, AppState>, input: ContentUpdateInput) -> Result<ContentAnnotation, String> {
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || vault.content_annotation_update("user", input).map_err(|e| e.to_command_string()))
+        .await.map_err(|_| "CONTENT_SERVICE_UNAVAILABLE".to_string())?
+}
+
+#[tauri::command]
+async fn content_analyze(state: State<'_, AppState>, input: ContentAnalyzeInput) -> Result<ContentAnnotation, String> {
+    let _mode_guard = state.ai_os_mode_guard.read().await;
+    let result = async {
+        let vault = state.vault.clone();
+        let checked = input.clone();
+        let file = tokio::task::spawn_blocking(move || vault.content_analysis_prepare("user", &checked).map_err(|e| e.to_command_string()))
+            .await.map_err(|_| "CONTENT_SERVICE_UNAVAILABLE".to_string())??;
+        let provider = state.settings.lock().map_err(|_| "CONTENT_PROVIDER_UNAVAILABLE")?.providers
+            .get(&input.provider_name).cloned().ok_or("CONTENT_PROVIDER_REQUIRED")?;
+        state.vault.require_ai_os_provider(&provider, false)?;
+        let model = match &provider {
+            ProviderConfig::OpenAi { model, .. } | ProviderConfig::Anthropic { model, .. } | ProviderConfig::OpenAiCompatible { model, .. } => model.clone(),
+        };
+        let resolved = resolve_provider_secrets(&state, provider)?;
+        let reply = state.sidecar.request("content/analyze", json!({ "provider": resolved, "category": file.category, "evidence": input.evidence })).await?;
+        let generated: ContentResult = serde_json::from_value(reply).map_err(|_| "CONTENT_INVALID_RESULT".to_string())?;
+        let vault = state.vault.clone();
+        tokio::task::spawn_blocking(move || vault.content_annotation_save("user", input, model, generated).map_err(|e| e.to_command_string()))
+            .await.map_err(|_| "CONTENT_SERVICE_UNAVAILABLE".to_string())?
+    }.await;
+    if result.is_err() { let _ = state.vault.content_analysis_failed("user"); }
+    result
 }
 
 #[tauri::command]
@@ -1082,6 +1215,18 @@ pub fn run() {
             if option_env!("VITE_DEPDEK_OS") == Some("1") {
                 vault.enable_ai_os_login(&app.path().app_local_data_dir()?.join(".jiaho-onboarding"))?;
             }
+            // Presentation only: OS autologin never unlocks the private Vault.
+            // Keep normal desktop/dev launches unchanged; the dedicated Linux
+            // display session opts into the appliance's full-screen entry.
+            if cfg!(target_os = "linux")
+                && option_env!("VITE_DEPDEK_OS") == Some("1")
+                && std::env::var("JIAHO_OS_SESSION").ok().as_deref() == Some("1")
+            {
+                if let Some(window) = app.get_webview_window("main") {
+                    window.set_title("家合 Jiaho")?;
+                    window.set_fullscreen(true)?;
+                }
+            }
             let obsidian = ObsidianStore::new(vault.audit());
 
             // Forward audit entries to the frontend (vault://audit).
@@ -1129,6 +1274,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             ai_os_status,
+            ai_os_model_status,
             ai_os_set_connection_mode,
             ai_os_network_status,
             ai_os_open_network_settings,
@@ -1152,9 +1298,20 @@ pub fn run() {
             vault_list_dir,
             file_index_query,
             file_index_refresh,
+            file_library_import,
             photo_library_query,
+            video_library_query,
+            video_preview,
+            video_tags_set,
+            video_story_put,
             photo_preview,
             photo_tags_set,
+            document_library_state,
+            document_preview,
+            document_search,
+            document_favorite_set,
+            document_collection_put,
+            document_bundle_export,
             vault_search_files,
             vault_delete_file,
             vault_compress,
@@ -1170,6 +1327,9 @@ pub fn run() {
             agent_create_session,
             agent_send,
             agent_analyze,
+            content_annotation_get,
+            content_annotation_update,
+            content_analyze,
             agent_abort,
             agent_close,
             team_list,

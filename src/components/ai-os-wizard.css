@@ -66,10 +66,10 @@
 .jiaho-wizard__code-input { display:flex; align-items:center; gap:10px; }
 .jiaho-wizard__code-input input { flex:1; min-width:0; }
 .jiaho-wizard__code-input button { flex:none; min-height:40px; background:#fffdf8; border:1px solid #d4dfd1; color:#23463c; font-size:11px; padding:8px 11px; border-radius:9px; }
-.jiaho-wizard__account-form>label.jiaho-wizard__bitbay-consent { display:flex; align-items:flex-start; gap:9px; margin-top:20px; min-width:0; font-size:10px; line-height:1.8; color:#60745f; }
+.jiaho-wizard__account-form>label.jiaho-wizard__bitbay-consent { box-sizing:border-box; display:flex; align-items:flex-start; gap:9px; width:100%; min-width:0; margin-top:16px; font-size:9px; line-height:1.65; color:#60745f; }
 /* Must beat .jiaho-entry input:not([type=radio]) { width:100% }. That width makes this checkbox consume the flex row, and the agreement then shrinks to its min-content (~one CJK glyph per line). */
-.jiaho-entry .jiaho-wizard__bitbay-consent input[type=checkbox] { flex:none; width:15px; min-width:15px; height:15px; margin:3px 0 0; padding:0; border:0; border-radius:3px; background:transparent; box-shadow:none; accent-color:#23463c; }
-.jiaho-wizard__bitbay-consent span { flex:1 1 auto; min-width:0; overflow-wrap:break-word; }
+.jiaho-entry .jiaho-wizard__bitbay-consent input[type=checkbox] { display:block; box-sizing:border-box; flex:0 0 16px; width:16px; min-width:16px; max-width:16px; height:16px; padding:0; margin:2px 0 0; border:0; border-radius:4px; background:transparent; box-shadow:none; accent-color:#23463c; }
+.jiaho-wizard__bitbay-consent span { display:block; flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
 .jiaho-wizard__bitbay-consent b { font-weight:500; overflow-wrap:anywhere; }
 .jiaho-wizard__bitbay-linked { display:flex; gap:12px; padding:18px; margin-top:22px; background:#eff4ed; border:1px solid #d4dfd1; border-radius:12px; color:#23463c; }
 .jiaho-wizard__bitbay-linked svg { flex:none; }
@@ -79,6 +79,8 @@
 .jiaho-wizard__bitbay-linked small { font-size:10px; color:#60745f; margin-top:7px; line-height:1.8; }
 .jiaho-wizard__bitbay-notice { font-size:11px; color:#355548; line-height:1.8; }
 .jiaho-wizard__local-account { margin-top:25px; padding-top:19px; border-top:1px solid var(--wizard-line); }
+.jiaho-wizard__local-account[open] { margin:0 0 18px; padding:14px; border:1px solid #dfe4d8; border-radius:11px; background:#f6f7f0; }
+.jiaho-wizard__local-account[open] form { margin-top:10px; }
 .jiaho-wizard__local-account summary,.jiaho-wizard__network summary { cursor:pointer; font-size:11px; color:#526b59; }
 .jiaho-wizard__connectivity { display:flex; align-items:flex-start; gap:15px; padding:24px 20px; margin:28px 0 18px; background:#eff4ed; border:1px solid #d4dfd1; border-radius:13px; color:#254c3d; }
 .jiaho-wizard__connectivity-icon { display:flex; align-items:center; justify-content:center; width:43px; height:43px; flex:none; background:#e0ebdc; border-radius:50%; }
@@ -142,6 +144,24 @@
 .jiaho-wizard__mode-options button i { display:flex; width:22px; height:22px; align-items:center; justify-content:center; margin-left:auto; border:1px solid #d9e1d4; border-radius:50%; color:#27664f; font-style:normal; }
 .jiaho-wizard__mode-options button.is-selected i { border-color:#8db49a; background:#dcecdf; }
 .jiaho-wizard__footer { max-width:1040px; margin:0 auto; padding:0 30px 25px; display:flex; justify-content:space-between; gap:15px; color:#99a18f; font-size:10px; }
+.jiaho-reauth { position:fixed; inset:0; z-index:2147483000; display:grid; place-items:center; padding:24px; background:rgba(31,48,40,.34); backdrop-filter:blur(9px); -webkit-backdrop-filter:blur(9px); }
+.jiaho-reauth__dialog { width:min(100%,420px); padding:34px 36px 28px; border:1px solid #e7e6d9; border-radius:22px; background:#fffdf8; color:#193f35; box-shadow:0 28px 90px #192c2440,0 2px 8px #192c2414; animation:jiaho-reauth-enter .24s ease-out; }
+.jiaho-reauth__mark { display:grid; place-items:center; width:42px; height:42px; border-radius:14px; background:#eaf1e7; color:#287258; }
+.jiaho-reauth__eyebrow { margin:18px 0 5px; color:#869182; font-size:9px; font-weight:650; letter-spacing:.16em; }
+.jiaho-reauth__dialog h2 { margin:0; font-size:25px; letter-spacing:-.035em; }
+.jiaho-reauth__dialog>p:not(.jiaho-reauth__eyebrow) { margin:8px 0 22px; color:#788478; font-size:12px; line-height:1.8; }
+.jiaho-reauth__dialog form>label { display:block; margin:13px 0; color:#5f7164; font-size:11px; font-weight:600; }
+.jiaho-reauth__dialog input { box-sizing:border-box; width:100%; margin-top:6px; padding:11px 13px; border:1px solid #dce3d7; border-radius:10px; outline:none; background:#fffefa; color:#193f35; font:inherit; font-size:13px; }
+.jiaho-reauth__dialog input:focus { border-color:#368363; box-shadow:0 0 0 3px #3683631c; }
+.jiaho-reauth__submit { display:flex; align-items:center; justify-content:center; gap:9px; width:100%; min-height:45px; margin-top:19px; border:0; border-radius:10px; background:#193f35; color:#fffdf8; font:inherit; font-size:12px; cursor:pointer; }
+.jiaho-reauth__submit:hover:not(:disabled) { background:#285d4b; }
+.jiaho-reauth__submit:disabled { opacity:.58; cursor:wait; }
+.jiaho-reauth__error { margin:8px 0 0; padding:9px 11px; border-radius:9px; background:#fff0e7; color:#a34425; font-size:11px; }
+.jiaho-reauth__privacy { display:flex; align-items:center; justify-content:center; gap:6px; margin-top:18px; color:#8b9588; font-size:9px; }
+.jiaho-reauth__privacy svg { flex:none; color:#6d9276; }
+@keyframes jiaho-reauth-enter { from { opacity:0; transform:translateY(7px) scale(.985); } to { opacity:1; transform:translateY(0) scale(1); } }
 @media(max-width:900px) { .jiaho-wizard__layout { gap:28px; grid-template-columns:210px minmax(0,1fr); margin-top:15px; }.jiaho-wizard__panel { padding:25px; }.jiaho-wizard .jiaho-wizard__rail h1 { font-size:30px; }.jiaho-wizard__header { padding:18px 30px; flex-wrap:wrap; }.jiaho-wizard__version { font-size:9px; } }
 @media(max-width:680px) { .jiaho-wizard__header { flex-wrap:wrap; padding:20px; gap:15px; }.jiaho-wizard__brand small { display:none; }.jiaho-wizard__default-mode { margin-left:0; order:3; width:100%; }.jiaho-wizard__default-mode small { margin-left:auto; }.jiaho-wizard__layout { display:block; margin:0 auto 30px; padding:0 18px; max-width:560px; }.jiaho-wizard__rail { padding-top:0; }.jiaho-wizard__rail>.jiaho-entry__eyebrow,.jiaho-wizard__rail>h1,.jiaho-wizard__rail>p,.jiaho-wizard__privacy { display:none; }.jiaho-wizard__rail nav { grid-template-columns:repeat(4,1fr); margin:12px 0 18px; gap:5px; }.jiaho-wizard__rail nav button { padding:9px 4px; gap:7px; justify-content:center; }.jiaho-wizard__rail nav small,.jiaho-wizard__rail nav em { display:none; }.jiaho-wizard__step-icon { width:auto; }.jiaho-wizard__rail nav b { font-size:11px; }.jiaho-wizard__panel { padding:22px; border-radius:15px; min-height:0; }.jiaho-wizard__panel h2,.jiaho-wizard .jiaho-model-setup__form h2 { font-size:23px; }.jiaho-wizard__panel-label { font-size:8px; gap:8px; }.jiaho-wizard__footer { padding:0 20px 20px; font-size:9px; }.jiaho-wizard__version { display:block; width:100%; text-align:right; font-size:9px; } }
 @media(prefers-reduced-motion:no-preference) { .jiaho-wizard__panel { animation:jiaho-wizard-enter .32s ease-out; } @keyframes jiaho-wizard-enter { from { opacity:0; transform:translateY(7px); } to { opacity:1; transform:translateY(0); } } }
+@media(max-width:480px) { .jiaho-reauth { padding:16px; }.jiaho-reauth__dialog { padding:27px 23px 23px; border-radius:18px; } }
+@media(prefers-reduced-motion:reduce) { .jiaho-reauth__dialog { animation:none; } }

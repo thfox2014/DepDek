@@ -5,4 +5,4 @@ session_user=$(getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /(nolo
 [ -n "$session_user" ] || exit 0
 printf '%s' "$session_user" | LC_ALL=C grep -Eq '^[a-z_][a-z0-9_-]*$' || exit 1
 install -d -m 0755 /etc/lightdm/lightdm.conf.d
-printf '[Seat:*]\nautologin-user=%s\nautologin-user-timeout=0\nuser-session=xfce\n' "$session_user" > /etc/lightdm/lightdm.conf.d/90-jiaho.conf
+printf '[Seat:*]\nautologin-user=%s\nautologin-user-timeout=0\nautologin-session=plasmax11\nuser-session=plasmax11\n' "$session_user" > /etc/lightdm/lightdm.conf.d/90-jiaho.conf

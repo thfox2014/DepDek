@@ -28,6 +28,8 @@ HTTP 经 Webdesk BFF；本机 CLI、Tauri 经 Unix socket；Worker 用 run-scope
 
 ## 2. 公共 HTTP 路由
 
+2026-10-21 接入细化提案见 [NAS 文件接入与自动收纳](nas-file-ingestion-design.md)。该提案建议保留业务 JSON 创建/commit，字节面收敛到 tus 核心续传，并新增批次/状态/内容能力；本表和 OpenAPI 的 Content-Range 仍是旧的未实现草案。落地前必须同批统一接口附件与正式运行契约，不能把提案或原有草案当作已可调用路由。
+
 下表全部是计划能力，P0 实现依赖 R1–R3；不是当前 `/api/*` 路由清单。
 
 | 方法与路径（前缀 `/api/v2`） | 输入/输出 | 语义 |

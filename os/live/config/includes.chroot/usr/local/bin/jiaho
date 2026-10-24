@@ -1,0 +1,18 @@
+#!/bin/sh
+# Public local entry point; application login still happens inside Jiaho.
+set -eu
+
+if [ "$(id -u)" -eq 0 ]; then
+  printf '%s\n' 'Open Jiaho as a regular desktop user, not root.' >&2
+  exit 1
+fi
+if [ -z "${DISPLAY:-}" ]; then
+  exec /usr/bin/startx /usr/lib/jiaho/start-session -- -keeptty
+fi
+if [ -z "${XDG_RUNTIME_DIR:-}" ] || [ ! -d "$XDG_RUNTIME_DIR" ]; then
+  printf '%s\n' 'No local user runtime directory; sign in through the graphical login or a local TTY.' >&2
+  exit 1
+fi
+# Serialize launches without putting credentials or private Home paths on argv.
+exec /usr/bin/flock --nonblock --conflict-exit-code 75 --close \
+  "$XDG_RUNTIME_DIR/jiaho-app.lock" /usr/bin/agent-workbench "$@"

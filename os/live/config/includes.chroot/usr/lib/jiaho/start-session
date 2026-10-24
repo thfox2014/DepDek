@@ -1,0 +1,68 @@
+#!/bin/sh
+# Minimal X11 appliance session: window/dialog support, then the native Jiaho UI.
+# No desktop panel/file-manager autostart and no dependency on model/network health.
+set -eu
+
+if [ "$(id -u)" -eq 0 ] || [ -z "${DISPLAY:-}" ]; then
+  printf '%s\n' 'Jiaho requires an unprivileged local graphical session.' >&2
+  exit 1
+fi
+if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+  exec /usr/bin/dbus-run-session -- /usr/lib/jiaho/start-session
+fi
+export XDG_CURRENT_DESKTOP=Jiaho DESKTOP_SESSION=jiaho XDG_SESSION_DESKTOP=jiaho
+export JIAHO_OS_SESSION=1
+
+children=""
+app_pid=""
+start_helper() { "$@" & children="$children $!"; }
+stop_helpers() {
+  for child in $children; do kill "$child" 2>/dev/null || true; done
+  for child in $children; do wait "$child" 2>/dev/null || true; done
+  children=""
+}
+stop_session() {
+  trap - HUP INT TERM
+  if [ -n "$app_pid" ]; then
+    # flock --close supervises the actual native process; terminate its direct
+    # child before reaping the launcher, rather than leaving an orphan UI.
+    /usr/bin/pkill -TERM -P "$app_pid" 2>/dev/null || true
+    kill "$app_pid" 2>/dev/null || true
+    wait "$app_pid" 2>/dev/null || true
+  fi
+  stop_helpers
+  exit 0
+}
+trap stop_session HUP INT TERM
+trap stop_helpers EXIT
+
+/usr/bin/xsetroot -solid '#fbf8f0' || true
+start_helper /usr/bin/xfwm4 --compositor=off
+start_helper /usr/bin/xfsettingsd --no-daemon
+# Network settings / installer authentication remains available without running
+# the complete Plasma desktop. These are fixed OS helpers, never Agent tools.
+if [ -x /usr/libexec/polkit-mate-authentication-agent-1 ]; then
+  start_helper /usr/libexec/polkit-mate-authentication-agent-1
+fi
+
+failures=0
+while :; do
+  /usr/local/bin/jiaho & app_pid=$!
+  status=0
+  wait "$app_pid" || status=$?
+  app_pid=""
+  # Normal close is intentional; a busy launch is not a crash to retry.
+  [ "$status" -ne 0 ] && [ "$status" -ne 75 ] || break
+  failures=$((failures + 1))
+  printf 'Jiaho exited with status %s (attempt %s/3).\n' "$status" "$failures" >&2
+  [ "$failures" -lt 3 ] || break
+  sleep "$((failures * 2))"
+done
+
+# Recoverable, not an endless black screen/restart loop. Fall back to the
+# installed Plasma X11 desktop with network settings and Calamares available.
+stop_helpers
+trap - EXIT HUP INT TERM
+export XDG_CURRENT_DESKTOP=KDE DESKTOP_SESSION=plasmax11 XDG_SESSION_DESKTOP=KDE
+unset JIAHO_OS_SESSION
+exec /usr/bin/startplasma-x11

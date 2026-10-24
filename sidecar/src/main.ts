@@ -22,6 +22,7 @@ import { applyMailAction, deleteMail, fetchMail, listMailboxes, sendMail } from 
 import { pushCalendarEvent, syncCalendar } from "./calendar.js";
 import { enqueueTodo, listTodos, todoBus, updateTodo } from "./todo.js";
 import { registerMemoryHandlers } from "./memory.js";
+import { registerContentAgentHandlers } from "./contentAgent.js";
 import type { ProviderConfig } from "./providers.js";
 
 // Anything accidentally logged via console.log must not corrupt the protocol
@@ -31,6 +32,7 @@ console.info = (...args: unknown[]) => console.error(...args);
 console.warn = (...args: unknown[]) => console.error(...args);
 
 const peer = createStdioPeer();
+registerContentAgentHandlers(peer);
 let sessions!: SessionManager;
 const team = new TeamOrchestrator({
   has: (id) => sessions.has(id),

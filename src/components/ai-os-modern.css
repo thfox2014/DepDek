@@ -1,0 +1,223 @@
+/* Approved 2026 study, applied only to the AI-OS shell. */
+.ai-room.ai-room--modern {
+  --room-bg: #f3f6f2; --room-side: #edf2ec; --room-card: #fbfdf9;
+  --room-ink: #263c34; --room-muted: #73867a; --room-line: #2f4b3a18;
+  --room-accent: #376955; --room-tint: #dfebe3; --room-selected: #dfebe3;
+  --room-glass: #ffffffb0; --room-highlight: #ffffffd9;
+  display: grid; grid-template-columns: 112px minmax(0, 1fr) var(--room-panel, 320px);
+  grid-template-rows: 76px minmax(0, 1fr) 28px; position: relative; isolation: isolate;
+  background: var(--room-bg); font: 14px/1.6 "Helvetica Neue", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+}
+.ai-room.ai-room--modern::before { content: ""; position: absolute; z-index: -1; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 21% 87%, #ccded275, transparent 47%), radial-gradient(ellipse at 91% 3%, #e9e3d6b3, transparent 46%), radial-gradient(ellipse at 54% 43%, #ffffffbd, transparent 47%); }
+.ai-room.ai-room--modern[data-theme="dark"] { --room-bg: #17231f; --room-side: #203128; --room-card: #25352c; --room-ink: #e7efe8; --room-muted: #9aada0; --room-line: #aecfb51a; --room-accent: #a5c6ae; --room-tint: #344f40; --room-selected: #344f40; --room-glass: #26352dbd; --room-highlight: #dcf0d917; }
+.ai-room.ai-room--modern[data-theme="dark"]::before { background: radial-gradient(ellipse at 22% 87%, #3557454f, transparent 47%), radial-gradient(ellipse at 91% 3%, #625d3d21, transparent 46%); }
+.ai-room.ai-room--modern.is-panel-collapsed { grid-template-columns: 112px minmax(0, 1fr); }
+.ai-room.ai-room--modern [hidden] { display: none !important; }
+.ai-room--modern .ai-room__sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; clip: rect(0,0,0,0); overflow: hidden; white-space: nowrap; }
+.ai-room.ai-room--modern button { transition: background-color 160ms, color 160ms, box-shadow 160ms; }
+.ai-room.ai-room--modern :is(h1,h2,h3,p) { text-wrap: pretty; }
+.ai-room.ai-room--modern :is(button,select,input,textarea,summary):focus-visible { outline: 2px solid var(--room-accent); outline-offset: 4px; }
+.ai-room.ai-room--modern button:hover:not(:disabled) { background: var(--room-selected); }
+
+.ai-room--modern .ai-room__topbar { grid-column: 1 / -1; grid-row: 1; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 0 31px; position: relative; z-index: 20; }
+.ai-room.ai-room--modern .ai-room__brand { display: flex; align-items: center; justify-content: flex-start; width: fit-content; padding: 0; gap: 10px; background: none; }
+.ai-room.ai-room--modern .ai-room__brand:hover { background: none; }
+.ai-room--modern .ai-room__brand img { width: 33px; height: 33px; border-radius: 8px; mix-blend-mode: multiply; }
+.ai-room--modern .ai-room__brand b { font-size: 20px; font-weight: 600; letter-spacing: .08em; }
+.ai-room--modern[data-theme="dark"] .ai-room__brand img { mix-blend-mode: normal; background: #fffdf1; border: 2px solid #fffdf1; }
+.ai-room--modern .ai-room__context { grid-column: 2; display: flex; align-items: center; gap: 8px; color: var(--room-muted); min-width: 0; }
+.ai-room--modern .ai-room__context .ai-room__avatar { width: 25px; height: 25px; flex-basis: 25px; }
+.ai-room--modern .ai-room__context h1 { font-size: 13px; font-weight: 500; color: var(--room-ink); }
+.ai-room--modern .ai-room__context > span { font-size: 11px; }
+.ai-room.ai-room--modern .ai-room__head-actions { grid-column: 3; justify-self: end; margin-left: 0; gap: 7px; }
+.ai-room--modern .ai-room__preview-badge { font-size: 10px; border: 1px solid var(--room-line); border-radius: 6px; padding: 1px 6px; color: var(--room-muted); margin-right: 9px; }
+.ai-room.ai-room--modern .ai-room__head-actions > button, .ai-room.ai-room--modern .ai-room__control-trigger { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 50%; padding: 0; color: var(--room-muted); }
+.ai-room--modern .ai-room__panel-toggle { position: relative; }
+.ai-room--modern .ai-room__panel-toggle > span { position: absolute; right: -2px; top: -1px; display: grid; place-items: center; min-width: 16px; height: 16px; padding: 0 3px; background: var(--room-accent); color: var(--room-bg); font-size: 9px; border-radius: 20px; }
+
+/* Floating dock; labels remain available to keyboard and assistive technology. */
+.ai-room.ai-room--modern .ai-room__sidebar { grid-column: 1; grid-row: 2; margin: 18px 0 22px 23px; width: 76px; padding: 12px 8px; position: relative; z-index: 8; border: 1px solid var(--room-highlight); outline: 1px solid var(--room-line); border-radius: 28px; background: var(--room-glass); backdrop-filter: blur(22px) saturate(1.15); -webkit-backdrop-filter: blur(22px) saturate(1.15); box-shadow: 0 8px 32px -20px #27413038; }
+.ai-room.ai-room--modern .ai-room__members { display: grid; flex: 0 0 auto; gap: 8px; overflow: visible; }
+.ai-room.ai-room--modern button.ai-room__member, .ai-room.ai-room--modern button.ai-room__treasure-link { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 3px; width: 58px; height: 62px; padding: 6px 2px; margin: 0; border: 0; border-radius: 19px; background: none; color: var(--room-muted); box-shadow: none; position: relative; }
+.ai-room.ai-room--modern .ai-room__member .ai-room__avatar { width: 34px; height: 34px; flex-basis: 34px; border-radius: 50%; }
+.ai-room.ai-room--modern .ai-room__member-copy { display: block; flex: 0 0 auto; height: 10px; opacity: 0; }
+.ai-room.ai-room--modern .ai-room__member-copy b { font-size: 9px; line-height: 1; font-weight: 400; margin: 0; }
+.ai-room.ai-room--modern .ai-room__treasure-link > span { display: block; font-size: 9px; line-height: 1; height: 10px; font-weight: 400; opacity: 0; text-align: center; }
+.ai-room.ai-room--modern :is(.ai-room__member,.ai-room__treasure-link).is-selected { background: var(--room-selected); color: var(--room-accent); box-shadow: inset 0 1px 1px var(--room-highlight); }
+.ai-room.ai-room--modern .is-selected > :is(.ai-room__member-copy,span) { opacity: 1; }
+.ai-room.ai-room--modern .ai-room__sidebar-actions { margin-top: auto; display: grid; justify-content: center; gap: 1px; padding-top: 14px; }
+.ai-room.ai-room--modern .ai-room__sidebar-actions > button { width: 44px; height: 38px; border-radius: 50%; padding: 0; justify-content: center; }
+.ai-room--modern .ai-room__sidebar [data-tip]::after { content: attr(data-tip); position: absolute; left: calc(100% + 14px); top: 50%; transform: translateY(-50%); padding: 5px 10px; border-radius: 7px; color: var(--room-bg); background: var(--room-ink); font-size: 11px; line-height: 1.5; opacity: 0; visibility: hidden; white-space: nowrap; pointer-events: none; z-index: 40; }
+.ai-room--modern .ai-room__sidebar [data-tip]:hover::after, .ai-room--modern .ai-room__sidebar [data-tip]:focus-visible::after { opacity: 1; visibility: visible; }
+.ai-room--modern .ai-room__sidebar-actions > button { position: relative; }
+.ai-room--modern .ai-room__sidebar .is-selected::after { display: none; }
+
+.ai-room.ai-room--modern .ai-room__conversation { grid-column: 2; grid-row: 2; min-height: 0; min-width: 0; background: none; display: flex; flex-direction: column; }
+.ai-room.ai-room--modern .ai-room__messages { padding: 24px max(28px, calc((100% - 680px) / 2)); min-height: 0; scrollbar-width: thin; scrollbar-color: #9eafa066 transparent; }
+.ai-room.ai-room--modern .ai-room__composer-area { padding: 10px 28px 17px; max-width: 736px; width: 100%; margin: 0 auto; flex-shrink: 0; }
+.ai-room.ai-room--modern .ai-room__message { font-size: 16px; line-height: 1.9; margin-bottom: 28px; }
+.ai-room.ai-room--modern .ai-room__message > small { font-size: 11px; margin-bottom: 9px; }
+.ai-room.ai-room--modern .ai-room__message.is-user { max-width: 85%; padding: 12px 18px; background: var(--room-selected); border-radius: 20px 20px 5px 20px; font-size: 14px; }
+.ai-room.ai-room--modern .ai-room__message.is-user > small { display: none; }
+.ai-room.ai-room--modern .ai-room__input { display: block; padding: 20px 20px 13px; border: 1px solid var(--room-highlight); outline: 1px solid #4c665312; border-radius: 28px; background: var(--room-glass); backdrop-filter: blur(30px) saturate(1.15); -webkit-backdrop-filter: blur(30px) saturate(1.15); box-shadow: 0 12px 45px -27px #52755e3b; }
+.ai-room.ai-room--modern .ai-room__input:focus-within { border-color: var(--room-highlight); outline-color: #648e7740; box-shadow: 0 12px 45px -27px #52755e3b, 0 0 0 3px #648e770a; }
+.ai-room.ai-room--modern .ai-room__input textarea { width: 100%; min-height: 61px; max-height: 150px; padding: 0 2px; font-size: 16px; line-height: 1.75; resize: vertical; display: block; }
+.ai-room.ai-room--modern .ai-room__input textarea:focus-visible { outline: none; }
+.ai-room--modern .ai-room__input-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 7px; }
+.ai-room.ai-room--modern .ai-room__input-actions { gap: 6px; }
+.ai-room.ai-room--modern .ai-room__input-actions > button { width: 36px; height: 36px; border-radius: 50%; }
+.ai-room.ai-room--modern .ai-room__input-actions > .ai-room__send { background: var(--room-accent); color: var(--room-bg); }
+.ai-room.ai-room--modern .ai-room__input-actions > .ai-room__send:disabled { background: var(--room-selected); color: var(--room-muted); opacity: .55; }
+.ai-room.ai-room--modern .ai-room__consent { font-size: 11px; margin-top: 9px; color: var(--room-muted); line-height: 1.7; }
+.ai-room.ai-room--modern .ai-room__consent input { accent-color: var(--room-accent); }
+.ai-room.ai-room--modern .ai-room__consent small { font-size: 11px; }
+.ai-room.ai-room--modern .ai-room__consent > span { gap: 2px 8px; }
+.ai-room.ai-room--modern .ai-room__setup-link { margin-top: 9px; font-size: 12px; }
+.ai-room.ai-room--modern .ai-room__notice { font-size: 12px; line-height: 1.8; margin-bottom: 9px !important; }
+.ai-room.ai-room--modern .ai-room__activity { border-radius: 12px; margin-bottom: 12px; font-size: 12px; }
+
+.ai-room.ai-room--modern.is-welcome:not(.has-treasure) .ai-room__conversation { justify-content: center; padding-bottom: 22px; }
+.ai-room.ai-room--modern.is-welcome:not(.has-treasure) .ai-room__messages { flex: 0 0 auto; padding-top: 0; padding-bottom: 0; overflow: visible; }
+.ai-room.ai-room--modern .ai-room__empty { min-height: 0; padding: 0 0 31px; max-width: none; align-items: center; text-align: center; }
+.ai-room.ai-room--modern .ai-room__empty h2 { font-size: clamp(29px, 3vw, 38px); font-weight: 500; line-height: 1.4; letter-spacing: -.055em; margin: 0; }
+.ai-room.ai-room--modern .wukong-moment-welcome { height: 116px; width: 100%; margin: 0 0 14px; justify-content: center; }
+.ai-room.ai-room--modern .ai-room__empty .ai-room__avatar { width: 86px; height: 86px; flex-basis: 86px; border: 1px solid var(--room-highlight); border-radius: 50%; background: linear-gradient(140deg, var(--room-glass), #dce9da61); padding: 8px; margin: 0; box-shadow: 0 6px 25px -15px #5d816549; }
+.ai-room.ai-room--modern .wukong-moment-welcome .wukong-moment { margin: 0; }
+.ai-room.ai-room--modern .ai-room__starters { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 10px; margin-top: 19px; }
+.ai-room.ai-room--modern .ai-room__starters > button { width: auto; padding: 8px 16px; min-height: 39px; border: 1px solid var(--room-line); border-radius: 999px; font-size: 12px; gap: 7px; color: var(--room-muted); background: #ffffff1f; }
+.ai-room.ai-room--modern.has-treasure .ai-room__messages { padding: 24px 26px; }
+.ai-room.ai-room--modern.has-treasure.is-welcome .ai-room__messages { display: flex; flex-direction: column; justify-content: center; }
+.ai-room.ai-room--modern.has-treasure .ai-room__empty { padding: 0 0 24px; }
+.ai-room.ai-room--modern.has-treasure .ai-room__empty h2 { font-size: 28px; }
+.ai-room.ai-room--modern.has-treasure .ai-room__composer-area { padding: 10px 26px 18px; }
+.ai-room.ai-room--modern .treasure-scenes { margin: 0 0 18px; }
+.ai-room.ai-room--modern .treasure-scenes > div { display: flex; justify-content: center; flex-wrap: wrap; gap: 7px; }
+.ai-room.ai-room--modern .treasure-scenes button { padding: 8px 12px; border-radius: 999px; flex-direction: row; align-items: center; }
+.ai-room.ai-room--modern .treasure-scenes b { font-size: 12px; font-weight: 400; }
+.ai-room.ai-room--modern .treasure-scenes button.is-selected { border-color: var(--room-line); background: var(--room-selected); }
+
+/* Progressive controls: connection, engine and model are the existing controls. */
+.ai-room--modern .ai-room__control { position: relative; }
+.ai-room.ai-room--modern .ai-room__control-panel { position: absolute; top: calc(100% + 12px); right: 0; width: 254px; padding: 16px; border: 1px solid var(--room-highlight); outline: 1px solid var(--room-line); border-radius: 22px; background: var(--room-card); box-shadow: 0 24px 70px -28px #27413040; z-index: 30; max-height: min(560px, calc(100dvh - 110px)); overflow-y: auto; }
+.ai-room--modern .ai-room__control-panel > header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 13px; }
+.ai-room--modern .ai-room__control-panel > header h2 { font-size: 13px; font-weight: 500; margin: 0; }
+.ai-room.ai-room--modern .ai-room__control-panel > header button { width: 28px; height: 28px; border-radius: 50%; padding: 0; }
+.ai-room--modern .ai-room__theme-options { display: flex; gap: 3px; border-radius: 12px; padding: 3px; background: var(--room-selected); }
+.ai-room.ai-room--modern .ai-room__theme-options > button { flex: 1; min-height: 34px; font-size: 11px; border-radius: 9px; }
+.ai-room.ai-room--modern .ai-room__theme-options > button[aria-pressed="true"] { background: var(--room-card); color: var(--room-ink); }
+.ai-room--modern .ai-room__appearance-options { display: grid; gap: 3px; padding-top: 12px; }
+.ai-room.ai-room--modern .ai-room__appearance-options > button { min-height: 40px; width: 100%; font-size: 12px; justify-content: flex-start; gap: 11px; padding: 7px; }
+.ai-room--modern .ai-room__appearance-options > button > svg { margin-left: auto; }
+.ai-room--modern .ai-room__swatch { display: block; width: 28px; height: 23px; border: 1px solid var(--room-line); border-radius: 6px; }
+.ai-room--modern .ai-room__swatch.is-glass { background: linear-gradient(135deg, #cddfd0, #f4f7ee); box-shadow: inset 0 1px 1px #fff; }
+.ai-room--modern .ai-room__swatch.is-pure { background: #f6f8f3; }
+.ai-room--modern .ai-room__swatch.is-focus { background: linear-gradient(90deg, #d6ded5 5px, #f3f5f0 5px); }
+.ai-room.ai-room--modern .ai-room__motion-toggle { width: 100%; min-height: 42px; justify-content: flex-start; border-top: 1px solid var(--room-line); border-radius: 0; margin-top: 11px; padding: 12px 6px 0; font-size: 12px; }
+.ai-room--modern .ai-room__motion-toggle > span:last-child { margin-left: auto; color: var(--room-muted); }
+.ai-room--modern .ai-room__mobile-actions { display: none; }
+.ai-room.ai-room--modern .ai-room__runtime-control .ai-room__control-trigger { width: auto; height: 32px; padding: 4px 7px; border-radius: 9px; gap: 5px; font-size: 11px; }
+.ai-room.ai-room--modern .ai-room__runtime-control .ai-room__control-panel { top: auto; bottom: calc(100% + 12px); right: auto; left: 0; width: min(330px, calc(100vw - 65px)); }
+.ai-room.ai-room--modern .ai-room__model-status { width: 100%; padding: 10px; background: var(--room-selected); flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; font-size: 12px; }
+.ai-room.ai-room--modern .ai-room__model-status small { color: var(--room-muted); font-size: 11px; }
+.ai-room.ai-room--modern .ai-room__selectors { display: grid; gap: 12px; margin: 17px 0; }
+.ai-room.ai-room--modern .ai-room__selectors > label { display: grid; gap: 5px; min-width: 0; font-size: 11px; color: var(--room-muted); }
+.ai-room.ai-room--modern .ai-room__selectors select { width: 100%; min-width: 0; border: 1px solid var(--room-line); background: var(--room-bg); padding: 9px; border-radius: 9px; font-size: 12px; }
+.ai-room--modern .ai-room__usage { font-size: 11px; color: var(--room-muted); }
+.ai-room--modern .ai-room__usage > p { margin-top: 7px; }
+.ai-room.ai-room--modern .ai-room__configure { width: 100%; margin-top: 13px; border-top: 1px solid var(--room-line); border-radius: 0; padding-top: 13px; font-size: 12px; color: var(--room-accent); }
+
+.ai-room.ai-room--modern > :is(.ai-room__inspector,.treasure-panel) { grid-column: 3; grid-row: 2; position: relative; inset: auto; width: auto; min-width: 0; min-height: 0; margin: 14px 23px 18px 0; border: 1px solid var(--room-highlight); outline: 1px solid var(--room-line); border-radius: 27px; overflow: hidden; background: var(--room-glass); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px); box-shadow: 0 8px 32px -20px #27413038; z-index: 9; }
+.ai-room.ai-room--modern .ai-room__inspector > header { padding: 20px 20px 12px 24px; border-bottom: 0; }
+.ai-room.ai-room--modern .ai-room__inspector h2 { font-size: 16px; font-weight: 500; margin: 0; }
+.ai-room.ai-room--modern .ai-room__inspector-scroll { padding: 0 24px 22px; }
+.ai-room.ai-room--modern .ai-room__panel-section { margin-top: 20px; }
+.ai-room.ai-room--modern .ai-room__panel-section h3 { font-size: 12px; }
+.ai-room.ai-room--modern .ai-room__panel-empty { padding: 38px 8px; border: 0; font-size: 12px; }
+.ai-room.ai-room--modern .ai-room__panel-empty > svg { color: var(--room-muted); margin-bottom: 12px; }
+.ai-room.ai-room--modern .ai-room__prompt, .ai-room.ai-room--modern .ai-room__clue { font-size: 12px; border-radius: 12px; min-height: 44px; }
+.ai-room--modern .ai-room__connection > summary { cursor: pointer; font-size: 12px; color: var(--room-muted); margin-bottom: 12px; }
+.ai-room--modern .ai-room__connection > b { display: block; }
+.ai-room.ai-room--modern .ai-room__inspector > footer { padding: 13px 22px; font-size: 10px; }
+.ai-room.ai-room--modern .documents-panel__close { display: inline-flex; }
+.ai-room.ai-room--modern .treasure-panel__header { padding-right: 24px; }
+.ai-room--modern .ai-room__app-footer { grid-column: 1 / -1; grid-row: 3; display: flex; justify-content: space-between; align-items: center; padding: 0 31px 5px; color: var(--room-muted); font-size: 9px; letter-spacing: .03em; }
+.ai-room--modern .ai-room__app-footer small { margin-left: 4px; font-size: 9px; }
+.ai-room.ai-room--modern .ai-room__drawer-scrim { display: none; }
+.ai-room.ai-room--modern .ai-room__model-dialog { border-radius: 25px; background: var(--room-card); border-color: var(--room-highlight); }
+.ai-room.ai-room--modern .ai-room__modal-backdrop { backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); background: #203b2947; }
+.ai-room.ai-room--modern[data-theme="dark"] .ai-room__empty .ai-room__avatar { background: linear-gradient(140deg, #40534180, #577b4b08); }
+.ai-room.ai-room--modern[data-appearance="pure"] { --room-glass: var(--room-card); }
+.ai-room.ai-room--modern[data-appearance="pure"]::before { display: none; }
+.ai-room.ai-room--modern[data-appearance="pure"] :is(.ai-room__sidebar,.ai-room__input,.treasure-panel,.ai-room__inspector) { backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none; border-color: var(--room-line); }
+.ai-room.ai-room--modern[data-appearance="focus"]::before { opacity: .18; }
+.ai-room.ai-room--modern[data-appearance="focus"] :is(.ai-room__sidebar,.ai-room__input) { border-radius: 18px; backdrop-filter: none; -webkit-backdrop-filter: none; background: var(--room-card); box-shadow: none; border-color: var(--room-line); }
+.ai-room.ai-room--modern[data-appearance="focus"] .ai-room__starters > button { border-radius: 10px; }
+
+@media (max-height: 740px) and (min-width: 701px) {
+  .ai-room.ai-room--modern .ai-room__sidebar { margin-top: 14px; margin-bottom: 20px; }
+  .ai-room.ai-room--modern .ai-room__members { gap: 4px; }
+  .ai-room.ai-room--modern .ai-room__members > button { height: 57px; }
+  .ai-room.ai-room--modern .wukong-moment-welcome { height: 96px; margin-bottom: 13px; }
+  .ai-room.ai-room--modern .ai-room__empty .ai-room__avatar { width: 76px; height: 76px; flex-basis: 76px; }
+  .ai-room.ai-room--modern .ai-room__empty h2 { font-size: 34px; }
+  .ai-room.ai-room--modern .ai-room__empty { padding-bottom: 28px; }
+  .ai-room.ai-room--modern.has-treasure .ai-room__empty h2 { font-size: 27px; }
+}
+@media (max-width: 1100px) {
+  .ai-room.ai-room--modern, .ai-room.ai-room--modern.is-panel-collapsed { grid-template-columns: 112px minmax(0, 1fr); }
+  .ai-room.ai-room--modern > :is(.ai-room__inspector,.treasure-panel) { position: absolute; grid-column: auto; grid-row: auto; inset: 89px 18px 42px auto; margin: 0; width: min(var(--room-panel, 320px), calc(100% - 140px)); min-width: min(320px, calc(100% - 140px)); z-index: 12; background: var(--room-card); }
+  .ai-room.ai-room--modern .ai-room__drawer-scrim { display: block; position: absolute; z-index: 10; inset: 76px 0 28px; border-radius: 0; background: #203b2921; backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }
+  .ai-room.ai-room--modern .ai-room__drawer-scrim:hover { background: #203b2921; }
+}
+@media (max-width: 700px) {
+  .ai-room.ai-room--modern, .ai-room.ai-room--modern.is-panel-collapsed { grid-template-columns: minmax(0, 1fr); grid-template-rows: 76px minmax(0, 1fr) calc(98px + env(safe-area-inset-bottom)); }
+  .ai-room--modern .ai-room__topbar { padding: 0 19px; grid-template-columns: 1fr auto; }
+  .ai-room--modern .ai-room__brand img { width: 29px; height: 29px; }
+  .ai-room--modern .ai-room__brand b { font-size: 18px; }
+  .ai-room--modern .ai-room__context { display: none; }
+  .ai-room.ai-room--modern .ai-room__head-actions { grid-column: 2; gap: 3px; }
+  .ai-room.ai-room--modern .ai-room__head-actions > button, .ai-room.ai-room--modern .ai-room__head-actions .ai-room__control-trigger { width: 44px; height: 44px; }
+  .ai-room.ai-room--modern .ai-room__sidebar { grid-column: auto; grid-row: auto; position: absolute; z-index: 8; left: 50%; top: auto; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%); width: 258px; height: 68px; margin: 0; padding: 5px; border-radius: 25px; }
+  .ai-room.ai-room--modern .ai-room__members { display: flex; gap: 3px; width: 100%; height: 100%; }
+  .ai-room.ai-room--modern .ai-room__members > button { flex: 1; width: 58px; height: 56px; border-radius: 19px; gap: 1px; }
+  .ai-room.ai-room--modern .ai-room__member .ai-room__avatar { width: 30px; height: 30px; flex-basis: 30px; }
+  .ai-room.ai-room--modern .ai-room__members > button > svg { width: 23px; height: 23px; }
+  .ai-room.ai-room--modern .ai-room__sidebar-actions { display: none; }
+  .ai-room--modern .ai-room__sidebar [data-tip]::after { top: auto; bottom: calc(100% + 13px); left: 50%; transform: translateX(-50%); }
+  .ai-room.ai-room--modern .ai-room__conversation { grid-column: 1; }
+  .ai-room.ai-room--modern .ai-room__messages { padding: 18px 22px; }
+  .ai-room.ai-room--modern .ai-room__composer-area, .ai-room.ai-room--modern.has-treasure .ai-room__composer-area { padding: 9px 20px 12px; }
+  .ai-room.ai-room--modern.is-welcome:not(.has-treasure) .ai-room__conversation { padding-bottom: 3px; }
+  .ai-room.ai-room--modern .ai-room__empty { padding-bottom: 25px; }
+  .ai-room.ai-room--modern .ai-room__empty h2 { font-size: clamp(25px, 6vw, 32px); }
+  .ai-room.ai-room--modern .wukong-moment-welcome { height: 100px; margin-bottom: 14px; }
+  .ai-room.ai-room--modern .ai-room__empty .ai-room__avatar { width: 77px; height: 77px; flex-basis: 77px; }
+  .ai-room.ai-room--modern .ai-room__input { padding: 18px 16px 11px; border-radius: 25px; }
+  .ai-room.ai-room--modern .ai-room__input textarea { min-height: 62px; font-size: 16px; }
+  .ai-room.ai-room--modern .ai-room__input-actions > button { width: 44px; height: 44px; }
+  .ai-room.ai-room--modern .ai-room__runtime-control .ai-room__control-trigger { height: 44px; }
+  .ai-room.ai-room--modern .ai-room__consent { font-size: 11px; align-items: flex-start; }
+  .ai-room.ai-room--modern .ai-room__consent input { margin-top: 4px; }
+  .ai-room.ai-room--modern .ai-room__consent small { font-size: 11px; }
+  .ai-room.ai-room--modern .ai-room__starters { gap: 7px; margin-top: 16px; }
+  .ai-room.ai-room--modern .ai-room__starters > button { padding: 8px 12px; min-height: 40px; font-size: 11px; gap: 5px; }
+  .ai-room--modern .ai-room__control-panel { right: 0; width: 245px; }
+  .ai-room--modern .ai-room__mobile-actions { display: flex; justify-content: space-around; border-top: 1px solid var(--room-line); padding-top: 10px; margin-top: 15px; }
+  .ai-room.ai-room--modern .ai-room__mobile-actions > button { width: 44px; height: 44px; border-radius: 50%; }
+  .ai-room.ai-room--modern > :is(.ai-room__inspector,.treasure-panel) { inset: 88px 12px calc(105px + env(safe-area-inset-bottom)); width: calc(100% - 24px); min-width: 0; border-radius: 24px; }
+  .ai-room--modern .ai-room__app-footer { position: absolute; z-index: 6; bottom: calc(3px + env(safe-area-inset-bottom)); left: 0; right: 0; padding: 0 18px; font-size: 8px; }
+  .ai-room--modern .ai-room__app-footer small { font-size: 8px; }
+  .ai-room.ai-room--modern .ai-room__drawer-scrim { bottom: calc(98px + env(safe-area-inset-bottom)); }
+  .ai-room.ai-room--modern.has-treasure.is-welcome .ai-room__messages { padding: 12px 22px; }
+  .ai-room.ai-room--modern.has-treasure .ai-room__empty h2 { font-size: 25px; }
+  .ai-room.ai-room--modern.has-treasure .wukong-moment-welcome { height: 85px; }
+}
+@media (max-height: 700px) and (max-width: 700px) {
+  .ai-room.ai-room--modern .wukong-moment-welcome { height: 70px; margin-bottom: 11px; }
+  .ai-room.ai-room--modern .ai-room__empty .ai-room__avatar { width: 62px; height: 62px; flex-basis: 62px; }
+  .ai-room.ai-room--modern .ai-room__empty { padding-bottom: 18px; }
+  .ai-room.ai-room--modern .ai-room__empty h2 { font-size: 26px; }
+}
+@supports not ((backdrop-filter: blur(10px)) or (-webkit-backdrop-filter: blur(10px))) { .ai-room.ai-room--modern :is(.ai-room__sidebar,.ai-room__input,.ai-room__inspector,.treasure-panel) { background: var(--room-card); } }
+@media (prefers-reduced-transparency: reduce) { .ai-room.ai-room--modern :is(.ai-room__sidebar,.ai-room__input,.ai-room__inspector,.treasure-panel) { background: var(--room-card); backdrop-filter: none; -webkit-backdrop-filter: none; } }
+@media (prefers-reduced-motion: reduce) { .ai-room.ai-room--modern *, .ai-room.ai-room--modern *::before, .ai-room.ai-room--modern *::after { animation: none !important; transition: none !important; } }

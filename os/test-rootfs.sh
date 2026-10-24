@@ -26,6 +26,30 @@ require_executable() {
 
 require_executable usr/bin/agent-workbench
 require_executable usr/local/bin/depdek-shell
+require_executable usr/local/bin/jiaho
+require_executable usr/lib/jiaho/start-session
+require_executable usr/bin/flock
+require_executable usr/bin/pkill
+require_executable usr/bin/xsetroot
+require_executable usr/bin/dbus-run-session
+require_executable usr/bin/xfwm4
+require_executable usr/bin/xfsettingsd
+require_executable usr/bin/startplasma-x11
+require_file usr/share/xsessions/plasmax11.desktop
+require_file etc/X11/xinit/xinputrc
+grep -Fq 'run_im fcitx5' "$root/etc/X11/xinit/xinputrc"
+require_file etc/skel/.config/fcitx5/profile
+grep -Fxq 'DefaultIM=pinyin' "$root/etc/skel/.config/fcitx5/profile"
+require_executable usr/libexec/polkit-mate-authentication-agent-1
+require_file usr/share/xsessions/jiaho.desktop
+require_file usr/share/applications/jiaho.desktop
+require_executable etc/skel/Desktop/jiaho.desktop
+grep -Fq 'Exec=/usr/lib/jiaho/start-session' "$root/usr/share/xsessions/jiaho.desktop"
+grep -Fq 'Name=家合 AI-OS' "$root/usr/share/applications/jiaho.desktop"
+grep -Fq 'Exec=/usr/local/bin/jiaho' "$root/usr/share/applications/jiaho.desktop"
+grep -Fq 'Exec=/usr/local/bin/jiaho' "$root/etc/skel/Desktop/jiaho.desktop"
+grep -Fq 'autologin-session=plasmax11' "$root/usr/lib/jiaho/select-session-user"
+grep -Fq 'user-session=plasmax11' "$root/usr/lib/jiaho/select-session-user"
 require_file usr/share/depdek/depdek-shell
 require_file usr/share/depdek/depdek-welcome.sh
 require_executable usr/lib/DepDek/node
@@ -36,8 +60,10 @@ require_file usr/lib/DepDek/vosk-model-small-cn-0.22/conf/model.conf
 require_executable usr/bin/calamares
 require_file usr/share/applications/depdek-install.desktop
 grep -Fq 'Exec=pkexec calamares' "$root/usr/share/applications/depdek-install.desktop"
-require_file etc/xdg/autostart/depdek-ai-os.desktop
-grep -Fq 'Exec=agent-workbench' "$root/etc/xdg/autostart/depdek-ai-os.desktop"
+if [ -e "$root/etc/xdg/autostart/depdek-ai-os.desktop" ]; then
+  echo "Jiaho must not auto-launch over the KDE desktop" >&2
+  exit 1
+fi
 test "$(readlink "$root/etc/systemd/system/default.target")" = /lib/systemd/system/graphical.target
 require_executable usr/bin/startx
 require_file usr/lib/systemd/system/graphical.target
@@ -55,5 +81,14 @@ if ! dpkg-query --admindir="$root/var/lib/dpkg" -W -f='${Status}' user-setup 2>/
   echo "live user autologin support is missing" >&2
   exit 1
 fi
+grep -Fxq 'Type=XSession' "$root/usr/share/xsessions/plasmax11.desktop"
+grep -Fxq 'Exec=/usr/bin/startplasma-x11' "$root/usr/share/xsessions/plasmax11.desktop"
+grep -Fxq 'DesktopNames=KDE' "$root/usr/share/xsessions/plasmax11.desktop"
+for package in plasma-desktop plasma-workspace kwin-x11 dolphin konsole systemsettings plasma-nm plasma-pa fcitx5 fcitx5-chinese-addons fcitx5-frontend-gtk3 fcitx5-frontend-qt6 im-config; do
+  if ! dpkg-query --admindir="$root/var/lib/dpkg" -W -f='${Status}' "$package" 2>/dev/null | grep -Fq 'install ok installed'; then
+    echo "required Plasma/Chinese input package is missing: $package" >&2
+    exit 1
+  fi
+done
 
-echo "Live rootfs assertions passed: Jiaho splash, graphical login shell, verified local AI, offline voice, CLI fallback, and Calamares."
+echo "Live rootfs assertions passed: Jiaho splash, default Plasma X11, manual Jiaho launchers, Fcitx5 Pinyin, private login, verified local AI, offline voice, desktop recovery, and Calamares."

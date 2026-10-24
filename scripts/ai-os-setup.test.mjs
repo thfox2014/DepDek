@@ -162,3 +162,17 @@ test('BitBay form exposes email/code/password and consent; rendering performs ze
   assert.match(html, /<button[^>]*disabled=""[^>]*>注册 BitBay 并继续/);
   assert.ok(!html.includes('尚未接入') && !html.includes('localStorage') && !html.includes('admin'));
 });
+
+test('an existing locked Home keeps BitBay fields editable and presents its unlock step first', async () => {
+  const result = await build({
+    stdin: { contents: `import React from 'react'; import {renderToStaticMarkup} from 'react-dom/server'; import Setup from './src/components/BitBayAccountSetup'; const unexpected=()=>{throw new Error('unexpected request')}; export const html=renderToStaticMarkup(React.createElement(Setup,{status:{initialized:true,authenticated:false},services:{aiOsBitBaySendCode:unexpected,aiOsBitBayRegister:unexpected,aiOsBitBayLogin:unexpected},onReady:unexpected,onBusyChange:()=>{}}));`, resolveDir:new URL('..',import.meta.url).pathname, loader:'jsx' },
+    bundle:true, platform:'node', format:'cjs', write:false, logLevel:'silent',
+  });
+  const module={exports:{}}; new Function('require','module','exports',result.outputFiles[0].text)(createRequire(import.meta.url),module,module.exports);
+  const html=module.exports.html;
+  assert.match(html, /请先在上方解锁/);
+  assert.match(html, /<input[^>]*type="email"[^>]*>/);
+  assert.match(html, /<input[^>]*type="checkbox"[^>]*>/);
+  assert.doesNotMatch(html, /<input[^>]*(?:type="email"|type="checkbox")[^>]*disabled=""/);
+  assert.match(html, /解锁后注册 BitBay/);
+});

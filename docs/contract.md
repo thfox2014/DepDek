@@ -35,6 +35,7 @@
 | `agent/create_session` | `{session_id: string, provider: ProviderConfig, system_prompt?: string, engine?: "pi"\|"deepseek-harness", enabled_skills?: AgentSkill[], label?: string, config_dir?: string, mcp_grants?: string[]}` | `{session_id}` |
 | `agent/send` | `{session_id: string, text: string}` | `{}`（回复经 `agent/event` 流式下发） |
 | `agent/analyze` | `{provider: ProviderConfig, text: string, system_prompt: string, engine?: "pi"\|"deepseek-harness"}` | `{text: string}`（一次性只读分析；不创建持久会话，不暴露写入/删除/外部调用工具） |
+| `content/analyze` | `{provider: ProviderConfig, category: "photos"\|"videos"\|"documents", evidence: {text, images: [{data,mimeType,label}], coverage}}` | 结构化描述/标签/观察/不确定项及 total_tokens；单次无工具、无个人上下文，60 秒，详见 [内容分析契约](ai-content-agent.md) |
 | `agent/abort` | `{session_id: string}` | `{}` |
 | `agent/close_session` | `{session_id: string}` | `{}` |
 | `team/list` | `{}` | `{tasks: TeamTask[]}`（持久化在 `team/tasks.json`，sidecar 重启后恢复；见 2.11） |
@@ -295,6 +296,7 @@ sidecar 内置 MCP 客户端，只使用 HTTP JSON-RPC（`initialize`、`notific
 | `vault_init_home` | — | `string`（创建并设置当前用户 `~/DepDek-Home`；目录操作由 Rust 执行） |
 | `storage_summary` | — | `{sampled_at_ms, volumes: [{name, file_system, mount_point, kind, removable, total_bytes, available_bytes, used_bytes, used_pct}]}`（本机挂载卷只读容量信息；不遍历文件、不执行磁盘写入） |
 | `voice_transcribe` | `{audioBase64: string}` | `string`（本地 Vosk 中文识别文本；不保存录音、不联网） |
+| `ai_os_model_status` | `{providerName: string}` | `{state: "available"\|"unavailable"\|"unknown", reason: string}`；只对已保存的 Provider 做有界模型列表 GET，要求所选模型实际列出；不发送 prompt/文件，不启动推理，见下方连接状态约定 |
 | `vault_read_file` | `{path: string}` | `{content, size, sha256}` |
 | `vault_write_file` | `{path: string, content: string}` | `{size, sha256}` |
 | `vault_list_dir` | `{path: string}` | `{entries: [...]}` |
@@ -302,10 +304,24 @@ sidecar 内置 MCP 客户端，只使用 HTTP JSON-RPC（`initialize`、`notific
 | `vault_delete_file` | `{path: string}` | — |
 | `vault_compress` | `{path: string, archivePath?: string}` | `{source, archive, files, bytes, archive_size}` |
 | `file_index_refresh` | — | `FileIndexSummary`（用户显式触发 Home 文件 SHA-256 扫描及原子索引更新；不搬动原件） |
+| `file_library_import` | `{input: {libraryId: string, operationId: string, name: string, dataBase64: string}}` | `{file: FileIndexRecord, summary: FileIndexSummary, status: "indexed"}`；用户选择文件后保存独立副本并增量登记 KV，不扫描其它 Home 文件；libraryId 来自当前查询摘要，用于拒绝切换 Home 后的旧导入；同 operationId 同参可重试、变参拒绝，详见 [文件索引契约](file-index.md) |
 | `file_index_query` | `{filter?: {category?, query?, sha256?, path_prefix?, offset?, limit?}}` | `{items: FileIndexRecord[], total, summary: FileIndexSummary}`（类型、分类规则与限制见 [文件索引契约](file-index.md)） |
+| `content_annotation_get` | `{input:{libraryId,reference:{path,sha256}}}` | `ContentAnnotation\|null`；当前文件引用的 AI 标注，详见 [内容分析契约](ai-content-agent.md) |
+| `content_analyze` | `{input:{libraryId,reference,providerName,evidence,expectedRevision}}` | `ContentAnnotation`；Vault 复核原件、解析保存的 Provider、调用 content/analyze、复核并落本机 KV；不覆盖人工标签 |
+| `content_annotation_update` | `{input:{libraryId,reference,expectedRevision,title,description,tags}}` | `ContentAnnotation`；用户修正描述/标签，保留模型和证据来源 |
 | `photo_library_query` | `{filter?: {query?, sha256?, offset?, limit?}}` | `{items: [{file: FileIndexRecord, tags: PhotoTag[]}], total, summary}`；仅照片，文件名/路径及用户标签搜索，分页最多 100 |
 | `photo_preview` | `{path, expectedSha256}` | `ReadBinaryResult`；Vault no-follow 打开已索引照片，12 MiB 上限，复验内容 SHA 与图片魔数，仅原生用户预览 |
 | `photo_tags_set` | `{path, expectedSha256, tags: [{kind, value}]}` | `{path, sha256, tags, updated_at_ms}`；确认的用户标签，最多 16 条，每值 120 字；kind 为 `person|place|event|captured_date|note|selection`，selection 仅 `keep` |
+| `video_library_query` | `{filter?: {query?, sha256?, offset?, limit?}}` | `{items: [{file, tags, revision}], total, summary, stories}`；仅视频名称/路径/SHA/人工标签检索，分页最多 100，故事最多 100；不做内容理解，见 [视频契约](video-library.md) |
+| `video_preview` | `{input: {libraryId, reference: {path, sha256}}}` | `ReadBinaryResult`；本机用户 nofollow/SHA/视频容器签名复核，单片最多 64 MiB，不是 Range 流媒体服务 |
+| `video_tags_set` | `{input: {libraryId, reference: {path, sha256}, tags: PhotoTag[], expectedRevision}}` | `{path, sha256, tags, revision, updated_at_ms}`；复验原件及乐观版本后保存本机视频标签，与照片标签独立 |
+| `video_story_put` | `{input: {libraryId, id, title, references: [{path, sha256}], expectedRevision}}` | `{id, title, references, revision, updated_at_ms}`；有序原片引用草稿，最多 20 段/合计 256 MiB、每片 64 MiB，最多 100 个故事；保存前复验每个原件，不生成成片 |
+| `document_library_state` | — | `{library_id, favorites: DocumentFavorite[], collections: DocumentCollection[]}`；本机资料人工记录，见 [资料契约](document-library.md) |
+| `document_search` | `{input: {libraryId, query}}` | `{items: [{file, snippet?, line?}], catalog_total, body_examined, skipped, incomplete}`；查询已索引文档名称/路径，显式有界检索 UTF-8 原文，不调用模型 |
+| `document_preview` | `{input: {libraryId, reference: {path, sha256}}}` | `{kind: "text"\|"pdf"\|"unsupported", content?, data_base64?, size, sha256, truncated}`；16 MiB、nofollow、内容 SHA 复核；文本最多 128 KiB，PDF 本机渲染，不执行文档指令 |
+| `document_favorite_set` | `{input: {libraryId, reference, favorite, expectedRevision}}` | `DocumentFavorite`；内容引用、乐观版本检查后持久保存常用标记 |
+| `document_collection_put` | `{input: {libraryId, id, expectedRevision, kind, status, title, references: [{path, sha256, group?}], missing: string[]}}` | `DocumentCollection`；本机 KV 智能分组或事项清单，active/reverted 状态可撤销，不移动/重命名/删除原件 |
+| `document_bundle_export` | `{input: {libraryId, references: [{path, sha256}], title, missing: string[]}}` | `{data_base64, size, sha256, mime}`；核验全部原件后生成内存 tar.gz，含来源清单，交给用户下载；不写 Home、不外发 |
 | `vault_read_binary` | `{path: string}` | `{data_base64, size, sha256, mime}` |
 | `vault_write_binary` | `{path: string, dataBase64: string}` | `{size, sha256}`（前端显式保存邮件附件副本） |
 | `obsidian_set_root` | `{path: string}` | `string`（规范化后的只读 Obsidian Vault 路径） |
@@ -622,3 +638,7 @@ AI-OS 原生构建提供 `ai_os_status/register/login/logout/chat/complete` Taur
 原生状态与积分由 Rust Vault 验证，不接受前端声明角色、余额、模型地址或赠送额度。`.jiaho-onboarding` 私有子树不通过通用 Vault 的读取、写入、列表、检索或压缩接口暴露，即使用户选择其父目录；指向该子树的符号链接同样拒绝。R1 业务身份/Worker/云端同意边界保持独立。
 
 完成首启后默认进入悟空三栏协作室（左侧 Agent、中间聊天、右侧可收起的操作面板），仍由原生 `DepDekAiOsShell` 承载，可往返完整工作台。新增伙伴默认不授予任何技能；模型保存、会话和审批沿用现有接口，不接入 Webdesk HTTP/业务身份。详见首启契约的“悟空协作室”一节。
+
+AI-OS 前端统一监听既有本机 Vault 登录错误：`E32006` 或 Welcome `LOGIN_REQUIRED` 会在已解锁的工作区上方显示重新登录对话框。对话框使用现有 `ai_os_login` 命令，不改变 Vault 的认证边界；登录成功后保留当前页面与草稿并刷新只读连接状态，不自动重放触发登录错误的操作。模型服务的 HTTP 401/403 不属于本机空间登录错误，不触发此对话框。
+
+2026-10-21 模型连接状态：联网模式且未主动暂停公域模型时，无已配置的本地模型或已配置本地模型检测失败，可将悟空绑定切换到已有的公域 Provider；不注入商业 Key、不自动注册 Provider、不覆盖用户主动选择的本地模式。底部“使用公域大模型”默认勾选，用户取消后记住暂停偏好；实际对话仍只在点击发送后提交，内容分析/家庭文件外发保留各自入口。Tauri-only `ai_os_model_status` 只接收已保存 Provider 的名称，先经 Vault 登录与连接模式校验，再由 Rust 解密并请求对应基础 URL 的 `/models`（Anthropic 为固定 `/v1/models`）。HTTP 仅数值回环允许，其余 HTTPS；禁止 URL 凭据/查询/片段，禁重定向、无自动重试，连接超时 3 秒、总超时 6 秒、响应上限 512 KiB。只有响应明确列出所选模型才返回 available；401/403、不可达、模型缺失为 unavailable；不支持列表或分页未完为 unknown，不能显示绿色已连接。返回/日志不含 Key、URL、模型响应或家庭资料。此只读元数据检查可在已登录协作室加载/配置变化时进行，不调用原来的固定文本推理测试；检查少量本机配置及当前公域路线，30 秒内重用结果，无后台定时轮询，用户可点击右上角重新检测。sidecar 无新增协议或工具，Webdesk/R1 不变。

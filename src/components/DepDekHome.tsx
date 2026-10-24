@@ -491,7 +491,7 @@ function FilesView({ root }: { root: string }) {
           <div className="dd-files-title"><HardDrives size={25} /><div><b>我的数据</b><small title={root}>{root}</small></div></div>
           <span className="dd-files-local"><ShieldCheck size={14} />本地 Home · 操作写入审计</span>
         </header>
-        <DataFilesPanel variant="page" />
+        <DataFilesPanel key={root} variant="page" />
       </section>
     </>
   );

@@ -1,7 +1,7 @@
 [Unit]
 Description=Select the local Jiaho graphical session
 Before=lightdm.service
-After=systemd-user-sessions.service
+After=systemd-user-sessions.service live-config.service
 
 [Service]
 Type=oneshot

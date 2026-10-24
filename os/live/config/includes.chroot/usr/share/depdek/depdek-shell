@@ -1,18 +1,5 @@
 #!/bin/sh
 set -eu
 
-if [ "$(id -u)" -eq 0 ]; then
-  printf '%s\n' 'For safety, sign in as a regular user before opening the DepDek shell.' >&2
-  exit 1
-fi
-
-if [ -n "${DISPLAY:-}" ]; then
-  exec /usr/bin/agent-workbench "$@"
-fi
-
-if ! command -v startx >/dev/null 2>&1; then
-  printf '%s\n' 'The graphical session is not installed. Reinstall the DepDek AI-OS desktop package.' >&2
-  exit 1
-fi
-
-exec /usr/bin/startx /usr/bin/xfce4-session -- -keeptty
+# Compatibility command; both entry points now open the same native system.
+exec /usr/local/bin/jiaho "$@"

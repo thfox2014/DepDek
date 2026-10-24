@@ -1,0 +1,7 @@
+.collection-preview-bar { display:flex; align-items:center; justify-content:space-between; gap:12px; background:#f5f2ea; color:#77867a; padding:7px 18px; border-bottom:1px solid #e2e4d9; font:12px/1.6 "PingFang SC","Noto Sans SC",sans-serif; flex-shrink:0; position:relative; z-index:20; }
+.collection-preview-bar>details { flex-shrink:0; }
+.collection-preview-bar summary { cursor:pointer; }
+.collection-preview-bar details>div { position:absolute; top:100%; right:12px; width:260px; display:grid; gap:18px; padding:22px; border:1px solid #e2e4d9; background:#fffdf8; box-shadow:0 14px 40px #23463c18; border-radius:10px; color:#23463c; }
+.collection-preview-bar label { display:grid; gap:8px; }
+.collection-preview-bar select { font:inherit; border:1px solid #e2e4d9; background:#fbf8f0; color:#23463c; min-height:36px; padding:7px; border-radius:6px; }
+@media(max-width:600px) { .collection-preview-bar { font-size:11px; padding:7px 10px; align-items:flex-start; } }

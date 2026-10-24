@@ -45,6 +45,8 @@ interface Props {
   /** Use the Vault's persisted SHA/category index for flat category views. */
   useIndex?: boolean;
   indexCategory?: api.FileCategory;
+  indexQuery?: string;
+  refreshToken?: number;
   viewMode?: FileViewMode;
   variant?: "sidebar" | "page";
 }
@@ -169,14 +171,16 @@ const base64ToBlobUrl = (base64: string, mime: string) => {
   return URL.createObjectURL(new Blob([bytes], { type: mime }));
 };
 
-type FlatFileEntry = { entry: api.DirEntry; path: string; folder: string };
+type FlatFileEntry = { entry: api.DirEntry; path: string; folder: string; record?: api.FileIndexRecord };
 
-export default function FileTree({ extFilter, flatFiles = false, useIndex = false, indexCategory, viewMode = "tree", variant = "sidebar" }: Props) {
+export default function FileTree({ extFilter, flatFiles = false, useIndex = false, indexCategory, indexQuery = "", refreshToken = 0, viewMode = "tree", variant = "sidebar" }: Props) {
   const [nodes, setNodes] = useState<Record<string, TreeNode>>({});
   const [flatEntries, setFlatEntries] = useState<FlatFileEntry[]>([]);
   const [flatLoading, setFlatLoading] = useState(false);
   const [currentPath, setCurrentPath] = useState(".");
-  const [selected, setSelected] = useState<{ path: string; entry: api.DirEntry } | null>(null);
+  const [selected, setSelected] = useState<{ path: string; entry: api.DirEntry; record?: api.FileIndexRecord } | null>(null);
+  const [indexOffset, setIndexOffset] = useState(0), [indexTotal, setIndexTotal] = useState(0);
+  const flatRequest = useRef(0);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const objectUrlRef = useRef<string | null>(null);
@@ -202,9 +206,10 @@ export default function FileTree({ extFilter, flatFiles = false, useIndex = fals
     const sorted = [...entries].sort((left, right) =>
       left.kind === right.kind ? left.name.localeCompare(right.name, "zh-CN") : left.kind === "dir" ? -1 : 1,
     );
-    return extFilter
+    const filtered = extFilter
       ? sorted.filter((entry) => entry.kind === "dir" || extFilter.includes(extOf(entry.name)))
       : sorted;
+    return indexQuery && !flatFiles ? filtered.filter((entry) => entry.name.toLocaleLowerCase().includes(indexQuery.toLocaleLowerCase())) : filtered;
   };
 
   const load = async (path: string, expanded = true) => {
@@ -237,23 +242,30 @@ export default function FileTree({ extFilter, flatFiles = false, useIndex = fals
   };
 
   const loadFlatFiles = async () => {
+    const request = ++flatRequest.current;
     setFlatLoading(true);
     if (useIndex) {
       try {
-        const result = await api.fileIndexQuery({ category: indexCategory, limit: 200 });
+        const result = await api.fileIndexQuery({ category: indexCategory, query: indexQuery || undefined, offset: indexOffset, limit: 100 });
+        if (request !== flatRequest.current) return;
+        setIndexTotal(result.total);
+        if (indexOffset > 0 && indexOffset >= result.total) { setIndexOffset(0); return; }
         setFlatEntries(result.items.map((record) => ({
           entry: { name: record.name, kind: "file", size: record.size },
           path: record.path,
           folder: folderNameOf(record.path),
+          record,
         })));
       } catch (error) {
+        if (request !== flatRequest.current) return;
         setFlatEntries([]);
         replacePreview({ path: ".", kind: "error", message: String(error), size: 0 });
       } finally {
-        setFlatLoading(false);
+        if (request === flatRequest.current) setFlatLoading(false);
       }
       return;
     }
+    if (variant === "page") { setFlatEntries([]); setIndexTotal(0); setFlatLoading(false); return; }
     const visited = new Set<string>();
     const collect = async (path: string): Promise<FlatFileEntry[]> => {
       if (visited.has(path)) return [];
@@ -275,23 +287,24 @@ export default function FileTree({ extFilter, flatFiles = false, useIndex = fals
 
     try {
       const files = await collect(".");
+      if (request !== flatRequest.current) return;
       files.sort((left, right) => left.entry.name.localeCompare(right.entry.name, "zh-CN") || left.folder.localeCompare(right.folder, "zh-CN"));
       setFlatEntries(files);
     } catch (error) {
       setFlatEntries([]);
       replacePreview({ path: ".", kind: "error", message: String(error), size: 0 });
     } finally {
-      setFlatLoading(false);
+      if (request === flatRequest.current) setFlatLoading(false);
     }
   };
 
+  useEffect(() => { setIndexOffset(0); }, [indexQuery, indexCategory]);
   useEffect(() => {
-    if (flatFiles) void loadFlatFiles();
-    else void load(".");
-    // The parent key also remounts after an explicit index refresh; these
-    // dependencies cover the initial async index-summary load.
+    const timer = window.setTimeout(() => { if (flatFiles) void loadFlatFiles(); else void load(currentPath); }, indexQuery ? 180 : 0);
+    // Refresh the collection without remounting and losing an open preview.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flatFiles, useIndex, indexCategory]);
+    return () => { window.clearTimeout(timer); flatRequest.current++; };
+  }, [flatFiles, useIndex, indexCategory, indexQuery, indexOffset, refreshToken]);
 
   const toggleDir = (path: string) => {
     const node = nodes[path];
@@ -305,6 +318,7 @@ export default function FileTree({ extFilter, flatFiles = false, useIndex = fals
   };
 
   const navigateTo = (path: string) => {
+    requestRef.current++;
     setCurrentPath(path);
     setSelected(null);
     setAnalysisOpen(false);
@@ -312,10 +326,10 @@ export default function FileTree({ extFilter, flatFiles = false, useIndex = fals
     if (!nodes[path]?.entries) load(path);
   };
 
-  const openFile = async (path: string, entry: api.DirEntry) => {
+  const openFile = async (path: string, entry: api.DirEntry, record?: api.FileIndexRecord) => {
     if (entry.kind === "dir") return;
 
-    setSelected({ path, entry });
+    setSelected({ path, entry, record });
     setAnalysisOpen(false);
     const ext = extOf(path);
     const isImage = IMAGE_EXT.includes(ext);
@@ -346,6 +360,7 @@ export default function FileTree({ extFilter, flatFiles = false, useIndex = fals
       if (isImage || isVideo || isPdf) {
         const result = await api.vaultReadBinary(path);
         if (requestId !== requestRef.current) return;
+        if (record && result.sha256 !== record.sha256) throw new Error("文件已经变化，请更新资料后重试。");
         if (isImage) {
           replacePreview({
             path,
@@ -374,6 +389,7 @@ export default function FileTree({ extFilter, flatFiles = false, useIndex = fals
 
       const result = await api.vaultReadFile(path);
       if (requestId !== requestRef.current) return;
+      if (record && result.sha256 !== record.sha256) throw new Error("文件已经变化，请更新资料后重试。");
       replacePreview({ path, kind: "text", content: result.content, size: result.size, sha256: result.sha256 });
     } catch (error) {
       if (requestId !== requestRef.current) return;
@@ -387,6 +403,7 @@ export default function FileTree({ extFilter, flatFiles = false, useIndex = fals
   };
 
   const closePreview = () => {
+    requestRef.current++;
     setSelected(null);
     setAnalysisOpen(false);
     replacePreview(null);
@@ -484,7 +501,7 @@ export default function FileTree({ extFilter, flatFiles = false, useIndex = fals
           <button
             key={flatPath}
             className={`file-manager__list-row ${active ? "file-manager__item--selected" : ""}`}
-            onClick={() => flatFiles ? openFile(flatPath, entry) : activateEntry(entry)}
+            onClick={() => flatFiles ? openFile(flatPath, entry, flatItem?.record) : activateEntry(entry)}
             role="row"
             title={flatPath}
           >
@@ -514,7 +531,7 @@ export default function FileTree({ extFilter, flatFiles = false, useIndex = fals
           <button
             key={flatPath}
             className={`file-manager__grid-card ${active ? "file-manager__item--selected" : ""}`}
-            onClick={() => flatFiles ? openFile(flatPath, entry) : activateEntry(entry)}
+            onClick={() => flatFiles ? openFile(flatPath, entry, flatItem?.record) : activateEntry(entry)}
             title={flatPath}
           >
             <span className={`file-manager__thumbnail file-manager__thumbnail--${entry.kind}`}>
@@ -534,10 +551,11 @@ export default function FileTree({ extFilter, flatFiles = false, useIndex = fals
     if (flatFiles) {
       return (
         <>
-          <div className="file-manager__flat-summary"><b>{flatEntries.length} 个文件</b><span>已从所有文件夹汇总，所在文件夹显示在文件名后</span></div>
+          <div className="file-manager__flat-summary"><b>{useIndex ? indexTotal : flatEntries.length} 份资料</b><span>{indexQuery ? `查找“${indexQuery}”` : "已收纳资料，按实际文件类型分类"}</span></div>
           <div className="file-manager__flat-scroll">
-            {flatLoading ? <div className="file-manager__loading">正在汇总文件…</div> : viewMode === "preview" ? renderPreviewGrid() : renderList()}
+            {flatLoading ? <div className="file-manager__loading">正在查找…</div> : !flatEntries.length ? <div className="file-manager__preview-state"><FileText size={32} /><b>{indexQuery ? "这次还没找到" : "把资料放进来，之后直接找。"}</b><span>{indexQuery ? "试试文件名、路径或内容指纹。" : "添加后会自动分类；原有 Home 资料也可以按需加入。"}</span></div> : viewMode === "preview" ? renderPreviewGrid() : renderList()}
           </div>
+          {useIndex && indexTotal > 100 && <div className="file-library__pagination"><button disabled={indexOffset === 0 || flatLoading} onClick={() => setIndexOffset((value) => Math.max(0, value - 100))}>上一页</button><span>{indexOffset + 1}—{Math.min(indexOffset + 100, indexTotal)} / {indexTotal}</span><button disabled={indexOffset + 100 >= indexTotal || flatLoading} onClick={() => setIndexOffset((value) => value + 100)}>下一页</button></div>}
         </>
       );
     }
@@ -550,6 +568,8 @@ export default function FileTree({ extFilter, flatFiles = false, useIndex = fals
         <div className="file-manager__directory">
           {nodes[currentPath]?.loading ? (
             <div className="file-manager__loading">正在读取文件夹…</div>
+          ) : !currentEntries.length ? (
+            <div className="file-manager__preview-state"><FileText size={32} /><b>{indexQuery ? "这次还没找到" : "这里还没有资料"}</b><span>{indexQuery ? "试试别的文件名，或整理已有 Home 后搜索全部资料。" : "点击“添加资料”，在本机收好第一份。"}</span></div>
           ) : viewMode === "list" ? renderList() : renderPreviewGrid()}
         </div>
       </>
@@ -599,7 +619,7 @@ export default function FileTree({ extFilter, flatFiles = false, useIndex = fals
               {fileAnalysisContext && preview.kind !== "loading" && <button className="file-manager__preview-ai" onClick={() => setAnalysisOpen((current) => !current)} aria-pressed={analysisOpen}><Sparkle size={14} />AI 分析</button>}
               <button onClick={closePreview} title="关闭预览" aria-label="关闭预览"><X size={16} /></button>
             </header>
-            <div className="file-manager__preview-body">{renderPreviewBody(preview)}{analysisOpen && fileAnalysisContext && <AIAnalysisPanel context={fileAnalysisContext} compact />}</div>
+            <div className="file-manager__preview-body">{selected?.record && <details className="file-library__source"><summary>来源与内容指纹</summary><dl><dt>原始来源</dt><dd>{selected.record.original_path}</dd><dt>当前位置</dt><dd>{selected.record.path}</dd><dt>SHA-256</dt><dd><code>{selected.record.sha256}</code></dd></dl></details>}{renderPreviewBody(preview)}{analysisOpen && fileAnalysisContext && <AIAnalysisPanel context={fileAnalysisContext} compact />}</div>
           </>
         ) : (
           <div className="file-manager__preview-empty">

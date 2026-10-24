@@ -334,7 +334,10 @@ pub use welcome::{ConnectionMode, WelcomeError, WelcomePreferences, WelcomeVault
 
 #[path = "vault/file_index.rs"]
 mod file_index;
-pub use file_index::{FileCategory, FileIndexFilter, FileIndexRecord, FileIndexResult, FileIndexSummary, PhotoLibraryFilter, PhotoLibraryResult, PhotoTag, PhotoTagKind, PhotoTagRecord};
+pub use file_index::{FileCategory, FileIndexFilter, FileIndexRecord, FileIndexResult, FileIndexSummary, FileLibraryImportInput, FileLibraryImportResult, PhotoLibraryFilter, PhotoLibraryResult, PhotoTag, PhotoTagKind, PhotoTagRecord};
+pub use file_index::{DocumentReference, DocumentReadInput, DocumentPreview, DocumentFavorite, DocumentFavoriteInput, DocumentCollection, DocumentCollectionInput, DocumentCollectionKind, DocumentCollectionStatus, DocumentLibraryState, DocumentBundleInput, DocumentSearchInput, DocumentSearchResult};
+pub use file_index::{VideoReference, VideoReadInput, VideoTagRecord, VideoTagsInput, VideoStory, VideoStoryInput, VideoLibraryItem, VideoLibraryResult};
+pub use file_index::{ContentReference, ContentEvidence, ContentResult, ContentAnnotation, ContentReadInput, ContentAnalyzeInput, ContentUpdateInput};
 
 impl Vault {
     pub fn new() -> Self {

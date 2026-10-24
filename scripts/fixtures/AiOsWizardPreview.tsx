@@ -14,7 +14,7 @@ function Preview() {
   const [revision, setRevision] = useState(0), [, redraw] = useState(0);
   const services: WelcomeServices = React.useMemo(() => ({
     aiOsStatus:async()=>structuredClone(current),
-    aiOsLogin:async()=>{ throw new Error("Preview does not create accounts"); },
+    aiOsLogin:async(username)=>{if(params.has("unlock-error"))throw new Error("LOGIN_FAILED");current={...current,initialized:true,authenticated:true,username,bitbay:current.bitbay??null};redraw((n)=>n+1);return structuredClone(current);},
     aiOsBitBaySendCode:async()=>{platformCalls++;redraw((n)=>n+1);return {sent:true,retry_after_seconds:60};},
     aiOsBitBayRegister:async(email)=>{platformCalls++;redraw((n)=>n+1);if(params.has("account-error"))throw new Error("BITBAY_CODE_INVALID");current={...current,initialized:true,authenticated:true,username:email,bitbay:{email,user_id:42}};return structuredClone(current);},
     aiOsBitBayLogin:async(email)=>{platformCalls++;redraw((n)=>n+1);if(params.has("account-error"))throw new Error("BITBAY_LOGIN_FAILED");current={...current,initialized:true,authenticated:true,username:email,bitbay:{email,user_id:42}};return structuredClone(current);},

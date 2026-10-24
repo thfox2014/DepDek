@@ -9,6 +9,7 @@ pub mod audit;
 mod bitbay_public_api;
 pub mod credentials;
 pub mod memory;
+pub mod model_connection;
 pub mod obsidian;
 pub mod rpc;
 #[cfg(unix)]

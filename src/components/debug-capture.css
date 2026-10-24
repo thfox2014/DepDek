@@ -1,0 +1,48 @@
+.jiaho-debug-control { position: fixed; z-index: 250; right: 16px; bottom: 14px; }
+.jiaho-debug-control > button { display: flex; align-items: center; justify-content: flex-start; gap: 7px; padding: 7px 10px; border: 1px solid #dce5d8; border-radius: 999px; background: #fffdf8eF; color: #62776a; font-size: 10px; text-align: left; box-shadow: 0 3px 12px #1c3b3014; backdrop-filter: blur(10px); }
+.jiaho-debug-control > button i { width: 7px; height: 7px; margin-left: 2px; border-radius: 50%; background: #aaa99f; }
+.jiaho-debug-control > button i.is-on { background: #2d9471; box-shadow: 0 0 0 3px #2d94711a; }
+.jiaho-debug-backdrop { position: fixed; z-index: 300; inset: 0; display: grid; place-items: center; padding: 24px; background: #17231d66; }
+.jiaho-debug-dialog { display: flex; flex-direction: column; width: min(560px, 100%); max-height: min(720px, 90vh); padding: 20px; border: 1px solid #dce5d8; border-radius: 18px; background: #fffdf8; color: #173f35; box-shadow: 0 24px 80px #16251e2e; }
+.jiaho-debug-dialog > header { display: flex; align-items: center; justify-content: space-between; }
+.jiaho-debug-dialog > header small, .jiaho-debug-dialog > p { color: #77867a; font-size: 11px; }
+.jiaho-debug-dialog h2 { margin: 2px 0 0; font-size: 20px; font-weight: 600; }
+.jiaho-debug-dialog > header button { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: #f3f5ef; color: #547065; }
+.jiaho-debug-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; margin: 10px 0 14px; padding: 12px 14px; border: 1px solid #e1e7dc; border-radius: 12px; background: #f8faf5; color: inherit; text-align: left; }
+.jiaho-debug-toggle b, .jiaho-debug-toggle small { display: block; }
+.jiaho-debug-toggle small { margin-top: 3px; color: #78877b; font-size: 10px; }
+.jiaho-debug-toggle > i { display: block; width: 38px; height: 22px; padding: 3px; border-radius: 99px; background: #d5dbd2; transition: background .16s ease; }
+.jiaho-debug-toggle > i.is-on { background: #2b9270; }
+.jiaho-debug-toggle > i em { display: block; width: 16px; height: 16px; border-radius: 50%; background: white; box-shadow: 0 1px 3px #0002; transition: transform .16s ease; }
+.jiaho-debug-toggle > i.is-on em { transform: translateX(16px); }
+.jiaho-debug-list { min-height: 90px; flex: 1; overflow-y: auto; border: 1px solid #e7e8de; border-radius: 12px; background: #fff; }
+.jiaho-debug-empty { padding: 34px 18px; color: #879087; font-size: 12px; text-align: center; }
+.jiaho-debug-list article { padding: 12px 14px; border-bottom: 1px solid #edf0e9; font-size: 11px; }
+.jiaho-debug-list article:last-child { border-bottom: 0; }
+.jiaho-debug-list time { display: block; margin-bottom: 4px; color: #879087; font-size: 9px; }
+.jiaho-debug-list article > b { color: #b75b42; font-size: 10px; }
+.jiaho-debug-list article p { margin: 4px 0; overflow-wrap: anywhere; }
+.jiaho-debug-list details { margin-top: 7px; color: #728075; }
+.jiaho-debug-list pre, .jiaho-crash-details pre { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 9px; }
+.jiaho-debug-notice { margin-top: 10px; color: #47846e; font-size: 10px; }
+.jiaho-debug-dialog > footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 14px; }
+.jiaho-debug-dialog > footer button { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 11px; border: 1px solid #e0e6dc; border-radius: 9px; background: transparent; color: #536d61; font-size: 10px; }
+.jiaho-debug-dialog > footer button.is-primary { border-color: #17463b; background: #17463b; color: white; }
+.jiaho-debug-dialog button:disabled { opacity: .4; }
+.jiaho-crash-screen { display: grid; place-items: center; min-height: 100vh; padding: 24px; background: #faf8f0; color: #193e35; font-family: inherit; }
+.jiaho-crash-card { width: min(560px, 100%); padding: clamp(25px, 5vw, 48px); border: 1px solid #e3e6da; border-radius: 22px; background: #fffdf8; box-shadow: 0 18px 60px #2a382515; }
+.jiaho-crash-brand { display: flex; align-items: baseline; gap: 10px; }
+.jiaho-crash-brand span { font-size: 18px; font-weight: 700; letter-spacing: .12em; }
+.jiaho-crash-brand small { color: #7b897c; font-size: 10px; letter-spacing: .12em; }
+.jiaho-crash-mark { display: grid; place-items: center; width: 44px; height: 44px; margin: 34px 0 17px; border-radius: 14px; background: #eef4e9; color: #47856a; }
+.jiaho-crash-eyebrow { color: #8a967e; font-size: 10px; letter-spacing: .1em; }
+.jiaho-crash-card h1 { margin: 7px 0 10px; font-size: clamp(23px, 4vw, 31px); font-weight: 600; letter-spacing: -.04em; }
+.jiaho-crash-copy { max-width: 400px; color: #748176; font-size: 13px; line-height: 1.8; }
+.jiaho-crash-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 25px; }
+.jiaho-crash-actions button { min-height: 38px; padding: 0 13px; border: 1px solid #dce4d8; border-radius: 10px; background: transparent; color: #527062; font-size: 11px; }
+.jiaho-crash-actions button.is-primary { border-color: #17463b; background: #17463b; color: #fffdf8; }
+.jiaho-crash-details { margin-top: 18px; padding: 10px; border-radius: 9px; background: #f5f6ef; color: #59695c; }
+.jiaho-crash-details summary { cursor: pointer; font-size: 10px; }
+.jiaho-crash-details pre { max-height: 220px; }
+.jiaho-crash-footnote { display: block; margin-top: 24px; color: #98a095; font-size: 9px; }
+@media (max-width: 600px) { .jiaho-debug-backdrop { padding: 12px; } .jiaho-debug-dialog { padding: 15px; } .jiaho-debug-dialog > footer button { padding: 0 8px; } }

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="家合家庭 AI 中枢交互概念稿，所有内容为虚构示例，不连接真实设备或模型。">
+  <title>家合 · 家庭 AI 中枢原型</title>
+  <link rel="stylesheet" href="prototype.css">
+</head>
+<body data-theme="light" data-layout="standard">
+  <div class="prototype-note"><span>家合 · 交互概念稿 v0</span><span>全部为示例 · 不采集声音、画面或账户</span><button id="tweaks-open" type="button">演示设置</button></div>
+  <div class="shell" id="workspace">
+    <aside class="rail">
+      <a class="brand" href="#wukong" aria-label="家合首页"><img src="assets/jiaho-brand/logo.png" alt="家合 Jiaho"><span>家合<small>AI, at home.</small></span></a>
+      <div class="home-label"><span class="dot"></span>我的家<small>示例空间</small></div>
+      <nav id="navigation" aria-label="主导航">
+        <button data-view="wukong" class="nav-item is-selected" aria-current="page"><img src="assets/jiaho-brand/wukong.svg" alt=""><span>悟空<small>有什么事，慢慢说</small></span></button>
+        <button data-view="home" class="nav-item"><span data-icon="house"></span><span>我的家<small>家里此刻</small></span></button>
+        <button data-view="memory" class="nav-item"><span data-icon="leaf"></span><span>家的记忆<small>记住那些重要的</small></span><i id="memory-dot" aria-label="有一项待核对"></i></button>
+        <button data-view="files" class="nav-item"><span data-icon="folder"></span><span>我的资料<small>东西都有归处</small></span></button>
+      </nav>
+      <div class="rail-bottom"><button class="settings-link" data-view="settings"><span data-icon="shield"></span>安心与设置<span data-icon="chevron"></span></button><button id="profile" class="profile"><span class="profile-avatar">陈</span><span><b>我的私人空间</b><small>仅你可见 · 演示账号</small></span><span data-icon="lock"></span></button><div class="rail-version">JIAHO HOME <span>设计预览</span></div></div>
+    </aside>
+    <main class="main">
+      <header class="topbar"><div class="breadcrumb" id="breadcrumb">悟空 <span>/</span> 在家</div><div class="top-actions"><button id="privacy-status" class="privacy-status" title="查看感知与隐私状态"><span data-icon="camera-off"></span><span id="privacy-label">镜头已物理关闭</span></button><button id="route-status" class="route-status" title="查看模型处理方式"><span class="dot"></span><span>本机优先</span></button><button id="theme-toggle" class="icon-button" aria-label="切换深色模式"><span data-icon="moon"></span></button><button id="panel-toggle" class="icon-button" aria-label="收起操作面板" aria-expanded="true"><span data-icon="panel"></span></button></div></header>
+      <div class="content-shell">
+        <section class="stage" id="stage" aria-label="当前页面"></section>
+        <aside class="context" id="context" aria-label="操作面板"></aside>
+      </div>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <dialog id="tweaks" class="tweaks"><header><b>Tweaks</b><button class="icon-button" data-close="tweaks" aria-label="关闭演示设置">×</button></header><p>只改变当前原型，不操作真实硬件。</p><label>显示变体<select id="layout-select"><option value="standard">标准三栏</option><option value="large">大字陪伴</option><option value="night">安静夜间</option></select></label><label>模拟遮光罩<select id="shutter-select"><option value="closed">已合上 · 摄像头断电</option><option value="open">已打开 · 本机视觉可用</option><option value="fault">状态不一致 · 保持关闭</option></select></label><label class="switch-row">模拟断网<input id="offline-switch" type="checkbox" role="switch"></label><label class="switch-row">模拟无本地大模型<input id="local-missing-switch" type="checkbox" role="switch"></label><label class="switch-row">模拟灯光回执丢失<input id="device-failure-switch" type="checkbox" role="switch"></label><label class="switch-row">模拟空资料库<input id="empty-switch" type="checkbox" role="switch"></label><button class="button secondary" id="reset-demo">重置所有演示状态</button><small>刷新页面同样会重置。没有本地持久化或网络请求。</small></dialog>
+  <dialog id="login-dialog" class="login-dialog"><span class="dialog-mark" data-icon="lock"></span><p class="eyebrow">JIAHO · 私人空间</p><h2>欢迎回来</h2><p>空间已锁定，登录后可以接着刚才的事。</p><div class="demo-login-note">这是交互演示，不收集真实账号或密码。</div><button class="button primary" id="demo-login">模拟登录并继续<span data-icon="arrow"></span></button></dialog>
+  <script src="prototype.js"></script>
+</body>
+</html>

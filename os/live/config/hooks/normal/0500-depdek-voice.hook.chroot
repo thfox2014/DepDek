@@ -12,17 +12,10 @@ cat > /etc/default/locale <<'EOF'
 LANG=zh_CN.UTF-8
 LANGUAGE=zh_CN:zh:en_US:en
 EOF
+im-config -n fcitx5
 
-install -d -m 0755 /etc/xdg/autostart /etc/systemd/system /etc/profile.d
-cat > /etc/xdg/autostart/depdek-ai-os.desktop <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=Jiaho AI-OS
-Comment=Open your Jiaho home space
-Exec=agent-workbench
-Terminal=false
-X-GNOME-Autostart-enabled=true
-EOF
+install -d -m 0755 /etc/systemd/system /etc/profile.d
+install -D -m 0755 /usr/share/applications/jiaho.desktop /etc/skel/Desktop/jiaho.desktop
 
 # The OS session is a display host. Private AI-OS access still requires the
 # user's own native password; it is never a Webdesk admin / R1 identity.
@@ -34,3 +27,5 @@ update-initramfs -u -k all
 install -m 0755 /usr/share/depdek/depdek-shell /usr/local/bin/depdek-shell
 install -m 0644 /usr/share/depdek/depdek-welcome.sh /etc/profile.d/depdek-welcome.sh
 chmod 0755 /usr/lib/jiaho/select-session-user
+chmod 0755 /usr/lib/jiaho/start-session /usr/local/bin/jiaho
+desktop-file-validate /usr/share/xsessions/jiaho.desktop /usr/share/applications/jiaho.desktop

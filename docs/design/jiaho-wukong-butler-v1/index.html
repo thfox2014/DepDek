@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="家合悟空家庭管家交互原型：持续对话、后台办事、必要时在右侧操作。全部为虚构演示。">
+  <title>悟空在 · 家合 Jiaho</title>
+  <link rel="stylesheet" href="prototype.css">
+</head>
+<body data-theme="light" data-layout="everyday">
+  <div class="demo-strip"><span>家合 · 悟空管家 v1</span><span>交互原型 · 不连接真实资料、设备或模型</span><button id="open-tweaks">演示设置</button></div>
+  <div class="app" id="app">
+    <aside class="sidebar" aria-label="家合导航">
+      <a href="#wukong" class="brand" aria-label="回到悟空主对话"><img src="assets/jiaho-brand/logo.png" alt="家合 Jiaho"><span>家合<small>AI, at home.</small></span></a>
+      <div class="space-label"><span class="status-dot"></span> 我的家 <span>私人空间 · 示例</span></div>
+      <nav id="main-nav">
+        <button class="nav-button selected" data-nav="chat" aria-current="page"><img class="nav-avatar" src="assets/jiaho-brand/wukong.svg" alt=""><span>悟空<small>家里的事，交给我。</small></span></button>
+        <button class="nav-button" data-nav="tasks"><svg class="icon"><use href="assets/icons.svg#check-circle"></use></svg><span>交给我的事</span><span id="task-count" class="count" hidden>0</span></button>
+        <button class="nav-button" data-nav="home"><svg class="icon"><use href="assets/icons.svg#house"></use></svg><span>我的家</span></button>
+        <button class="nav-button" data-nav="memory"><svg class="icon"><use href="assets/icons.svg#leaf"></use></svg><span>家的记忆</span></button>
+        <button class="nav-button" data-nav="files"><svg class="icon"><use href="assets/icons.svg#folder"></use></svg><span>我的资料</span></button>
+      </nav>
+      <section class="sidebar-work" id="sidebar-work" aria-label="当前任务"></section>
+      <div class="sidebar-bottom"><button class="nav-button" data-nav="settings"><svg class="icon"><use href="assets/icons.svg#sliders"></use></svg><span>安心与设置</span></button><div class="profile"><span class="profile-icon"><svg class="icon"><use href="assets/icons.svg#user"></use></svg></span><span>我的私人空间<small>演示资料，仅在当前页</small></span><svg class="icon"><use href="assets/icons.svg#lock"></use></svg></div><div class="version">JIAHO <span>APP 基线 0.2.1 · 设计预览</span></div></div>
+    </aside>
+    <main class="workspace" id="workspace">
+      <header class="topbar"><div class="identity"><img src="assets/jiaho-brand/wukong.svg" alt="悟空"><span><strong>悟空</strong><small id="presence-text">在家，随时可以说。</small></span></div><div class="top-actions"><button class="privacy-pill" data-action="privacy" aria-label="查看感知与隐私状态"><svg class="icon"><use href="assets/icons.svg#camera-slash"></use></svg><span>镜头关闭 · 示例</span></button><button class="route-pill" data-action="model" aria-label="查看本机与云端模型处理方式"><span class="status-dot"></span><span id="route-label">本机模型 · 示例</span></button><button class="icon-button" id="theme-toggle" aria-label="切换深色模式"></button><button class="icon-button" id="panel-toggle" aria-label="展开操作面板" aria-expanded="false"><svg class="icon"><use href="assets/icons.svg#panel"></use></svg></button></div></header>
+      <div class="workspace-body"><div class="conversation"><section class="transcript" id="transcript" aria-label="和悟空的持续对话"></section><button id="new-message" class="new-message" hidden>有新进展，回到最新消息 ↓</button><div id="composer-region"></div></div><aside class="panel" id="panel" aria-label="当前操作面板" hidden></aside></div>
+    </main>
+  </div>
+  <dialog id="tweaks"><div class="dialog-heading"><h2>Tweaks</h2><button class="icon-button" data-close="tweaks" aria-label="关闭演示设置">×</button></div><p>只改变这份原型，不操作真实系统。</p><label>显示方式<select id="layout-choice"><option value="everyday">日常管家 · 对话优先</option><option value="companion">陪伴大字 · 家庭屏</option><option value="focus">专注办事 · 并排看结果</option></select></label><label class="toggle-row">头像轻动效<input type="checkbox" id="motion-toggle" checked role="switch"></label><label class="toggle-row">模拟空资料库<input type="checkbox" id="empty-toggle" role="switch"></label><label class="toggle-row">模拟设备回执丢失<input type="checkbox" id="failure-toggle" role="switch"></label><label class="toggle-row">模拟本机模型不可用<input type="checkbox" id="model-toggle" role="switch"></label><button class="button secondary" id="reset">重置本页演示</button><small>状态只保存在页面内存，刷新即重置。不使用麦克风、摄像头或网络 API。</small></dialog>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <div class="sr-only" id="announcer" role="status" aria-live="polite"></div>
+  <script src="prototype.js"></script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 # DepDek AI-OS MVP iteration log
 
-Target: a Debian 13 (Trixie) amd64 hybrid installer ISO that starts the DepDek AI-OS Shell, includes Calamares, initializes the user's DepDek Home, and can run Mandarin voice transcription offline. Each iteration defines or exercises observable acceptance tests; failures and fixes are retained below.
+Target: a Debian 13 (Trixie) amd64 hybrid installer ISO that starts on a usable KDE Plasma desktop, lets the user open DepDek AI-OS manually in a normal window, includes Calamares, initializes the user's DepDek Home, and can run Mandarin voice transcription offline. Each iteration defines or exercises observable acceptance tests; failures and fixes are retained below.
 
 ## MVP acceptance tests
 

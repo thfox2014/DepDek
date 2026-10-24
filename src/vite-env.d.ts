@@ -1,7 +1,9 @@
 /// <reference types="vite/client" />
+declare module "pdfjs-dist/build/pdf.worker.min.mjs";
 
 interface ImportMetaEnv {
   readonly VITE_DEPDEK_OS?: string;
+  readonly VITE_DEPDEK_DEBUG?: string;
 }
 
 interface ImportMeta {

@@ -1,0 +1,197 @@
+@import "./styles/layout.css";
+@import "./styles/components.css";
+
+:root {
+  font-family: "PingFang SC", "Noto Sans SC", sans-serif;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.65;
+  color-scheme: light;
+  --bg: #fbf8f0;
+  --paper: #fffdf8;
+  --ink: #23463c;
+  --muted: #637669;
+  --line: #e2e4d9;
+  --soft: #eaf0e8;
+  --warm: #a66d36;
+  --viewport-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #18251f;
+  --paper: #20322a;
+  --ink: #edf2e9;
+  --muted: #becabd;
+  --line: #3d5144;
+  --soft: #304c3e;
+  --warm: #eac06b;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+body {
+  background: var(--soft);
+  color: var(--ink);
+  overscroll-behavior: none;
+}
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+button,
+a,
+input,
+textarea,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+button {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--warm);
+  outline-offset: 3px;
+}
+a {
+  color: inherit;
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+  text-wrap: pretty;
+}
+svg {
+  flex-shrink: 0;
+}
+p {
+  overflow-wrap: anywhere;
+}
+button svg {
+  pointer-events: none;
+}
+small {
+  font-size: 12px;
+}
+input,
+textarea,
+select {
+  accent-color: var(--ink);
+}
+.room-wukong {
+  display: block;
+  flex-shrink: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.room-wukong__eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: blink 8s ease-in-out infinite;
+}
+.room-wukong__pupils {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: look 12s ease-in-out infinite;
+}
+.room-wukong.is-listening {
+  animation: attend 1.5s ease-in-out infinite;
+}
+.hero-avatar .room-wukong {
+  animation: breathe 7s ease-in-out infinite;
+}
+.room-wukong.is-thinking {
+  animation: attend 2s ease-in-out infinite;
+}
+@keyframes blink {
+  0%,
+  44%,
+  47%,
+  100% {
+    transform: scaleY(1);
+  }
+  45%,
+  46% {
+    transform: scaleY(0.08);
+  }
+}
+@keyframes look {
+  0%,
+  35%,
+  75%,
+  100% {
+    transform: translateX(0);
+  }
+  40%,
+  50% {
+    transform: translateX(1.2px);
+  }
+}
+@keyframes breathe {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0);
+  }
+  50% {
+    transform: translateY(-3px) rotate(-1deg);
+  }
+}
+@keyframes attend {
+  50% {
+    transform: rotate(-3deg);
+  }
+}
+@keyframes turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes wave {
+  to {
+    transform: scaleY(0.3);
+  }
+}
+:root[data-motion="false"] * {
+  animation: none !important;
+  transition: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

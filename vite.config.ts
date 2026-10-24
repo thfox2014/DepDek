@@ -1,10 +1,37 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 
 // VERSION is the single source of truth for the app version (scripts/version.mjs).
 const appVersion = readFileSync(fileURLToPath(new URL("./VERSION", import.meta.url)), "utf8").trim();
+
+// PDF fonts/CMaps ship with the app. Never use a public CDN or expose a disk path.
+function localPdfAssets(): Plugin {
+  const assets = new Map<string, Buffer>();
+  for (const folder of ["cmaps", "standard_fonts"]) {
+    const directory = new URL(`./node_modules/pdfjs-dist/${folder}/`, import.meta.url);
+    for (const name of readdirSync(directory)) {
+      if (!/^[\w.-]+\.(bcmap|pfb|ttf)$/.test(name) && !/^LICENSE(?:_[A-Z]+)?$/.test(name)) continue;
+      assets.set(`pdf-assets/${folder}/${name}`, readFileSync(new URL(name, directory)));
+    }
+  }
+  assets.set("pdf-assets/LICENSE_PDFJS", readFileSync(new URL("./node_modules/pdfjs-dist/LICENSE", import.meta.url)));
+  return {
+    name: "depdek-local-pdf-assets",
+    configureServer(server) {
+      server.middlewares.use((request, response, next) => {
+        const content = assets.get(request.url?.split("?")[0].slice(1) ?? "");
+        if (!content) return next();
+        if (request.method !== "GET" && request.method !== "HEAD") { response.statusCode = 405; response.end(); return; }
+        response.setHeader("Content-Type", "application/octet-stream");
+        response.setHeader("Cache-Control", "no-store");
+        response.end(request.method === "HEAD" ? undefined : content);
+      });
+    },
+    generateBundle() { for (const [fileName, source] of assets) this.emitFile({ type: "asset", fileName, source }); },
+  };
+}
 
 // Browser preview: the standalone sidecar issues a per-launch token, written
 // to .preview-token (0600) by scripts/dev-preview.mjs. The proxy injects it as
@@ -20,7 +47,7 @@ const previewToken = (() => {
 
 // Tauri 2 expects a fixed dev port and no screen clearing.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), localPdfAssets()],
   clearScreen: false,
   define: {
     __APP_VERSION__: JSON.stringify(appVersion),

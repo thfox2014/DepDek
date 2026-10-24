@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=家合 Jiaho
+Comment=Your home AI system
+Exec=/usr/lib/jiaho/start-session
+TryExec=/usr/bin/agent-workbench
+Type=Application

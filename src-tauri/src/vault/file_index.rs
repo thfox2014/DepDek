@@ -6,12 +6,26 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
+#[path = "file_index/import.rs"]
+mod import;
+pub use import::{FileLibraryImportInput, FileLibraryImportResult};
+#[path = "file_index/documents.rs"]
+mod documents;
+pub use documents::*;
+#[path = "file_index/videos.rs"]
+mod videos;
+pub use videos::*;
+#[path = "file_index/content.rs"]
+mod content;
+pub use content::*;
+
 const PRIVATE: &str = ".depdek-file-index";
 const FILES: TableDefinition<&str, &str> = TableDefinition::new("files_v1");
 const SHA: MultimapTableDefinition<&str, &str> = MultimapTableDefinition::new("sha_v1");
 const CATEGORY: MultimapTableDefinition<&str, &str> = MultimapTableDefinition::new("category_v1");
 const META: TableDefinition<&str, &str> = TableDefinition::new("meta_v1");
 const PHOTO_TAGS: TableDefinition<&str, &str> = TableDefinition::new("photo_tags_v1");
+const IMPORTS: TableDefinition<&str, &str> = TableDefinition::new("imports_v1");
 const MAX_PHOTO_BYTES: u64 = 12 * 1024 * 1024;
 const MAX_FILES: usize = 50_000;
 const MAX_BYTES: u64 = 64 * 1024 * 1024 * 1024;
@@ -39,6 +53,8 @@ impl FileCategory {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileIndexRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_id: Option<String>,
     pub path: String,
     pub original_path: String,
     pub name: String,
@@ -49,8 +65,16 @@ pub struct FileIndexRecord {
     pub modified_ms: u64,
     pub indexed_at_ms: u64,
 }
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FileIndexCoverage { Imports, HomeSnapshot }
+fn legacy_coverage() -> FileIndexCoverage { FileIndexCoverage::HomeSnapshot }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileIndexSummary {
+    #[serde(default)]
+    pub library_id: String,
+    #[serde(default = "legacy_coverage")]
+    pub coverage: FileIndexCoverage,
     pub indexed_at_ms: u64,
     pub total: usize,
     pub total_bytes: u64,
@@ -60,6 +84,8 @@ pub struct FileIndexSummary {
 impl Default for FileIndexSummary {
     fn default() -> Self {
         Self {
+            library_id: String::new(),
+            coverage: FileIndexCoverage::Imports,
             indexed_at_ms: 0,
             total: 0,
             total_bytes: 0,
@@ -214,7 +240,7 @@ fn indexed_photo(db: &Database, path: &str, sha: &str) -> Result<FileIndexRecord
 }
 
 #[cfg(unix)]
-fn photo_bytes(pair: &RootPair, path: &str, expected: &str) -> Result<Vec<u8>, VaultError> {
+fn indexed_source_bytes(pair: &RootPair, path: &str, expected: &str, maximum: u64) -> Result<Vec<u8>, VaultError> {
     use std::os::unix::fs::MetadataExt;
     let mut directory = root_fd(pair)?;
     let mut parts = path.split('/').peekable();
@@ -229,15 +255,15 @@ fn photo_bytes(pair: &RootPair, path: &str, expected: &str) -> Result<Vec<u8>, V
         if !before.is_file() || before.nlink() != 1 {
             return Err(VaultError::Escape("unsafe photo source".into()));
         }
-        if before.len() > MAX_PHOTO_BYTES {
+        if before.len() > maximum {
             return Err(VaultError::TooLarge);
         }
         let mut bytes = Vec::new();
         (&mut file)
-            .take(MAX_PHOTO_BYTES + 1)
+            .take(maximum + 1)
             .read_to_end(&mut bytes)?;
         let after = file.metadata()?;
-        if bytes.len() as u64 > MAX_PHOTO_BYTES {
+        if bytes.len() as u64 > maximum {
             return Err(VaultError::TooLarge);
         }
         if before.len() != bytes.len() as u64
@@ -258,8 +284,12 @@ fn photo_bytes(pair: &RootPair, path: &str, expected: &str) -> Result<Vec<u8>, V
     Err(VaultError::InvalidParams("missing photo path".into()))
 }
 #[cfg(not(unix))]
-fn photo_bytes(_: &RootPair, _: &str, _: &str) -> Result<Vec<u8>, VaultError> {
+fn indexed_source_bytes(_: &RootPair, _: &str, _: &str, _: u64) -> Result<Vec<u8>, VaultError> {
     Err(io::Error::other("photo preview currently requires Linux or macOS").into())
+}
+
+fn photo_bytes(pair: &RootPair, path: &str, expected: &str) -> Result<Vec<u8>, VaultError> {
+    indexed_source_bytes(pair, path, expected, MAX_PHOTO_BYTES)
 }
 
 fn photo_mime(bytes: &[u8]) -> Result<&'static str, VaultError> {
@@ -293,6 +323,12 @@ fn now_ms() -> u64 {
         .unix_timestamp_nanos()
         .max(0)
         / 1_000_000) as u64
+}
+fn library_identity(pair: &RootPair) -> String {
+    #[cfg(unix)]
+    { use std::os::unix::ffi::OsStrExt; sha256_hex(pair.canonical.as_os_str().as_bytes()) }
+    #[cfg(not(unix))]
+    { sha256_hex(pair.canonical.to_string_lossy().as_bytes()) }
 }
 
 fn excluded(path: &str) -> bool {
@@ -484,19 +520,20 @@ impl Vault {
                 return Ok(FileIndexResult {
                     items: vec![],
                     total: 0,
-                    summary: FileIndexSummary::default(),
+                    summary: FileIndexSummary { library_id: library_identity(&pair), ..Default::default() },
                 });
             };
             let txn = db.begin_read().map_err(db_error)?;
             let files = txn.open_table(FILES).map_err(db_error)?;
             let metadata = txn.open_table(META).map_err(db_error)?;
-            let summary = metadata
+            let mut summary: FileIndexSummary = metadata
                 .get("summary")
                 .map_err(db_error)?
                 .map(|v| serde_json::from_str(v.value()))
                 .transpose()
                 .map_err(json_error)?
                 .unwrap_or_default();
+            summary.library_id = library_identity(&pair);
             let mut paths = Vec::new();
             if let Some(sha) = &filter.sha256 {
                 let table = txn.open_multimap_table(SHA).map_err(db_error)?;
@@ -525,6 +562,7 @@ impl Vault {
                 .unwrap_or_default()
                 .trim()
                 .to_lowercase();
+            let annotated = content::search_matches(&db, &needle)?;
             let mut items = Vec::new();
             let mut total = 0;
             for path in paths {
@@ -547,7 +585,8 @@ impl Vault {
                     .is_some_and(|category| category != record.category)
                     || (!needle.is_empty()
                         && !path.to_lowercase().contains(&needle)
-                        && !record.sha256.starts_with(&needle))
+                        && !record.sha256.starts_with(&needle)
+                        && !annotated.contains(&(record.path.clone(), record.sha256.to_lowercase())))
                 {
                     continue;
                 }
@@ -585,23 +624,25 @@ impl Vault {
                     "photo query limit exceeds 100".into(),
                 ));
             }
-            let Some(db) = open_index(&self.root_pair()?, false)? else {
+            let pair = self.root_pair()?;
+            let Some(db) = open_index(&pair, false)? else {
                 return Ok(PhotoLibraryResult {
                     items: vec![],
                     total: 0,
-                    summary: FileIndexSummary::default(),
+                    summary: FileIndexSummary { library_id: library_identity(&pair), ..Default::default() },
                 });
             };
             let read = db.begin_read().map_err(db_error)?;
             let files = read.open_table(FILES).map_err(db_error)?;
             let metadata = read.open_table(META).map_err(db_error)?;
-            let summary = metadata
+            let mut summary: FileIndexSummary = metadata
                 .get("summary")
                 .map_err(db_error)?
                 .map(|value| serde_json::from_str(value.value()))
                 .transpose()
                 .map_err(json_error)?
                 .unwrap_or_default();
+            summary.library_id = library_identity(&pair);
             let tags = match read.open_table(PHOTO_TAGS) {
                 Ok(table) => Some(table),
                 Err(redb::TableError::TableDoesNotExist(_)) => None,
@@ -629,6 +670,7 @@ impl Vault {
             }
             paths.sort();
             let needle = checked.query.unwrap_or_default().trim().to_lowercase();
+            let annotated = content::search_matches(&db, &needle)?;
             let mut items = Vec::new();
             let mut total = 0;
             for path in paths {
@@ -659,6 +701,7 @@ impl Vault {
                     .unwrap_or_default();
                 if !needle.is_empty()
                     && !path.to_lowercase().contains(&needle)
+                    && !annotated.contains(&(file.path.clone(), file.sha256.to_lowercase()))
                     && !labels
                         .iter()
                         .any(|tag| tag.value.to_lowercase().contains(&needle))
@@ -752,6 +795,8 @@ impl Vault {
             let mut scan = Scan {
                 records: BTreeMap::new(),
                 summary: FileIndexSummary {
+                    library_id: library_identity(&pair),
+                    coverage: FileIndexCoverage::HomeSnapshot,
                     indexed_at_ms: now_ms(),
                     ..Default::default()
                 },
@@ -762,7 +807,7 @@ impl Vault {
             self.require_ai_os_login()?;
             let write = db.begin_write().map_err(db_error)?;
             // A single transaction ensures a failed scan never replaces the previous snapshot.
-            let old: BTreeMap<String, String> = {
+            let old: BTreeMap<String, FileIndexRecord> = {
                 let table = write.open_table(FILES).map_err(db_error)?;
                 table
                     .iter()
@@ -771,7 +816,7 @@ impl Vault {
                         let (path, value) = entry.map_err(db_error)?;
                         let record: FileIndexRecord =
                             serde_json::from_str(value.value()).map_err(json_error)?;
-                        Ok((path.value().to_owned(), record.original_path))
+                        Ok((path.value().to_owned(), record))
                     })
                     .collect::<Result<_, VaultError>>()?
             };
@@ -784,7 +829,8 @@ impl Vault {
                 let mut categories = write.open_multimap_table(CATEGORY).map_err(db_error)?;
                 for (path, record) in &mut scan.records {
                     if let Some(original) = old.get(path) {
-                        record.original_path = original.clone();
+                        record.original_path = original.original_path.clone();
+                        record.file_id = original.file_id.clone();
                     }
                     let value = serde_json::to_string(record).map_err(json_error)?;
                     files
@@ -899,6 +945,7 @@ fn open_index(pair: &RootPair, create: bool) -> Result<Option<Database>, VaultEr
         write.open_multimap_table(SHA).map_err(db_error)?;
         write.open_multimap_table(CATEGORY).map_err(db_error)?;
         write.open_table(META).map_err(db_error)?;
+        write.open_table(IMPORTS).map_err(db_error)?;
         write.commit().map_err(db_error)?;
     }
     Ok(Some(db))
@@ -1065,6 +1112,7 @@ fn walk(
             }
             let (category, detected_by) = classify(&path, &head);
             Ok(FileIndexRecord {
+                file_id: None,
                 path: path.clone(),
                 original_path: pair.root.join(&path).to_string_lossy().into_owned(),
                 name,

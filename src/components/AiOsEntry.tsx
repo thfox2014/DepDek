@@ -18,6 +18,7 @@ export type WelcomeServices = {
   aiOsComplete: typeof api.aiOsComplete;
 } & ModelSetupServices & BitBayServices;
 type Step = "network" | "account" | "model" | "mode";
+type ReauthDialogProps = { username: string; setUsername: (value: string) => void; password: string; setPassword: (value: string) => void; error: string; busy: boolean; onSubmit: (event: FormEvent) => void };
 const STEPS = [
   { id: "network", label: "网络", hint: "检查联网状态", icon: WifiHigh },
   { id: "account", label: "账户", hint: "BitBay 邮箱注册", icon: UserCircle },
@@ -36,6 +37,42 @@ const ERRORS: Record<string, string> = {
 };
 function message(error: unknown) { return ERRORS[String(error)] || "暂时无法完成，请重试。"; }
 
+function ReauthDialog({ username, setUsername, password, setPassword, error, busy, onSubmit }: ReauthDialogProps) {
+  const dialog = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const root = dialog.current;
+    root?.querySelector<HTMLInputElement>('input[type="password"]')?.focus();
+    const containFocus = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); return; }
+      if (event.key !== "Tab" || !root) return;
+      const focusable = [...root.querySelectorAll<HTMLElement>('input:not(:disabled), button:not(:disabled)')];
+      const first = focusable[0], last = focusable[focusable.length - 1];
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", containFocus, true);
+    return () => document.removeEventListener("keydown", containFocus, true);
+  }, []);
+
+  return <div className="jiaho-reauth" role="presentation">
+    <section ref={dialog} className="jiaho-reauth__dialog" role="dialog" aria-modal="true" aria-labelledby="jiaho-reauth-title" aria-describedby="jiaho-reauth-copy">
+      <span className="jiaho-reauth__mark"><LockKey size={19} /></span>
+      <p className="jiaho-reauth__eyebrow">JIAHO · 本机空间</p>
+      <h2 id="jiaho-reauth-title">欢迎回来</h2>
+      <p id="jiaho-reauth-copy">空间已锁定。请登录后继续；刚才未完成的操作需要你重新发起。</p>
+      <form onSubmit={onSubmit}>
+        <label>账号<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required disabled={busy} /></label>
+        <label>密码<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required disabled={busy} /></label>
+        {error && <p className="jiaho-reauth__error" role="alert">{error}</p>}
+        <button className="jiaho-reauth__submit" type="submit" disabled={busy || !username.trim() || !password}>
+          {busy ? <><CircleNotch className="jiaho-spin" size={17} />正在解锁…</> : <>登录并继续<ArrowRight size={17} /></>}</button>
+      </form>
+      <small className="jiaho-reauth__privacy"><LockKey size={13} />密码只用于解锁本机空间，不会发送到云端。</small>
+    </section>
+  </div>;
+}
+
 /** A small real setup flow; no speculative LLM configuration reports. */
 export default function AiOsEntry({ children, services = api }: { children: ReactNode; services?: WelcomeServices }) {
   const [status, setStatus] = useState<api.AiOsStatus | null>(null), [step, setStep] = useState<Step>("network");
@@ -44,7 +81,10 @@ export default function AiOsEntry({ children, services = api }: { children: Reac
   const [username, setUsername] = useState("admin"), [password, setPassword] = useState(""), [repeat, setRepeat] = useState(""), [visible, setVisible] = useState(false);
   const [name, setName] = useState("我的家"), [language, setLanguage] = useState("zh-CN"), [purpose, setPurpose] = useState("family");
   const [pendingSelection, setPendingSelection] = useState<SetupSelection | null>(null);
+  const [reauthRequired, setReauthRequired] = useState(false), [reauthUsername, setReauthUsername] = useState("admin"), [reauthPassword, setReauthPassword] = useState(""), [reauthError, setReauthError] = useState(""), [reauthBusy, setReauthBusy] = useState(false);
   const touchedMode = useRef(false), operation = useRef(false);
+  const statusRef = useRef(status), pendingReauth = useRef(false);
+  statusRef.current = status;
   const locked = busy || modelBusy || accountBusy, authenticated = Boolean(status?.authenticated), initial = Boolean(status && !status.initialized);
   const networkState = useWelcomeNetwork(services, Boolean(status?.enabled && step === "network" && !(authenticated && status?.configured)));
   const { network, busy: networkBusy, error: networkError } = networkState;
@@ -66,6 +106,30 @@ export default function AiOsEntry({ children, services = api }: { children: Reac
     return () => { active = false; };
   }, [services]);
 
+  useEffect(() => {
+    const showReauth = (current: api.AiOsStatus) => {
+      pendingReauth.current = false;
+      setReauthUsername(current.username || "admin");
+      setReauthPassword("");
+      setReauthError("");
+      setReauthRequired(true);
+    };
+    const onLoginRequired = () => {
+      const current = statusRef.current;
+      if (current?.enabled && current.authenticated && current.configured) showReauth(current);
+      else pendingReauth.current = true;
+    };
+    window.addEventListener(api.AI_OS_LOGIN_REQUIRED, onLoginRequired);
+    return () => window.removeEventListener(api.AI_OS_LOGIN_REQUIRED, onLoginRequired);
+  }, []);
+  useEffect(() => {
+    if (!pendingReauth.current || !status) return;
+    if (status.enabled && status.authenticated && status.configured) {
+      pendingReauth.current = false;
+      setReauthUsername(status.username || "admin"); setReauthPassword(""); setReauthError(""); setReauthRequired(true);
+    } else if (!status.authenticated) pendingReauth.current = false;
+  }, [status]);
+
   const changeMode = async (next: api.AiOsConnectionMode) => {
     if (next === mode || operation.current || locked) return;
     touchedMode.current = true; setError("");
@@ -85,6 +149,19 @@ export default function AiOsEntry({ children, services = api }: { children: Reac
       if (touchedMode.current) await services.aiOsSetConnectionMode(mode);
       acceptStatus(await services.aiOsStatus(), "account");
     } catch (e) { setError(message(e)); } finally { setBusy(false); operation.current = false; }
+  };
+  const reauthenticate = async (event: FormEvent) => {
+    event.preventDefault(); if (reauthBusy || !reauthUsername.trim() || !reauthPassword) return;
+    setReauthBusy(true); setReauthError("");
+    try {
+      await services.aiOsLogin(reauthUsername.trim(), reauthPassword, false);
+      const next = await services.aiOsStatus();
+      if (!next.authenticated) throw new Error("LOGIN_REQUIRED");
+      acceptStatus(next);
+      setReauthPassword(""); setReauthRequired(false);
+      window.dispatchEvent(new Event(api.AI_OS_LOGIN_RESTORED));
+    } catch (e) { setReauthError(message(e)); }
+    finally { setReauthBusy(false); }
   };
   const acceptPlatformAccount = async (next: api.AiOsStatus) => {
     acceptStatus(next, "account");
@@ -114,8 +191,15 @@ export default function AiOsEntry({ children, services = api }: { children: Reac
     if (locked || (!authenticated && next !== "account" && next !== "network")) return;
     setStep(next); setError("");
   };
+  const localAccountSetup = status ? <details open={status.initialized && !authenticated} className="jiaho-wizard__local-account"><summary>{initial ? "暂不连接平台？先建立本机空间" : "已有本机空间？解锁继续"}</summary><p className="jiaho-wizard__hint">仅用于保护这台设备上的 Home，不会注册 BitBay 平台账户。</p><form className="jiaho-wizard__account-form" onSubmit={(event) => void login(event)}>
+    <label>本机账号或邮箱<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} minLength={3} maxLength={initial ? 32 : 254} pattern={initial ? "[A-Za-z0-9_-]+" : undefined} required disabled={locked} /></label>
+    <label>密码<div className="jiaho-entry__password"><input type={visible ? "text" : "password"} autoComplete={initial ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)} minLength={initial ? 12 : 1} maxLength={1024} placeholder={initial ? "至少 12 位" : "输入本机账户密码"} required disabled={locked} /><button type="button" disabled={locked} aria-label={visible ? "隐藏密码" : "显示密码"} onClick={() => setVisible(!visible)}>{visible ? <EyeSlash size={18} /> : <Eye size={18} />}</button></div></label>
+    {initial && <label>确认密码<input type="password" autoComplete="new-password" value={repeat} onChange={(event) => setRepeat(event.target.value)} required disabled={locked} /></label>}
+    {initial && <p className="jiaho-wizard__gift">首次创建，赠送 {status.grant_points.toLocaleString()} 本地配置体验积分。</p>}
+    <button className="jiaho-entry__primary" type="submit" disabled={locked}>{busy ? <CircleNotch className="jiaho-spin" size={18} /> : <>{initial ? "仅创建本机空间" : "解锁本机空间"}<ArrowRight size={18} /></>}</button>
+  </form></details> : null;
 
-  if (status && (!status.enabled || status.authenticated && status.configured)) return <AiOsConnectionContext.Provider value={status.connection_mode ?? mode}>{children}</AiOsConnectionContext.Provider>;
+  if (status && (!status.enabled || status.authenticated && status.configured)) return <AiOsConnectionContext.Provider value={status.connection_mode ?? mode}>{children}{reauthRequired && <ReauthDialog username={reauthUsername} setUsername={setReauthUsername} password={reauthPassword} setPassword={setReauthPassword} error={reauthError} busy={reauthBusy} onSubmit={(event) => void reauthenticate(event)} />}</AiOsConnectionContext.Provider>;
   return <main className="jiaho-entry jiaho-wizard">
     <header className="jiaho-wizard__header"><div className="jiaho-wizard__brand"><img src={logo} alt="家合 Jiaho" /><span>家合<small>家庭 AI 中心</small></span></div>
       <div className="jiaho-wizard__default-mode"><Cloud size={17} /><span>默认联网模式</span><small>第 4 步可调整</small></div>
@@ -128,18 +212,13 @@ export default function AiOsEntry({ children, services = api }: { children: Reac
         {error && <p className="jiaho-entry__error" role="alert">{error}</p>}
         {step === "account" ? <>
           <h2>用邮箱，连接 BitBay。</h2><p className="jiaho-wizard__description">使用邮箱注册 BitBay 平台账户。这是你的在线身份，与本机空间账户分开。</p>
+          {!authenticated && status?.initialized && localAccountSetup}
           <BitBayAccountSetup status={status} services={services} onReady={acceptPlatformAccount} onBusyChange={setAccountBusy} />
           {!status ? <div className="jiaho-wizard__loading"><CircleNotch className="jiaho-spin" size={23} />正在读取本机配置…<button onClick={() => void refresh()}>重试连接</button></div> : authenticated ? <>
             <div className="jiaho-wizard__account-ready"><div><UserCircle size={28} /><span><b>{status.username}</b><small>已登录 · 本机账户</small></span><Check size={19} /></div><label>空间名称<input value={name} maxLength={40} onChange={(event) => setName(event.target.value)} /></label><label>交流语言<select value={language} onChange={(event) => setLanguage(event.target.value)}><option value="zh-CN">简体中文</option><option value="en">English</option></select></label></div>
             {!status.bitbay && <p className="jiaho-wizard__hint">本机空间已解锁，尚未关联 BitBay。可先配置本机模型。</p>}
             <button className="jiaho-entry__primary" onClick={() => goto("model")}>继续配置大模型<ArrowRight size={18} /></button>
-          </> : <details className="jiaho-wizard__local-account"><summary>{initial ? "暂不连接平台？先建立本机空间" : "已有本机空间？解锁继续"}</summary><p className="jiaho-wizard__hint">仅用于保护这台设备上的 Home，不会注册 BitBay 平台账户。</p><form className="jiaho-wizard__account-form" onSubmit={(event) => void login(event)}>
-            <label>本机账号或邮箱<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} minLength={3} maxLength={initial ? 32 : 254} pattern={initial ? "[A-Za-z0-9_-]+" : undefined} required disabled={locked} /></label>
-            <label>密码<div className="jiaho-entry__password"><input type={visible ? "text" : "password"} autoComplete={initial ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)} minLength={initial ? 12 : 1} maxLength={1024} placeholder={initial ? "至少 12 位" : "输入本机账户密码"} required disabled={locked} /><button type="button" disabled={locked} aria-label={visible ? "隐藏密码" : "显示密码"} onClick={() => setVisible(!visible)}>{visible ? <EyeSlash size={18} /> : <Eye size={18} />}</button></div></label>
-            {initial && <label>确认密码<input type="password" autoComplete="new-password" value={repeat} onChange={(event) => setRepeat(event.target.value)} required disabled={locked} /></label>}
-            {initial && <p className="jiaho-wizard__gift">首次创建，赠送 {status.grant_points.toLocaleString()} 本地配置体验积分。</p>}
-            <button className="jiaho-entry__primary" type="submit" disabled={locked}>{busy ? <CircleNotch className="jiaho-spin" size={18} /> : <>{initial ? "仅创建本机空间" : "解锁本机空间"}<ArrowRight size={18} /></>}</button>
-          </form></details>}
+          </> : !status?.initialized && localAccountSetup}
         </> : step === "network" ? <>
           <h2>先连接你的网络。</h2><p className="jiaho-wizard__description">打开即检查联网状态，无需先登录账户。未联网时会打开系统 Wi-Fi 设置，连接后返回这里即可重新检测。</p>
           <section className={`jiaho-wizard__connectivity is-${!network && networkError ? "error" : networkBusy || !network ? "checking" : network.connectivity}`} aria-label="联网状态" role="status" aria-live="polite" aria-busy={networkBusy}>
