@@ -338,6 +338,8 @@ pub use file_index::{FileCategory, FileIndexFilter, FileIndexRecord, FileIndexRe
 pub use file_index::{DocumentReference, DocumentReadInput, DocumentPreview, DocumentFavorite, DocumentFavoriteInput, DocumentCollection, DocumentCollectionInput, DocumentCollectionKind, DocumentCollectionStatus, DocumentLibraryState, DocumentBundleInput, DocumentSearchInput, DocumentSearchResult};
 pub use file_index::{VideoReference, VideoReadInput, VideoTagRecord, VideoTagsInput, VideoStory, VideoStoryInput, VideoLibraryItem, VideoLibraryResult};
 pub use file_index::{ContentReference, ContentEvidence, ContentResult, ContentAnnotation, ContentReadInput, ContentAnalyzeInput, ContentUpdateInput};
+pub use file_index::{PhotoClassificationInput, PhotoClassificationResult};
+pub use file_index::{FamilyInfoInput, FamilyInfoState, FamilySceneNote};
 
 impl Vault {
     pub fn new() -> Self {

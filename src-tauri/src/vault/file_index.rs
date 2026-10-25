@@ -18,6 +18,12 @@ pub use videos::*;
 #[path = "file_index/content.rs"]
 mod content;
 pub use content::*;
+#[path = "file_index/photo_classification.rs"]
+mod photo_classification;
+pub use photo_classification::*;
+#[path = "file_index/family.rs"]
+mod family;
+pub use family::*;
 
 const PRIVATE: &str = ".depdek-file-index";
 const FILES: TableDefinition<&str, &str> = TableDefinition::new("files_v1");
@@ -149,7 +155,7 @@ pub struct PhotoLibraryFilter {
     pub limit: Option<usize>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PhotoLibraryItem {
     pub file: FileIndexRecord,
     pub tags: Vec<PhotoTag>,

@@ -39,15 +39,15 @@ test('existing roles, providers, tools, engines and custom agents are preserved'
   const result = ensureAiOsRoom(settings);
   assert.deepEqual(result.agents.slice(0, 2), settings.agents); assert.deepEqual(result.providers, settings.providers);
   assert.equal(result.obsidian_root, '/notes'); assert.equal(result.agents.length, 2);
-  assert.deepEqual(roomMembers(result).map((item) => item.name), ['我的悟空']); assert.deepEqual(settings.agents.length, 2);
+  assert.deepEqual(roomMembers(result).map((item) => item.name), ['我的悟空', 'Other']); assert.deepEqual(settings.agents.length, 2);
 });
-test('legacy personas are hidden and not auto-started, but their settings and histories are preserved', () => {
+test('saved agents appear in the box without auto-starting their sessions or changing settings', () => {
   const originals = ['jiaho-bajie', 'jiaho-master', 'jiaho-shaseng', 'custom'].map((id) => ({ ...makeRoomAgent(ROOM_AGENT_ID, 'local'), id, label: id, config_dir: `agents/${id}` }));
   const settings = { ...initial(), agents: originals };
   const next = ensureAiOsRoom(settings);
   assert.deepEqual(next.agents.slice(0, 4), originals);
   assert.deepEqual(settings.agents, originals);
-  assert.deepEqual(roomMembers(next).map((item) => item.id), [ROOM_AGENT_ID]);
+  assert.deepEqual(roomMembers(next).map((item) => item.id), [ROOM_AGENT_ID, ...originals.map((agent) => agent.id)]);
   assert.deepEqual(roomStartupAgents(next).map((item) => item.id), [ROOM_AGENT_ID]);
   assert.deepEqual(ensureAiOsRoom(next), next);
 });
@@ -80,12 +80,24 @@ test('follow-up suggestions are bounded deduplicated draft strings, not executab
 });
 test('native entry renders the compact shell with collapsed inspector, version, voice and real runtime controls', async () => {
   const result = await build({
-    stdin: { contents: `import React from 'react'; import {renderToStaticMarkup} from 'react-dom/server'; import Room from './src/components/DepDekAiOsShell'; import {ensureAiOsRoom} from './src/lib/aiOsRoom'; import {BUILTIN_PROVIDER} from './src/lib/aiOsSetup'; export const html = renderToStaticMarkup(React.createElement(Room, {root:'/family', settings:ensureAiOsRoom({providers:{local:BUILTIN_PROVIDER}}), sessions:[], activeAgentId:null, chats:{},running:{},onSelectAgent:()=>{},onSend:async()=>{},onAbort:async()=>{},onCreateAgent:async()=>{},onSaveSettings:async()=>{},onOpenHome:()=>{}}));`, resolveDir: new URL('..', import.meta.url).pathname, loader: 'jsx' },
+    stdin: { contents: `import React from 'react'; import {renderToStaticMarkup} from 'react-dom/server'; import Room from './src/components/DepDekAiOsShell'; import {ensureAiOsRoom} from './src/lib/aiOsRoom'; import {BUILTIN_PROVIDER} from './src/lib/aiOsSetup';
+      const props = {root:'/family', settings:ensureAiOsRoom({providers:{local:BUILTIN_PROVIDER}}), sessions:[], activeAgentId:null, chats:{},running:{},onSelectAgent:()=>{},onSend:async()=>{},onAbort:async()=>{},onCreateAgent:async()=>{},onSaveSettings:async()=>{},onOpenHome:()=>{}};
+      export const html = renderToStaticMarkup(React.createElement(Room, props));
+      export const applications = renderToStaticMarkup(React.createElement(Room, {...props, initialWorkspace:'applications'}));
+      export const entertainment = renderToStaticMarkup(React.createElement(Room, {...props, initialWorkspace:'entertainment'}));`, resolveDir: new URL('..', import.meta.url).pathname, loader: 'jsx' },
     bundle: true, platform: 'node', format: 'cjs', write: false, loader: { '.png': 'dataurl', '.css': 'empty' }, define: { '__APP_VERSION__': '"0.2.1"' }, logLevel: 'silent',
   });
   const module = { exports: {} }; new Function('require', 'module', 'exports', result.outputFiles[0].text)(createRequire(import.meta.url), module, module.exports);
   const html = module.exports.html;
-  for (const text of ['ai-room--modern', 'is-panel-collapsed', 'data-theme="light"', 'data-appearance="glass"', '今天，想做点什么？', '找照片', '理资料', '做计划', '家庭资料管家', 'Agent 列表', '聊天区域', '操作面板', '语音输入', '当前 Agent 执行器', '当前 Agent 模型', '使用公域大模型', '家庭文件不会自动上传', '本地大模型', 'v0.2.1']) assert.ok(html.includes(text), text);
+  for (const text of ['ai-room--modern', 'is-panel-collapsed', 'data-theme="light"', 'data-appearance="glass"', '今天，想做点什么？', '找照片', '理资料', '做计划', '悟空，盒内共有 1 位 Agent', 'aria-label="数据"', 'aria-label="娱乐"', 'Agent 列表', '聊天区域', '操作面板', '语音输入', '当前 Agent 执行器', '当前 Agent 模型', '使用公域大模型', '家庭文件不会自动上传', '本地大模型', 'v0.2.1']) assert.ok(html.includes(text), text);
+  const nav = html.match(/<nav[^>]*aria-label="主菜单"[\s\S]*?<\/nav>/)[0];
+  assert.deepEqual([...nav.matchAll(/<button[^>]*aria-label="([^"]+)"/g)].map((match) => match[1]), ['悟空，盒内共有 1 位 Agent', '智能体', '资料', '数据', '娱乐']);
+  assert.ok(!html.includes('aria-label="应用与 Agent Store"'));
+  assert.ok(module.exports.applications.includes('data-workspace="applications"') && module.exports.applications.includes('agent-store-grid'));
+  assert.ok(!module.exports.applications.includes('is-agents-open'));
+  assert.ok(module.exports.entertainment.includes('data-workspace="entertainment"') && module.exports.entertainment.includes('aria-label="娱乐面板"'));
+  assert.ok(module.exports.entertainment.includes('aria-label="娱乐分类"') && module.exports.entertainment.includes('影视'));
+  assert.ok(!module.exports.entertainment.includes('video-panel'));
   for (const text of ['八戒', '师傅', '沙僧', '西游协作室']) assert.ok(!html.includes(text), text);
   assert.ok(!html.includes('class="os-shell')); assert.ok(!html.includes('dangerouslySetInnerHTML'));
   assert.ok(!html.includes('LIVE CONTEXT')); assert.ok(!html.includes('YOUR EVERYDAY COMPANION'));

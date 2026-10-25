@@ -1,9 +1,9 @@
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, CircleNotch, FilmStrip, Play, Stack, X } from "@phosphor-icons/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import * as api from "../api";
 import { FILE_LIBRARY_CHANGED } from "../lib/fileLibrary";
 import { photoTagsFromText } from "../lib/treasure";
-import { MAX_STORY_BYTES, MAX_VIDEO_BYTES, moveVideo, videoError, videoKey, videoRef, VIDEO_SCENES, type VideoScene, type VideoServices } from "../lib/videoLibrary";
+import { MAX_STORY_BYTES, MAX_VIDEO_BYTES, moveVideo, videoError, videoKey, videoRef, type VideoScene, type VideoServices } from "../lib/videoLibrary";
 import FileImportButton from "./FileImportButton";
 import { AiContentButton, AiContentCard, useAiContentAgent } from "./AiContentAgent";
 import "./treasure.css";
@@ -40,8 +40,8 @@ export function LocalVideo({ reference, libraryId, services, hidden }: { referen
   </div>;
 }
 
-export default function VideoPanel({ scene, query, services: injected, onScene, onQuery, onProgress, onOpenHome, onClose, chatMessage, hidden = false }: {
-  scene: VideoScene; query: string; services?: VideoServices;
+export default function VideoPanel({ scene, query, services: injected, navigation, onScene, onQuery, onProgress, onOpenHome, onClose, chatMessage, hidden = false }: {
+  scene: VideoScene; query: string; services?: VideoServices; navigation?: ReactNode;
   onScene: (scene: VideoScene) => void; onQuery: (query: string) => void;
   onProgress: (lines: string[]) => void; onOpenHome: () => void; onClose: () => void;
   chatMessage?: { id: number; text: string }; hidden?: boolean;
@@ -127,12 +127,12 @@ export default function VideoPanel({ scene, query, services: injected, onScene, 
     working.current = true; setActing(true); setError("");
     void services.fileIndexRefresh().then(() => { if (alive.current) { setOffset(0); setRevision((n) => n + 1); } }).catch((failure) => { if (alive.current) setError(videoError(failure)); }).finally(() => { working.current = false; if (alive.current) setActing(false); });
   };
-  if (!available) return <aside className="treasure-panel video-panel" hidden={hidden} aria-label="视频"><div className="treasure-panel__empty"><FilmStrip size={37} /><h2>让回忆，有声有色。</h2><p>在家合原生应用中打开视频，查看本机原片与故事清单。</p><button onClick={onOpenHome}>打开工作台<ArrowRight size={16} /></button></div></aside>;
+  if (!available) return <aside className="treasure-panel video-panel" hidden={hidden} aria-label="视频">{navigation}<div className="treasure-panel__empty"><FilmStrip size={37} /><h2>让回忆，有声有色。</h2><p>在家合原生应用中打开视频，查看本机原片与故事清单。</p><button onClick={onOpenHome}>打开工作台<ArrowRight size={16} /></button></div></aside>;
   return <aside className="treasure-panel video-panel" hidden={hidden} aria-label="视频" data-scene={scene}>
-    <header className="treasure-panel__header"><span>视频 / {VIDEO_SCENES.find((item) => item.id === scene)?.title}</span><span>{busy ? "正在找视频…" : `${result?.total ?? 0} 段原片`}</span><button aria-label="收起视频，返回聊天" onClick={onClose}><X size={17} /></button></header>
+    <header className="treasure-panel__header"><h2 className="treasure-panel__headline">{scene === "memory" ? "有些声音，值得再听一次。" : scene === "review" ? "精彩的，慢慢留下。" : "把散落的片段，串成故事。"}</h2><span className="treasure-panel__meta">{busy ? "正在找视频…" : `${result?.total ?? 0} 段原片`}</span><button aria-label="收起视频，返回聊天" onClick={onClose}><X size={17} /></button></header>
+    {navigation}
     <div className="treasure-panel__scroll">
       <FileImportButton service={services.fileLibraryImport} resolveLibrary={async () => (await services.videoLibraryQuery({ limit: 1 })).summary.library_id ?? ""} onProgress={onProgress} label="添加视频" accept="video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi" />
-      <div className="treasure-panel__title"><h2>{scene === "memory" ? "有些声音，值得再听一次。" : scene === "review" ? "精彩的，慢慢留下。" : "把散落的片段，串成故事。"}</h2><p>{scene === "memory" ? "先按名字或标注找到，再打开原片。" : scene === "review" ? "你来决定值得留的瞬间，不自动删除任何原件。" : "选几段原片，安排顺序。先留下故事，再慢慢创作。"}</p></div>
       <form className="treasure-find" onSubmit={(event) => { event.preventDefault(); setOffset(0); setSha(""); onQuery(find.trim()); }}><input aria-label="查找视频" value={find} maxLength={120} onChange={(event) => setFind(event.target.value)} placeholder="文件名、路径、SHA、人物或事件" /><button aria-label="搜索视频" disabled={busy || acting}><ArrowRight size={17} /></button></form>
       {error && <p className="treasure-panel__notice is-error" role="alert">{error}</p>}{notice && <p className="treasure-panel__notice" role="status">{notice}</p>}
       {busy ? <div className="video-panel__loading" role="status"><CircleNotch size={22} className="room-spin" />正在打开视频索引…</div> : !result ? <button onClick={() => setRevision((n) => n + 1)}>重新打开视频</button> : <>

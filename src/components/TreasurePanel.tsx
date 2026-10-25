@@ -1,5 +1,5 @@
 import { ArrowLeft, ArrowRight, Check, CircleNotch, FilmStrip, ImageSquare, Images, Sparkle, Pause, Play, Stack, Tag, Tray, WarningCircle } from "@phosphor-icons/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import * as api from "../api";
 import { missingStoryAges, photoKey, photoTagsFromText, storyDraft, storyFrames, tagValue, type TreasureScene } from "../lib/treasure";
 import "./treasure.css";
@@ -7,10 +7,12 @@ import FileImportButton from "./FileImportButton";
 import { FILE_LIBRARY_CHANGED } from "../lib/fileLibrary";
 import { captureDebugError } from "../lib/debugCapture";
 import { AiContentCard, useAiContentAgent } from "./AiContentAgent";
+import PhotoClassificationPanel from "./PhotoClassificationPanel";
 
-export type PhotoServices = Pick<typeof api, "photoLibraryQuery" | "photoPreview" | "photoTagsSet" | "fileIndexRefresh" | "vaultWriteFile"> & Partial<Pick<typeof api, "fileLibraryImport" | "contentAnnotationGet" | "contentAnalyze" | "contentAnnotationUpdate" | "settingsGet">>;
+export type PhotoServices = Pick<typeof api, "photoLibraryQuery" | "photoPreview" | "photoTagsSet" | "fileIndexRefresh" | "vaultWriteFile"> & Partial<Pick<typeof api, "photoClassificationQuery" | "fileLibraryImport" | "contentAnnotationGet" | "contentAnalyze" | "contentAnnotationUpdate" | "settingsGet">>;
 type Props = {
   scene: TreasureScene; query: string; services?: PhotoServices;
+  navigation?: ReactNode;
   onScene: (scene: TreasureScene) => void; onProgress: (lines: string[]) => void;
   onOpenHome: () => void; onQuery: (query: string) => void;
   chatMessage?: { id: number; text: string };
@@ -64,7 +66,7 @@ function PhotoImage({ item, services, small = false }: { item: api.PhotoLibraryI
   </span>;
 }
 
-export default function TreasurePanel({ scene, query, services: injected, onScene, onProgress, onOpenHome, onQuery, chatMessage, hidden = false }: Props) {
+export default function TreasurePanel({ scene, query, services: injected, navigation, onScene, onProgress, onOpenHome, onQuery, chatMessage, hidden = false }: Props) {
   const services = injected ?? api, available = Boolean(injected) || native();
   const importer = services.fileLibraryImport;
   const [result, setResult] = useState<api.PhotoLibraryResult | null>(null), [offset, setOffset] = useState(0), [sha, setSha] = useState("");
@@ -76,7 +78,7 @@ export default function TreasurePanel({ scene, query, services: injected, onScen
   const request = useRef(0), initialized = useRef(false);
   const annotatedMessage = useRef<number>();
   const photos = result?.items ?? [], selected = photos[current] ?? photos[0];
-  const contentAgent = useAiContentAgent(selected?.file, result?.summary.library_id ?? "", services, onProgress);
+  const contentAgent = useAiContentAgent(scene === "classify" ? undefined : selected?.file, result?.summary.library_id ?? "", services, onProgress);
   const selections = Object.values(chosen), frames = storyFrames(selections, birthday), missing = missingStoryAges(selections, birthday);
   useEffect(() => { setOffset(0); setSha(""); setFind(query); }, [query]);
   useEffect(() => { setEditor(null); setPreviewing(false); setPlaying(false); setNotice(""); }, [scene]);
@@ -94,7 +96,7 @@ export default function TreasurePanel({ scene, query, services: injected, onScen
     setEditor("tags"); setNotice("已把你说的标注填在这里，确认后保存到这张照片。");
   }, [chatMessage?.id, selected?.file.path]);
   useEffect(() => {
-    if (!available) return;
+    if (!available || scene === "classify") return;
     const id = ++request.current; setBusy(true); setResult(null); setError("");
     void services.photoLibraryQuery({ query: query || undefined, sha256: sha || undefined, offset, limit: PAGE }).then((next) => {
       if (request.current !== id) return;
@@ -108,7 +110,7 @@ export default function TreasurePanel({ scene, query, services: injected, onScen
       onProgress([next.summary.indexed_at_ms ? "已读取本机照片索引" : "照片索引尚未建立", query ? `按文件名与已确认标签检索：${query}` : `当前结果共 ${next.total} 张照片`, `已载入第 ${next.total ? offset + 1 : 0}—${offset + next.items.length} 张`, "照片只在本机预览，原件未修改"]);
     }).catch((failure) => { captureDebugError("photo_library_query", failure); if (request.current === id) { setError(errorText(failure)); onProgress(["照片查询未完成，请重试"]); } }).finally(() => { if (request.current === id) setBusy(false); });
     return () => { request.current++; };
-  }, [available, services, query, offset, sha, revision, onProgress]);
+  }, [available, services, query, offset, sha, revision, onProgress, scene === "classify"]);
   useEffect(() => {
     if (!playing || !frames.length) return;
     const timer = window.setInterval(() => setFrame((value) => (value + 1) % frames.length), 3500);
@@ -156,8 +158,8 @@ export default function TreasurePanel({ scene, query, services: injected, onScen
       onProgress([`已整理 ${selections.length} 张选片引用`, "故事草稿已保存到 Home", "照片原件未修改；视频尚未导出"]);
     } catch (failure) { setError(errorText(failure)); } finally { setActing(false); }
   };
-  const date = tagValue(selected, "captured_date"), place = tagValue(selected, "place"), event = tagValue(selected, "event");
-  const heading = editor === "tags" ? "记住这一刻。" : editor === "selection" ? "挑选故事里的瞬间。" : scene === "review" ? "有些瞬间，一张就够。" : scene === "story" ? (title || "慢慢长大，慢慢珍藏。") : (event || "你想找回的那一刻。");
+  const date = tagValue(selected, "captured_date"), place = tagValue(selected, "place");
+  const heading = editor === "tags" ? "记住这一刻。" : editor === "selection" ? "挑选想留下的瞬间。" : scene === "review" ? "有些瞬间，一张就够。" : scene === "story" ? "把成长的片段，串成故事。" : "想重温，哪一刻？";
   let actions: { label: string; icon?: typeof Check; run: () => void; disabled?: boolean }[];
   if (editor === "tags") actions = [{ label: "保存标注", icon: Check, run: saveTags, disabled: acting }, { label: "返回照片", run: () => setEditor(null) }];
   else if (editor === "selection") actions = [{ label: `选好了 · ${selections.length} 张`, icon: Check, run: () => setEditor(null), disabled: !selections.length }, { label: "选中本页", run: () => setChosen((old) => Object.fromEntries([...Object.entries(old), ...photos.map((photo) => [photoKey(photo), photo] as const)].slice(0, 100))) }, { label: "返回", run: () => setEditor(null) }];
@@ -165,14 +167,15 @@ export default function TreasurePanel({ scene, query, services: injected, onScen
   else if (scene === "review") actions = [{ label: tagValue(selected, "selection") ? "已标记保留" : "标记保留", icon: Check, run: keep, disabled: acting || !selected || Boolean(tagValue(selected, "selection")) }, { label: sha ? "返回全部照片" : "查看相同副本", icon: Stack, run: () => { setSha(sha ? "" : selected?.file.sha256 ?? ""); setOffset(0); }, disabled: !selected }, { label: "下一张", icon: ArrowRight, run: nextPhoto, disabled: photos.length < 2 && (result?.total ?? 0) <= PAGE }];
   else if (scene === "story") actions = [{ label: "预览故事", icon: Play, run: () => { setFrame(0); setPreviewing(true); setPlaying(true); }, disabled: !frames.length }, { label: "调整选片", icon: Images, run: () => setEditor("selection") }, { label: "保存草稿", run: () => void saveStory(), disabled: !frames.length || acting }];
   else actions = [{ label: "做成一段回忆", icon: FilmStrip, run: () => onScene("story"), disabled: !photos.length }, { label: contentAgent.busy ? "AI 正在标注…" : "AI 自动标注", icon: contentAgent.busy ? CircleNotch : Sparkle, run: () => void contentAgent.run(), disabled: !selected || contentAgent.busy || contentAgent.loading }, { label: "换一刻", icon: ArrowRight, run: nextPhoto, disabled: photos.length < 2 && (result?.total ?? 0) <= PAGE }];
-  if (scene === "review" && !editor && !previewing) actions.push({ label: contentAgent.busy ? "AI 正在标注…" : "AI 自动标注", icon: Sparkle, run: () => void contentAgent.run(), disabled: !selected || contentAgent.busy || contentAgent.loading });
 
-  if (!available) return <aside className="treasure-panel" hidden={hidden} aria-label="相册"><div className="treasure-panel__empty"><Tray size={35} /><h2>照片，留在你的空间里。</h2><p>请在家合原生应用中打开相册，查看授权空间里的照片。</p><button onClick={onOpenHome}>打开工作台<ArrowRight size={16} /></button></div></aside>;
+  if (available && scene === "classify") return <PhotoClassificationPanel services={services} navigation={navigation} hidden={hidden} onProgress={onProgress} onReturn={() => onScene("memory")} renderPhoto={(photo, small = true) => <PhotoImage item={photo} services={services} small={small} />} />;
+
+  if (!available) return <aside className="treasure-panel" hidden={hidden} aria-label="相册">{navigation}<div className="treasure-panel__empty"><Tray size={35} /><h2>照片，留在你的空间里。</h2><p>请在家合原生应用中打开相册，查看授权空间里的照片。</p><button onClick={onOpenHome}>打开工作台<ArrowRight size={16} /></button></div></aside>;
   return <aside className="treasure-panel" hidden={hidden} aria-label="相册" data-scene={scene}>
-    <header className="treasure-panel__header"><span>相册 <span> / {scene === "memory" ? "回忆" : scene === "review" ? "挑选" : "成长影片"}</span></span><span>{busy ? "正在找照片…" : result ? `${result.total} 张${sha ? "相同内容照片" : "相关照片"}` : "本机照片"}</span></header>
+    <header className="treasure-panel__header"><h2 className="treasure-panel__headline">{heading}</h2><span className="treasure-panel__meta">{busy ? "正在找照片…" : result ? `${result.total} 张${sha ? "相同内容照片" : "相关照片"}` : "本机照片"}</span></header>
+    {navigation}
     <div className="treasure-panel__scroll">
       <FileImportButton service={available ? importer : undefined} resolveLibrary={available ? async () => (await services.photoLibraryQuery({ limit: 1 })).summary.library_id ?? "" : undefined} onProgress={onProgress} label="添加照片" accept="image/*,.heic,.heif,.dng,.cr2,.nef,.arw" />
-      <div className="treasure-panel__title"><h2>{heading}</h2><p>{editor === "tags" ? "告诉悟空这是谁、在哪里、发生了什么。" : editor === "selection" ? "只选择你想留下的照片，随时可以调整。" : scene === "story" ? "先选片，再看故事。每个瞬间都来自你的原片。" : [date, place, sha ? "按内容指纹匹配" : "已确认的标签会跟着照片留下"].filter(Boolean).join(" · ")}</p></div>
       {error && <p className="treasure-panel__notice is-error" role="alert"><WarningCircle size={16} />{error}</p>}
       {notice && <p className="treasure-panel__notice" role="status"><Check size={16} />{notice}</p>}
       {!result && busy ? <div className="treasure-panel__empty"><CircleNotch className="room-spin" size={27} /><p>正在打开本机照片索引…</p></div> : !photos.length && editor !== "selection" && (scene !== "story" || !selections.length) ? <div className="treasure-panel__empty"><Images size={38} /><h3>{error ? "暂时没能打开相册。" : query ? "这次还没找到。" : "把照片放进来，回忆就有了地方。"}</h3><p>{error ? "请重新打开照片索引，或到工作台检查照片来源。" : query ? `文件名与已确认标签中没有“${query}”。` : "添加照片后会自动保存副本、分类，之后就能在这里找到。"}</p><div>{error ? <button disabled={busy} onClick={() => setRevision((value) => value + 1)}>重新打开相册</button> : query ? <button onClick={() => onQuery("")}>查看全部照片</button> : <details className="treasure-existing"><summary>已有 Home 资料</summary><p>在本机整理当前 Home 文件，照片会出现在这里。</p><button disabled={acting || busy} onClick={() => void refresh()}>{acting ? <CircleNotch className="room-spin" size={16} /> : <Tray size={16} />}整理现有 Home</button></details>}<button onClick={onOpenHome}>管理照片来源<ArrowRight size={16} /></button></div></div> : editor === "tags" && selected ? <form className="treasure-tags" onSubmit={(event) => { event.preventDefault(); saveTags(); }}><div className="treasure-tags__photo"><PhotoImage item={selected} services={services} small /><span>{selected.file.name}</span></div>{([{ kind: "person", label: "人物", placeholder: "例如：小满" }, { kind: "place", label: "地点", placeholder: "例如：三亚" }, { kind: "event", label: "事件", placeholder: "例如：第一次看海" }, { kind: "captured_date", label: "拍摄日期", placeholder: "" }, { kind: "note", label: "想记住的话", placeholder: "这一刻有什么特别的？" }] as const).map(({ kind, label, placeholder }) => <label key={kind}>{label}<input type={kind === "captured_date" ? "date" : "text"} value={tagFields[kind]} maxLength={120} placeholder={placeholder} disabled={acting} onChange={(event) => setTagFields((old) => ({ ...old, [kind]: event.target.value }))} onInput={(event) => { if (kind === "captured_date") { const value = event.currentTarget.value; setTagFields((old) => ({ ...old, [kind]: value })); } }} onBlur={(event) => { const value = event.currentTarget.value; setTagFields((old) => ({ ...old, [kind]: value })); }} /></label>)}<p>标注由你确认，保存在本机；下次可以说“找照片：小满”。</p></form> : editor === "selection" ? <div className="treasure-selection">

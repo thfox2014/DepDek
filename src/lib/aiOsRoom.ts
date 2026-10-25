@@ -1,4 +1,5 @@
 import type { SavedAgent, Settings } from "../api";
+import { BUILTIN_AGENT_STORE } from "./roomWorkspaces.ts";
 
 export const ROOM_AGENT_ID = "depdek-os-assistant";
 export const ROOM_PERSONAS = [
@@ -36,12 +37,17 @@ export function ensureAiOsRoom(settings: Settings): Settings {
 
 export function roomMembers(settings: Settings) {
   const saved = settings.agents ?? [];
+  const seen = new Set([ROOM_AGENT_ID]);
   return [
     ...ROOM_PERSONAS.map((person) => ({ ...person, name: saved.find((agent) => agent.id === person.id)?.label ?? person.name })),
+    ...saved.filter((agent) => { if (seen.has(agent.id)) return false; seen.add(agent.id); return true; }).map((agent) => {
+      const item = BUILTIN_AGENT_STORE.find((entry) => entry.id === agent.id);
+      return { id: agent.id, name: agent.label || agent.id, role: item?.role ?? "我的 Agent", mark: Array.from(agent.label || agent.id)[0], greeting: `${agent.label}在。`, hint: item?.description ?? "选择这个伙伴，继续你们的对话。", prompt: agent.system_prompt ?? "" };
+    }),
   ];
 }
 
-/** AI-OS does not auto-start hidden legacy or custom agents; full workbench retains them. */
+/** All saved agents are visible; only Wukong starts at boot, others start on send. */
 export function roomStartupAgents(settings: Settings): SavedAgent[] {
   return (settings.agents ?? []).filter((agent) => agent.id === ROOM_AGENT_ID);
 }

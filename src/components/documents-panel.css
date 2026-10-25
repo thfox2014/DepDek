@@ -4,18 +4,12 @@
 .ai-room.has-documents .ai-room__message { font-size:16px; }
 .ai-room.has-documents .ai-room__conversation { background:var(--room-bg); }
 .documents-panel { font-size:14px; }
-.documents-panel__header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:25px 32px 0; font-size:14px; flex-shrink:0; }
-.documents-panel__header>span>span { color:var(--room-muted); margin-left:8px; }
-.documents-panel__header>div { display:flex; align-items:center; gap:12px; }
-.documents-panel__header small { color:var(--room-muted); font-size:12px; }
+.documents-panel__header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:24px 32px 0; font-size:14px; flex-shrink:0; }
+.documents-panel__headline { min-width:0; font-size:19px; line-height:1.4; font-weight:550; letter-spacing:-.035em; }
 .ai-room .documents-panel__close { display:none; width:44px; height:44px; }
 .document-scenes b { font-size:14px; }
 .document-scenes small { font-size:12px; line-height:1.7; }
-.documents-panel__scroll { overflow-y:auto; overscroll-behavior:contain; flex:1; min-height:0; padding:30px 32px 20px; scrollbar-width:thin; }
-.documents-panel__intro { margin-bottom:28px; }
-.documents-panel__intro>span { font-size:12px; color:var(--room-accent); }
-.documents-panel__intro h2 { font-size:clamp(27px,2.6vw,36px); font-weight:500; line-height:1.4; letter-spacing:-.04em; margin:10px 0 12px; text-wrap:pretty; }
-.documents-panel__intro p { color:var(--room-muted); line-height:1.8; font-size:14px; text-wrap:pretty; }
+.documents-panel__scroll { overflow-y:auto; overscroll-behavior:contain; flex:1; min-height:0; padding:16px 32px 20px; scrollbar-width:thin; }
 .documents-find__answer { background:var(--room-selected); border-radius:10px; padding:21px 24px; margin-bottom:24px; }
 .documents-find__answer>small { font-size:12px; color:var(--room-muted); }
 .documents-find__answer>p { margin:10px 0 15px; font-size:18px; line-height:1.85; text-wrap:pretty; }
@@ -97,10 +91,10 @@
 .documents-panel__empty p { color:var(--room-muted); max-width:320px; line-height:1.9; margin:18px 0 24px; }
 .ai-room .documents-panel__empty>button { border:1px solid var(--room-line); padding:12px 17px; margin-top:12px; min-height:44px; }
 .documents-panel__empty>small { color:var(--room-muted); font-size:12px; line-height:1.9; max-width:320px; margin-top:28px; }
-@media (max-width:1250px) and (min-width:1101px) { .documents-panel__scroll { padding:24px; }.documents-panel__header,.documents-panel__footer { padding-left:24px; padding-right:24px; } }
-@media (max-width:1100px) { .documents-panel__header { padding-right:22px; }.ai-room .documents-panel__close { display:inline-flex; }.documents-panel__intro h2 { font-size:29px; }.ai-room.has-documents:not(.is-panel-collapsed) .ai-room__header .ai-room__head-actions>button { visibility:hidden; pointer-events:none; } }
+@media (max-width:1250px) and (min-width:1101px) { .documents-panel__scroll { padding:18px 24px; }.documents-panel__header,.documents-panel__footer { padding-left:24px; padding-right:24px; } }
+@media (max-width:1100px) { .documents-panel__header { padding-right:22px; }.ai-room .documents-panel__close { display:inline-flex; }.ai-room.has-documents:not(.is-panel-collapsed) .ai-room__header .ai-room__head-actions>button { visibility:hidden; pointer-events:none; } }
 @media (max-width:600px) {
-  .documents-panel__header { padding:16px 16px 0; }.documents-panel__header>div { gap:5px; }.documents-panel__header small { font-size:11px; }
+  .documents-panel__header { padding:16px 16px 0; }.documents-panel__headline { font-size:17px; }.documents-panel__scroll { padding:14px 16px 16px; }
   .documents-panel__scroll { padding:22px 18px 16px; }.documents-panel__intro h2 { font-size:26px; }.documents-panel__intro { margin-bottom:22px; }
   .documents-find__answer { padding:18px; }.documents-find__answer>p { font-size:16px; }.documents-source>header { padding:13px; }.documents-source>header>small { display:none; }.documents-source__page { padding:20px; }
   .documents-panel__footer { padding:14px 16px 18px; }.documents-panel__actions { flex-wrap:wrap; }.ai-room .documents-panel__actions>button { flex:1 1 42%; min-height:44px; font-size:12px; }.ai-room .documents-panel__actions>button:last-child { flex-basis:100%; padding:6px; min-height:44px; }

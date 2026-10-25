@@ -58,12 +58,13 @@ export function useAiContentAgent(file: ContentTarget | undefined, libraryId: st
     } catch (failure) { captureDebugError("content_analyze", failure); if (valid()) { setError(contentAgentError(failure)); setPhase(""); } }
     finally { if (valid()) { working.current = false; setBusy(false); } }
   };
-  const correct = async (title: string, description: string, tags: string[]) => {
+  const correct = async (title: string, description: string, tags: string[], photoLabels?: api.PhotoLabel[]) => {
     if (!annotation || !file || !service.contentAnnotationUpdate || working.current) return;
     const current = generation.current; working.current = true; setBusy(true); setError("");
     try {
-      const saved = await service.contentAnnotationUpdate({ libraryId, reference: { path: file.path, sha256: file.sha256 }, expectedRevision: annotation.revision, title, description, tags });
+      const saved = await service.contentAnnotationUpdate({ libraryId, reference: { path: file.path, sha256: file.sha256 }, expectedRevision: annotation.revision, title, description, tags, ...(photoLabels !== undefined ? { photoLabels } : {}) });
       if (current === generation.current) { setAnnotation(saved); setPhase("已保存你的修正。"); }
+      return saved;
     } catch (failure) { if (current === generation.current) setError(contentAgentError(failure)); }
     finally { if (current === generation.current) { working.current = false; setBusy(false); } }
   };

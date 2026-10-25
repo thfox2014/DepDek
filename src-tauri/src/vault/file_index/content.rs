@@ -2,7 +2,34 @@
 use super::*;
 use std::collections::BTreeSet;
 
-const ANNOTATIONS: TableDefinition<&str, &str> = TableDefinition::new("content_annotations_v1");
+pub(super) const ANNOTATIONS: TableDefinition<&str, &str> = TableDefinition::new("content_annotations_v1");
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum PhotoDimension { People, Event, Place, Subject }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PhotoLabel { pub dimension: PhotoDimension, pub label: String, pub confidence: u8, pub evidence: String }
+
+pub(super) fn validate_photo_labels(labels: &[PhotoLabel], ai: bool) -> Result<(), VaultError> {
+    if labels.len() > 12 { return Err(invalid("CONTENT_INVALID_PHOTO_LABELS")); }
+    let mut seen = BTreeSet::new();
+    for item in labels {
+        let vocabulary: &[&str] = match item.dimension {
+            PhotoDimension::People => &["单人", "双人", "多人合影", "儿童入镜"],
+            PhotoDimension::Event => &["生日", "婚礼", "毕业", "聚餐", "旅行", "运动", "演出", "日常"],
+            PhotoDimension::Place => &["海边", "山野", "公园", "城市建筑", "室内", "乡村", "展馆"],
+            PhotoDimension::Subject => &["人像", "风景", "宠物", "美食", "花草", "截图", "票据", "文档", "物品", "其他"],
+        };
+        if !text(&item.label, 60) || item.label.trim() != item.label || item.label.chars().any(char::is_control)
+            || !text(&item.evidence, 160) || item.confidence > 100
+            || ai && !vocabulary.contains(&item.label.as_str())
+            || !seen.insert((item.dimension.clone(), item.label.clone())) {
+            return Err(invalid("CONTENT_INVALID_PHOTO_LABELS"));
+        }
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -21,6 +48,8 @@ pub struct ContentObservation { pub label: String, pub value: String }
 pub struct ContentResult {
     pub title: String, pub description: String, pub tags: Vec<String>,
     pub observations: Vec<ContentObservation>, pub uncertainties: Vec<String>, pub total_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub photo_labels: Option<Vec<PhotoLabel>>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContentAnnotation {
@@ -28,6 +57,8 @@ pub struct ContentAnnotation {
     #[serde(flatten)] pub result: ContentResult,
     pub coverage: String, pub provider_name: String, pub model: String, pub source: String,
     pub revision: u64, pub created_at_ms: u64, pub updated_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirmed_photo_labels: Option<Vec<PhotoLabel>>,
 }
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -43,6 +74,7 @@ pub struct ContentAnalyzeInput {
 pub struct ContentUpdateInput {
     pub library_id: String, pub reference: ContentReference, pub expected_revision: u64,
     pub title: String, pub description: String, pub tags: Vec<String>,
+    pub photo_labels: Option<Vec<PhotoLabel>>,
 }
 
 fn invalid(message: &str) -> VaultError { VaultError::InvalidParams(message.into()) }
@@ -56,11 +88,12 @@ fn validate_result(result: &ContentResult) -> Result<(), VaultError> {
         || result.uncertainties.len() > 6 || result.uncertainties.iter().any(|value| !text(value, 160)) {
         return Err(invalid("CONTENT_INVALID_RESULT"));
     }
+    if let Some(labels) = &result.photo_labels { validate_photo_labels(labels, true)?; }
     Ok(())
 }
 fn validate_evidence(evidence: &ContentEvidence, category: FileCategory) -> Result<(), VaultError> {
     if evidence.text.chars().count() > 24_000 || evidence.text.contains('\0') || !text(&evidence.coverage, 240)
-        || evidence.images.len() > 6 || evidence.text.trim().is_empty() && evidence.images.is_empty()
+        || evidence.images.len() > 6 || category == FileCategory::Photos && evidence.images.len() != 1 || evidence.text.trim().is_empty() && evidence.images.is_empty()
         || matches!(category, FileCategory::Photos | FileCategory::Videos) && evidence.images.is_empty() {
         return Err(invalid("CONTENT_INVALID_EVIDENCE"));
     }
@@ -117,10 +150,18 @@ fn read(db: &Database, reference: &ContentReference) -> Result<Option<ContentAnn
         .map(|row| serde_json::from_str(row.value()).map_err(json_error)).transpose()?;
     Ok(value.filter(|item| item.path == reference.path && item.sha256.eq_ignore_ascii_case(&reference.sha256)))
 }
-fn write(db: &Database, value: &ContentAnnotation) -> Result<(), VaultError> {
+fn write(db: &Database, value: &ContentAnnotation, expected_revision: u64) -> Result<(), VaultError> {
     let serialized = serde_json::to_string(value).map_err(json_error)?;
     let txn = db.begin_write().map_err(db_error)?;
-    { txn.open_table(ANNOTATIONS).map_err(db_error)?.insert(value.path.as_str(), serialized.as_str()).map_err(db_error)?; }
+    {
+        let mut table = txn.open_table(ANNOTATIONS).map_err(db_error)?;
+        let current: Option<ContentAnnotation> = table.get(value.path.as_str()).map_err(db_error)?
+            .map(|row| serde_json::from_str(row.value()).map_err(json_error)).transpose()?;
+        if current.filter(|row| row.path == value.path && row.sha256 == value.sha256).map_or(0, |row| row.revision) != expected_revision {
+            return Err(invalid("content revision conflict"));
+        }
+        table.insert(value.path.as_str(), serialized.as_str()).map_err(db_error)?;
+    }
     txn.commit().map_err(db_error)
 }
 
@@ -135,7 +176,9 @@ pub(super) fn search_matches(db: &Database, needle: &str) -> Result<BTreeSet<(St
         let (_, value) = row.map_err(db_error)?;
         let item: ContentAnnotation = serde_json::from_str(value.value()).map_err(json_error)?;
         if item.result.title.to_lowercase().contains(needle) || item.result.description.to_lowercase().contains(needle)
-            || item.result.tags.iter().any(|tag| tag.to_lowercase().contains(needle)) {
+            || item.result.tags.iter().any(|tag| tag.to_lowercase().contains(needle))
+            || item.confirmed_photo_labels.as_ref().or(item.result.photo_labels.as_ref())
+                .is_some_and(|labels| labels.iter().any(|tag| tag.label.to_lowercase().contains(needle))) {
             found.insert((item.path, item.sha256.to_lowercase()));
         }
     }
@@ -164,22 +207,28 @@ impl Vault {
             Ok(file)
         })
     }
-    pub fn content_annotation_save(&self, session: &str, input: ContentAnalyzeInput, model: String, result: ContentResult) -> Result<ContentAnnotation, VaultError> {
+    pub fn content_annotation_save(&self, session: &str, input: ContentAnalyzeInput, model: String, mut result: ContentResult) -> Result<ContentAnnotation, VaultError> {
         self.file_index_audited(session, Op::Write, "content-agent/save", || {
             validate_result(&result)?;
             let pair = current(self, &input.library_id)?;
             let db = open_index(&pair, false)?.ok_or_else(|| invalid("file is not indexed"))?;
             let file = indexed(&db, &input.reference)?;
             validate_evidence(&input.evidence, file.category)?;
+            if file.category == FileCategory::Photos && result.photo_labels.is_none() { return Err(invalid("CONTENT_INVALID_PHOTO_LABELS")); }
             check_source(self, &pair, &file)?;
             let old = read(&db, &input.reference)?;
             if old.as_ref().map_or(0, |item| item.revision) != input.expected_revision { return Err(invalid("content revision conflict")); }
+            let corrected = old.as_ref().is_some_and(|item| item.source == "user_corrected");
+            if let Some(previous) = old.as_ref().filter(|_| corrected) {
+                result.title = previous.result.title.clone(); result.description = previous.result.description.clone(); result.tags = previous.result.tags.clone();
+            }
             let now = now_ms();
             let value = ContentAnnotation { path: file.path, sha256: file.sha256, result, coverage: input.evidence.coverage,
-                provider_name: input.provider_name, model, source: "ai".into(), revision: input.expected_revision.checked_add(1).ok_or_else(|| invalid("revision overflow"))?,
-                created_at_ms: old.map_or(now, |item| item.created_at_ms), updated_at_ms: now };
+                provider_name: input.provider_name, model, source: if corrected { "user_corrected" } else { "ai" }.into(), revision: input.expected_revision.checked_add(1).ok_or_else(|| invalid("revision overflow"))?,
+                created_at_ms: old.as_ref().map_or(now, |item| item.created_at_ms), updated_at_ms: now,
+                confirmed_photo_labels: old.and_then(|item| item.confirmed_photo_labels) };
             self.require_ai_os_login()?;
-            write(&db, &value)?;
+            write(&db, &value, input.expected_revision)?;
             Ok(value)
         })
     }
@@ -188,14 +237,19 @@ impl Vault {
             let pair = current(self, &input.library_id)?;
             let db = open_index(&pair, false)?.ok_or_else(|| invalid("file is not indexed"))?;
             let file = indexed(&db, &input.reference)?;
+            if let Some(labels) = &input.photo_labels {
+                if file.category != FileCategory::Photos { return Err(invalid("photo labels require a photo")); }
+                validate_photo_labels(labels, false)?;
+            }
             check_source(self, &pair, &file)?;
             let mut old = read(&db, &input.reference)?.ok_or_else(|| invalid("content annotation not found"))?;
             if old.revision != input.expected_revision { return Err(invalid("content revision conflict")); }
             old.result.title = input.title; old.result.description = input.description; old.result.tags = input.tags;
+            if let Some(labels) = input.photo_labels { old.confirmed_photo_labels = Some(labels); }
             validate_result(&old.result)?;
             old.source = "user_corrected".into(); old.revision = old.revision.checked_add(1).ok_or_else(|| invalid("revision overflow"))?; old.updated_at_ms = now_ms();
             self.require_ai_os_login()?;
-            write(&db, &old)?;
+            write(&db, &old, input.expected_revision)?;
             Ok(old)
         })
     }
@@ -218,8 +272,24 @@ mod tests {
             evidence: ContentEvidence { text: "空调购买凭证，保修三年".into(), images: vec![], coverage: "文档正文".into() }, expected_revision: 0 };
         (dir, vault, input)
     }
-    fn result() -> ContentResult { ContentResult { title: "空调保修凭证".into(), description: "购买凭证中写有三年保修条款".into(), tags: vec!["家电保修".into()], observations: vec![], uncertainties: vec!["实际保修截止日待核对".into()], total_tokens: 88 } }
+    fn result() -> ContentResult { ContentResult { title: "空调保修凭证".into(), description: "购买凭证中写有三年保修条款".into(), tags: vec!["家电保修".into()], observations: vec![], uncertainties: vec!["实际保修截止日待核对".into()], total_tokens: 88, photo_labels: None } }
     fn read_input(input: &ContentAnalyzeInput) -> ContentReadInput { ContentReadInput { library_id: input.library_id.clone(), reference: input.reference.clone() } }
+
+    #[test]
+    fn atomic_annotation_write_rejects_stale_revision_and_reanalysis_keeps_human_text() {
+        let (_dir, vault, mut input) = fixture();
+        let ai = vault.content_annotation_save("user", input.clone(), "test".into(), result()).unwrap();
+        let changed = vault.content_annotation_update("user", ContentUpdateInput { library_id: input.library_id.clone(), reference: input.reference.clone(), expected_revision: ai.revision,
+            title: "我核对过的标题".into(), description: "我核对过的说明".into(), tags: vec!["人工标签".into()], photo_labels: None }).unwrap();
+        input.expected_revision = changed.revision;
+        let rerun = vault.content_annotation_save("user", input.clone(), "test".into(), result()).unwrap();
+        assert_eq!(rerun.result.title, "我核对过的标题"); assert_eq!(rerun.result.description, "我核对过的说明"); assert_eq!(rerun.result.tags, vec!["人工标签"]);
+        let pair = vault.root_pair().unwrap(); let db = open_index(&pair, false).unwrap().unwrap();
+        let mut next = rerun.clone(); next.revision += 1;
+        write(&db, &next, rerun.revision).unwrap();
+        assert!(write(&db, &next, rerun.revision).is_err());
+        assert_eq!(read(&db, &input.reference).unwrap().unwrap().revision, next.revision);
+    }
 
     #[test]
     fn content_annotation_persists_searches_and_supports_revision_checked_correction() {
@@ -228,7 +298,7 @@ mod tests {
         let matches = vault.document_search("user", DocumentSearchInput { library_id: input.library_id.clone(), query: "家电保修".into() }).unwrap(); assert_eq!(matches.items.len(), 1);
         assert_eq!(vault.file_index_query("user", FileIndexFilter { query: Some("家电保修".into()), ..Default::default() }).unwrap().total, 1);
         assert!(vault.content_annotation_save("user", input.clone(), "model".into(), result()).is_err());
-        let changed = vault.content_annotation_update("user", ContentUpdateInput { library_id: input.library_id.clone(), reference: input.reference.clone(), expected_revision: 1, title: saved.result.title, description: "用户核对后更正为两年".into(), tags: vec!["两年保修".into()] }).unwrap();
+        let changed = vault.content_annotation_update("user", ContentUpdateInput { library_id: input.library_id.clone(), reference: input.reference.clone(), expected_revision: 1, title: saved.result.title, description: "用户核对后更正为两年".into(), tags: vec!["两年保修".into()], photo_labels: None }).unwrap();
         assert_eq!(changed.source, "user_corrected"); assert_eq!(changed.revision, 2);
         drop(vault); let next = Vault::new(); next.set_root(dir.path()).unwrap();
         assert_eq!(next.content_annotation_get("user", read_input(&input)).unwrap().unwrap().result.tags, vec!["两年保修"]);
@@ -271,7 +341,8 @@ mod tests {
             if file.category == FileCategory::Photos { vault.photo_tags_set("user", &file.path, &file.sha256, vec![PhotoTag { kind: PhotoTagKind::Person, value: "小满".into() }]).unwrap(); }
             let input = ContentAnalyzeInput { library_id: summary.library_id.clone(), reference: ContentReference { path: file.path, sha256: file.sha256 }, provider_name: "test-vision".into(),
                 evidence: ContentEvidence { text: "".into(), coverage: "示例画面".into(), images: vec![ContentImage { data: BASE64.encode(png), mime_type: "image/png".into(), label: "取样画面".into() }] }, expected_revision: 0 };
-            vault.content_analysis_prepare("user", &input).unwrap(); vault.content_annotation_save("user", input, "model".into(), result()).unwrap();
+            let mut generated = result(); if file.category == FileCategory::Photos { generated.photo_labels = Some(vec![]); }
+            vault.content_analysis_prepare("user", &input).unwrap(); vault.content_annotation_save("user", input, "model".into(), generated).unwrap();
         }
         let photos = vault.photo_library_query("user", PhotoLibraryFilter { query: Some("家电保修".into()), ..Default::default() }).unwrap();
         assert_eq!(photos.total, 1); assert_eq!(photos.items[0].file.path, "a.png"); assert_eq!(photos.items[0].tags[0].value, "小满");

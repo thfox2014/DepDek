@@ -4,14 +4,14 @@
   --room-ink: #263c34; --room-muted: #73867a; --room-line: #2f4b3a18;
   --room-accent: #376955; --room-tint: #dfebe3; --room-selected: #dfebe3;
   --room-glass: #ffffffb0; --room-highlight: #ffffffd9;
-  display: grid; grid-template-columns: 112px minmax(0, 1fr) var(--room-panel, 320px);
+  display: grid; grid-template-columns: var(--room-nav, 112px) minmax(0, 1fr) var(--room-panel, 320px);
   grid-template-rows: 76px minmax(0, 1fr) 28px; position: relative; isolation: isolate;
   background: var(--room-bg); font: 14px/1.6 "Helvetica Neue", "PingFang SC", "Noto Sans CJK SC", sans-serif;
 }
 .ai-room.ai-room--modern::before { content: ""; position: absolute; z-index: -1; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 21% 87%, #ccded275, transparent 47%), radial-gradient(ellipse at 91% 3%, #e9e3d6b3, transparent 46%), radial-gradient(ellipse at 54% 43%, #ffffffbd, transparent 47%); }
 .ai-room.ai-room--modern[data-theme="dark"] { --room-bg: #17231f; --room-side: #203128; --room-card: #25352c; --room-ink: #e7efe8; --room-muted: #9aada0; --room-line: #aecfb51a; --room-accent: #a5c6ae; --room-tint: #344f40; --room-selected: #344f40; --room-glass: #26352dbd; --room-highlight: #dcf0d917; }
 .ai-room.ai-room--modern[data-theme="dark"]::before { background: radial-gradient(ellipse at 22% 87%, #3557454f, transparent 47%), radial-gradient(ellipse at 91% 3%, #625d3d21, transparent 46%); }
-.ai-room.ai-room--modern.is-panel-collapsed { grid-template-columns: 112px minmax(0, 1fr); }
+.ai-room.ai-room--modern.is-panel-collapsed { grid-template-columns: var(--room-nav, 112px) minmax(0, 1fr); }
 .ai-room.ai-room--modern [hidden] { display: none !important; }
 .ai-room--modern .ai-room__sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; clip: rect(0,0,0,0); overflow: hidden; white-space: nowrap; }
 .ai-room.ai-room--modern button { transition: background-color 160ms, color 160ms, box-shadow 160ms; }
@@ -37,20 +37,18 @@
 
 /* Floating dock; labels remain available to keyboard and assistive technology. */
 .ai-room.ai-room--modern .ai-room__sidebar { grid-column: 1; grid-row: 2; margin: 18px 0 22px 23px; width: 76px; padding: 12px 8px; position: relative; z-index: 8; border: 1px solid var(--room-highlight); outline: 1px solid var(--room-line); border-radius: 28px; background: var(--room-glass); backdrop-filter: blur(22px) saturate(1.15); -webkit-backdrop-filter: blur(22px) saturate(1.15); box-shadow: 0 8px 32px -20px #27413038; }
-.ai-room.ai-room--modern .ai-room__members { display: grid; flex: 0 0 auto; gap: 8px; overflow: visible; }
+.ai-room.ai-room--modern .ai-room__members { position: relative; display: grid; align-content: start; flex: 1; min-height: 0; gap: 8px; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
 .ai-room.ai-room--modern button.ai-room__member, .ai-room.ai-room--modern button.ai-room__treasure-link { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 3px; width: 58px; height: 62px; padding: 6px 2px; margin: 0; border: 0; border-radius: 19px; background: none; color: var(--room-muted); box-shadow: none; position: relative; }
 .ai-room.ai-room--modern .ai-room__member .ai-room__avatar { width: 34px; height: 34px; flex-basis: 34px; border-radius: 50%; }
 .ai-room.ai-room--modern .ai-room__member-copy { display: block; flex: 0 0 auto; height: 10px; opacity: 0; }
 .ai-room.ai-room--modern .ai-room__member-copy b { font-size: 9px; line-height: 1; font-weight: 400; margin: 0; }
 .ai-room.ai-room--modern .ai-room__treasure-link > span { display: block; font-size: 9px; line-height: 1; height: 10px; font-weight: 400; opacity: 0; text-align: center; }
 .ai-room.ai-room--modern :is(.ai-room__member,.ai-room__treasure-link).is-selected { background: var(--room-selected); color: var(--room-accent); box-shadow: inset 0 1px 1px var(--room-highlight); }
-.ai-room.ai-room--modern .is-selected > :is(.ai-room__member-copy,span) { opacity: 1; }
 .ai-room.ai-room--modern .ai-room__sidebar-actions { margin-top: auto; display: grid; justify-content: center; gap: 1px; padding-top: 14px; }
 .ai-room.ai-room--modern .ai-room__sidebar-actions > button { width: 44px; height: 38px; border-radius: 50%; padding: 0; justify-content: center; }
 .ai-room--modern .ai-room__sidebar [data-tip]::after { content: attr(data-tip); position: absolute; left: calc(100% + 14px); top: 50%; transform: translateY(-50%); padding: 5px 10px; border-radius: 7px; color: var(--room-bg); background: var(--room-ink); font-size: 11px; line-height: 1.5; opacity: 0; visibility: hidden; white-space: nowrap; pointer-events: none; z-index: 40; }
 .ai-room--modern .ai-room__sidebar [data-tip]:hover::after, .ai-room--modern .ai-room__sidebar [data-tip]:focus-visible::after { opacity: 1; visibility: visible; }
 .ai-room--modern .ai-room__sidebar-actions > button { position: relative; }
-.ai-room--modern .ai-room__sidebar .is-selected::after { display: none; }
 
 .ai-room.ai-room--modern .ai-room__conversation { grid-column: 2; grid-row: 2; min-height: 0; min-width: 0; background: none; display: flex; flex-direction: column; }
 .ai-room.ai-room--modern .ai-room__messages { padding: 24px max(28px, calc((100% - 680px) / 2)); min-height: 0; scrollbar-width: thin; scrollbar-color: #9eafa066 transparent; }
@@ -164,7 +162,7 @@
   .ai-room.ai-room--modern.has-treasure .ai-room__empty h2 { font-size: 27px; }
 }
 @media (max-width: 1100px) {
-  .ai-room.ai-room--modern, .ai-room.ai-room--modern.is-panel-collapsed { grid-template-columns: 112px minmax(0, 1fr); }
+  .ai-room.ai-room--modern, .ai-room.ai-room--modern.is-panel-collapsed { grid-template-columns: var(--room-nav, 112px) minmax(0, 1fr); }
   .ai-room.ai-room--modern > :is(.ai-room__inspector,.treasure-panel) { position: absolute; grid-column: auto; grid-row: auto; inset: 89px 18px 42px auto; margin: 0; width: min(var(--room-panel, 320px), calc(100% - 140px)); min-width: min(320px, calc(100% - 140px)); z-index: 12; background: var(--room-card); }
   .ai-room.ai-room--modern .ai-room__drawer-scrim { display: block; position: absolute; z-index: 10; inset: 76px 0 28px; border-radius: 0; background: #203b2921; backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }
   .ai-room.ai-room--modern .ai-room__drawer-scrim:hover { background: #203b2921; }
@@ -177,9 +175,11 @@
   .ai-room--modern .ai-room__context { display: none; }
   .ai-room.ai-room--modern .ai-room__head-actions { grid-column: 2; gap: 3px; }
   .ai-room.ai-room--modern .ai-room__head-actions > button, .ai-room.ai-room--modern .ai-room__head-actions .ai-room__control-trigger { width: 44px; height: 44px; }
-  .ai-room.ai-room--modern .ai-room__sidebar { grid-column: auto; grid-row: auto; position: absolute; z-index: 8; left: 50%; top: auto; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%); width: 258px; height: 68px; margin: 0; padding: 5px; border-radius: 25px; }
-  .ai-room.ai-room--modern .ai-room__members { display: flex; gap: 3px; width: 100%; height: 100%; }
-  .ai-room.ai-room--modern .ai-room__members > button { flex: 1; width: 58px; height: 56px; border-radius: 19px; gap: 1px; }
+  .ai-room--modern .ai-room__preview-badge { display: none; }
+  .ai-room.ai-room--modern .ai-room__sidebar { grid-column: auto; grid-row: auto; position: absolute; z-index: 8; left: 50%; top: auto; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%); width: min(460px, calc(100% - 24px)); height: 68px; margin: 0; padding: 5px; border-radius: 25px; }
+  .ai-room.ai-room--modern .ai-room__members { display: flex; gap: 3px; width: 100%; height: 100%; overflow-x: auto; overflow-y: hidden; }
+  .ai-room.ai-room--modern .ai-room__members > button { flex: 1 0 44px; min-width: 44px; width: auto; height: 56px; border-radius: 19px; gap: 1px; }
+  .ai-room.ai-room--modern .ai-room__members > button > :is(.ai-room__member-copy,span) { opacity: 1; }
   .ai-room.ai-room--modern .ai-room__member .ai-room__avatar { width: 30px; height: 30px; flex-basis: 30px; }
   .ai-room.ai-room--modern .ai-room__members > button > svg { width: 23px; height: 23px; }
   .ai-room.ai-room--modern .ai-room__sidebar-actions { display: none; }

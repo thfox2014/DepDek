@@ -21,7 +21,7 @@ import type { ProviderConfig } from "./providers.js";
 export const HARNESS_ENGINE = "deepseek-harness" as const;
 export type HarnessEngine = typeof HARNESS_ENGINE;
 
-const DEFAULT_MODEL = "deepseek-v4-flash";
+const DEFAULT_MODEL = "deepseek-flash";
 const REQUEST_TIMEOUT_MS = 120_000;
 const MAX_HISTORY_CHARS = 18_000;
 const DSH_INSTALL_HINT = "未找到 dsh 可执行文件。请先执行 `npm install -g @deepseek-ai/dsh@0.1.0-rc.6`，或设置 DEPDEK_DSH_COMMAND 为 dsh 的绝对路径。";

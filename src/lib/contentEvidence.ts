@@ -116,6 +116,8 @@ export function contentAgentError(failure: unknown): string {
   if (/E32006|login required/.test(text)) return "空间已锁定，请重新登录。";
   if (/local|本地模式/.test(text)) return "本地模式只能使用本机模型，请在下面选择本地服务。";
   if (/INVALID_RESULT/.test(text)) return "模型没有返回有效标注，这次结果未保存。可以重试或更换模型。";
+  if (/INVALID_PHOTO_LABELS/.test(text)) return "模型没有返回合规的照片分类，这次结果未保存。可以更换视觉模型或手动标注。";
+  if (/BATCH_CONSENT_REQUIRED/.test(text)) return "请先确认本批照片要发送到哪个模型。";
   if (/E32003|TOO_LARGE/.test(text)) return "内容超出当前分析上限，请选择较小的文件。";
   return "AI 暂时没能完成标注。请检查模型连接后重试。";
 }

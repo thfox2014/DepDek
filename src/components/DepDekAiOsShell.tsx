@@ -1,4 +1,4 @@
-import { ArrowUp, CaretDown, Check, CircleNotch, FileText, FilmStrip, Gear, Images, ListChecks, LockKey, Microphone, Moon, Palette, SidebarSimple, Robot, ShieldCheck, Sparkle, SquaresFour, Stop, Sun, X } from "@phosphor-icons/react";
+import { ArrowUp, CaretDown, Check, CircleNotch, FileText, FolderSimple, Gear, Headphones, HouseSimple, Images, ListChecks, LockKey, Microphone, Moon, Palette, SidebarSimple, Robot, ShieldCheck, Sparkle, SquaresFour, Stop, Storefront, Sun, X } from "@phosphor-icons/react";
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { AgentMetrics, ChatBlock, SessionInfo } from "../App";
 import * as api from "../api";
@@ -22,12 +22,19 @@ import RoomProgressSummary from "./RoomProgressSummary";
 import { photoQueryFromText, suggestTreasureScene, TREASURE_SCENES, type TreasureScene } from "../lib/treasure";
 import { DOCUMENT_SCENES, suggestDocumentScene, type DocumentExamples, type DocumentScene } from "../lib/documentScenes";
 import WukongHead from "./WukongHead";
+import RoomAgentAvatar from "./RoomAgentAvatar";
+import ApplicationsPanel from "./ApplicationsPanel";
+import FamilyPanel, { type FamilyServices } from "./FamilyPanel";
+import MusicPanel from "./MusicPanel";
+import type { MusicServices } from "../lib/roomMusic";
+import { FAMILY_SCENES, suggestRoomWorkspace, type RoomWorkspace, type FamilyScene } from "../lib/roomWorkspaces";
 import WukongMomentPlayer from "./WukongMoment";
 import useRoomVoice from "./useRoomVoice";
 import jiahoLogo from "../assets/jiaho-boot-logo.png";
 import "./ai-os-room.css";
 import "./ai-os-entry.css";
 import "./ai-os-modern.css";
+import "./workspace-panels.css";
 
 type Props = {
   root: string; settings: api.Settings; sessions: SessionInfo[]; activeAgentId: string | null;
@@ -51,18 +58,36 @@ type Props = {
   onDocumentSceneChange?: (scene: DocumentScene) => void;
   preview?: boolean;
   modelStatusService?: ModelStatusService;
+  initialWorkspace?: RoomWorkspace;
+  initialFamilyScene?: FamilyScene;
+  familyServices?: FamilyServices;
+  musicServices?: MusicServices;
 };
+type LibraryTab = "album" | "videos" | "documents";
+type EntertainmentTab = "music" | "films";
+
+function WorkspaceTabs({ kind, active, onSelect }: {
+  kind: "library" | "entertainment"; active: LibraryTab | EntertainmentTab;
+  onSelect: (tab: LibraryTab | EntertainmentTab) => void;
+}) {
+  const tabs: { id: LibraryTab | EntertainmentTab; label: string }[] = kind === "library"
+    ? [{ id: "album", label: "相册" }, { id: "videos", label: "视频" }, { id: "documents", label: "资料" }]
+    : [{ id: "music", label: "音乐" }, { id: "films", label: "影视" }];
+  return <nav className="workspace-panel__tabs" aria-label={kind === "library" ? "资料分类" : "娱乐分类"}>
+    {tabs.map((tab) => <button key={tab.id} type="button" aria-pressed={active === tab.id} onClick={() => onSelect(tab.id)}>{tab.label}</button>)}
+  </nav>;
+}
 const native = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 function initialTheme(): "light" | "dark" { try { return window.localStorage.getItem("jiaho.agent-room.theme") === "dark" ? "dark" : "light"; } catch { return "light"; } }
 function initialAppearance(): "glass" | "pure" | "focus" { try { const value = window.localStorage.getItem("jiaho.agent-room.appearance"); return value === "pure" || value === "focus" ? value : "glass"; } catch { return "glass"; } }
 function initialMoments(): boolean { try { return window.localStorage.getItem("jiaho.agent-room.moments") !== "off"; } catch { return true; } }
 function initialCloudEnabled(): boolean { try { return window.localStorage.getItem("jiaho.agent-room.cloud-model") !== "off"; } catch { return true; } }
 function Avatar({ id, mark, active = false, busy = false, listening = false }: { id: string; mark: string; active?: boolean; busy?: boolean; listening?: boolean }) {
-  return <span className={`ai-room__avatar avatar-${id}`} aria-hidden="true">{id === ROOM_AGENT_ID ? <WukongHead active={active} busy={busy} listening={listening} /> : <span>{mark}</span>}</span>;
+  return <span className={`ai-room__avatar avatar-${id}`} aria-hidden="true">{id === ROOM_AGENT_ID ? <WukongHead active={active} busy={busy} listening={listening} /> : <RoomAgentAvatar id={id} name={mark} busy={busy} />}</span>;
 }
 
 /** AI-OS now opens the Wukong room; the old terminal-colored shell is retired. */
-export default function DepDekAiOsShell({ root, settings, sessions, activeAgentId, chats, running, agentMetrics = {}, teamTasks = [], onSelectAgent, onSend, onAbort, onCreateAgent, onSaveSettings, onCancelTask, onOpenHome, photoServices, initialTreasureScene, initialVideoScene, videoServices, initialDocumentScene, documentExamples, documentServices, documentPreviewState, onDocumentSceneChange, preview = false, modelStatusService }: Props) {
+export default function DepDekAiOsShell({ root, settings, sessions, activeAgentId, chats, running, agentMetrics = {}, teamTasks = [], onSelectAgent, onSend, onAbort, onCreateAgent, onSaveSettings, onCancelTask, onOpenHome, photoServices, initialTreasureScene, initialVideoScene, videoServices, initialDocumentScene, documentExamples, documentServices, documentPreviewState, onDocumentSceneChange, preview = false, modelStatusService, initialWorkspace, initialFamilyScene, familyServices, musicServices }: Props) {
   const connectionMode = useAiOsConnectionMode();
   const members = roomMembers(settings), selected = members.find((person) => person.id === activeAgentId) ?? members[0];
   const agent = settings.agents?.find((item) => item.id === selected.id);
@@ -80,20 +105,33 @@ export default function DepDekAiOsShell({ root, settings, sessions, activeAgentI
   const draft = drafts[selected.id] ?? "", setDraft = (text: string) => setDrafts((items) => ({ ...items, [selected.id]: text }));
   const [theme, setTheme] = useState(initialTheme), [appearance, setAppearance] = useState(initialAppearance);
   const [popover, setPopover] = useState<"appearance" | "runtime" | null>(null);
-  const [panelOpen, setPanelOpen] = useState(Boolean(initialTreasureScene || initialDocumentScene || initialVideoScene)), [panelWidth, setPanelWidth] = useState(320);
+  const [workspace, setWorkspace] = useState<RoomWorkspace>(initialWorkspace ?? (initialDocumentScene ? "documents" : initialVideoScene ? "videos" : initialTreasureScene ? "album" : "chat"));
+  const [rosterOpen, setRosterOpen] = useState(false), [applicationsTab, setApplicationsTab] = useState<"residents" | "store">("store");
+  const [entertainmentTab, setEntertainmentTab] = useState<EntertainmentTab>("music");
+  const [familyScene, setFamilyScene] = useState<FamilyScene>(initialFamilyScene ?? "home"), [familyProgress, setFamilyProgress] = useState<string[]>([]);
+  const [musicProgress, setMusicProgress] = useState<string[]>([]);
+  const [panelOpen, setPanelOpen] = useState(Boolean(initialWorkspace && initialWorkspace !== "chat" || initialTreasureScene || initialDocumentScene || initialVideoScene)), [panelWidth, setPanelWidth] = useState(320);
   const [settingsOpen, setSettingsOpen] = useState(false), [saving, setSaving] = useState(false), [notice, setNotice] = useState("");
   const [cards, setCards] = useState<api.ApprovalCard[]>([]), [acting, setActing] = useState("");
-  const [treasureOpen, setTreasureOpen] = useState(Boolean(initialTreasureScene)), [treasureScene, setTreasureScene] = useState<TreasureScene>(initialTreasureScene ?? "memory");
+  const [treasureScene, setTreasureScene] = useState<TreasureScene>(initialTreasureScene ?? "memory");
   const [photoProgress, setPhotoProgress] = useState<string[]>([]), [photoQuery, setPhotoQuery] = useState("");
-  const [documentsOpen, setDocumentsOpen] = useState(Boolean(initialDocumentScene)), [documentScene, setDocumentScene] = useState<DocumentScene>(initialDocumentScene ?? "find");
+  const [documentScene, setDocumentScene] = useState<DocumentScene>(initialDocumentScene ?? "find");
   const [documentProgress, setDocumentProgress] = useState<string[]>([]);
-  const [videosOpen, setVideosOpen] = useState(Boolean(initialVideoScene)), [videoScene, setVideoScene] = useState<VideoScene>(initialVideoScene ?? "memory");
+  const [videoScene, setVideoScene] = useState<VideoScene>(initialVideoScene ?? "memory");
   const [videoProgress, setVideoProgress] = useState<string[]>([]), [videoQuery, setVideoQuery] = useState("");
-  const documents = documentsOpen && selected.id === ROOM_AGENT_ID;
-  const videos = videosOpen && !documents && selected.id === ROOM_AGENT_ID;
-  const treasure = treasureOpen && !documents && !videos && selected.id === ROOM_AGENT_ID;
-  const collection = treasure || videos || documents;
+  const documents = workspace === "documents" && selected.id === ROOM_AGENT_ID;
+  const videos = workspace === "videos" && selected.id === ROOM_AGENT_ID;
+  const music = workspace === "entertainment" && selected.id === ROOM_AGENT_ID;
+  const treasure = workspace === "album" && selected.id === ROOM_AGENT_ID;
+  const family = workspace === "family" && selected.id === ROOM_AGENT_ID, applications = workspace === "applications";
+  const collection = treasure || videos || music || documents || family || applications;
+  const rosterVisible = workspace === "chat" && rosterOpen;
+  const libraryTab = (workspace === "videos" ? "videos" : workspace === "documents" ? "documents" : "album") satisfies LibraryTab;
+  const libraryActive = workspace === "album" || workspace === "videos" || workspace === "documents";
+  const residentCount = new Set(settings.agents?.map((member) => member.id)).size;
+  const workspaceTitle = documents ? "资料" : videos ? "视频" : music ? "娱乐" : family ? "数据" : applications ? "智能体" : "相册";
   const recentUser = [...blocks].reverse().find((block): block is Extract<ChatBlock, { kind: "user" }> => block.kind === "user");
+  const sceneMessages = useRef<Record<string, number>>({});
   const suggestion = suggestTreasureScene(recentUser?.text ?? "");
   const documentSuggestion = suggestDocumentScene(recentUser?.text ?? "");
   const videoSuggestion = suggestVideoScene(recentUser?.text ?? "");
@@ -122,22 +160,36 @@ export default function DepDekAiOsShell({ root, settings, sessions, activeAgentI
   }, [settings, providerName, selected.id, saving, isRunning, connectionMode, connection.states, cloudAllowed]);
   useEffect(() => { scroll.current?.scrollTo({ top: scroll.current.scrollHeight }); }, [selected.id, blocks.length, blocks[blocks.length - 1], isRunning]);
   useEffect(() => {
-    if (selected.id !== ROOM_AGENT_ID) return;
+    if (selected.id !== ROOM_AGENT_ID || !recentUser || sceneMessages.current[selected.id] === recentUser.id) return;
+    sceneMessages.current[selected.id] = recentUser.id;
+    const familyHint = suggestRoomWorkspace((recentUser?.text ?? "").split("\n")[0]);
+    if (familyHint?.familyScene && !suggestion && !videoSuggestion && !/资料|文件|文档|报告/.test((recentUser?.text ?? "").split("\n")[0])) {
+      setWorkspace("family"); setFamilyScene(familyHint.familyScene);
+      if (typeof window === "undefined" || window.innerWidth >= 1100) setPanelOpen(true);
+      return;
+    }
     if (videoSuggestion) {
-      setVideosOpen(true); setDocumentsOpen(false); setTreasureOpen(false);
+      setWorkspace("videos");
       if (typeof window === "undefined" || window.innerWidth >= 1100) setPanelOpen(true);
       const query = videoQueryFromText(recentUser?.text ?? "");
       if (query !== undefined) setVideoQuery(query);
       return;
     }
     if (documentSuggestion && !suggestion) {
-      setDocumentsOpen(true); setTreasureOpen(false); setVideosOpen(false);
+      setWorkspace("documents");
       if (typeof window === "undefined" || window.innerWidth >= 1100) setPanelOpen(true);
       return;
     }
-    if (!suggestion) return;
-    setDocumentsOpen(false); setVideosOpen(false);
-    setTreasureOpen(true);
+    if (!suggestion) {
+      const next = suggestRoomWorkspace(recentUser?.text ?? "");
+      if (!next) return;
+      setWorkspace(next.workspace);
+      if (next.familyScene) setFamilyScene(next.familyScene);
+      if (next.workspace === "applications") { setRosterOpen(false); setApplicationsTab("store"); }
+      if (typeof window === "undefined" || window.innerWidth >= 1100) setPanelOpen(true);
+      return;
+    }
+    setWorkspace("album");
     if (typeof window === "undefined" || window.innerWidth >= 1100) setPanelOpen(true);
     const query = photoQueryFromText(recentUser?.text ?? "");
     if (query !== undefined) setPhotoQuery(query);
@@ -225,45 +277,63 @@ export default function DepDekAiOsShell({ root, settings, sessions, activeAgentI
   }
   flush();
   const useDraft = (text: string) => { setDraft(text); input.current?.focus(); };
-  const chooseScene = (scene: TreasureScene) => { setVideosOpen(false); setDocumentsOpen(false); setTreasureScene(scene); setTreasureOpen(true); setPanelOpen(true); };
-  const chooseVideoScene = (scene: VideoScene) => { setVideoScene(scene); setVideosOpen(true); setDocumentsOpen(false); setTreasureOpen(false); setPanelOpen(true); };
-  const chooseDocumentScene = (scene: DocumentScene) => { setVideosOpen(false); setDocumentScene(scene); setDocumentsOpen(true); setTreasureOpen(false); setPanelOpen(true); if (preview) onDocumentSceneChange?.(scene); };
+  const chooseScene = (scene: TreasureScene) => { setWorkspace("album"); setTreasureScene(scene); setPanelOpen(true); };
+  const chooseVideoScene = (scene: VideoScene) => { setVideoScene(scene); setWorkspace("videos"); setPanelOpen(true); };
+  const chooseDocumentScene = (scene: DocumentScene) => { setWorkspace("documents"); setDocumentScene(scene); setPanelOpen(true); if (preview) onDocumentSceneChange?.(scene); };
+  const openWorkspace = (next: RoomWorkspace) => { if (voice.recording) void voice.stop(); if (next !== "applications") onSelectAgent(ROOM_AGENT_ID); setWorkspace(next); setPanelOpen(next !== "chat"); setRosterOpen(next === "chat"); if (next === "applications") setApplicationsTab("store"); setPopover(null); setNotice(""); };
+  const selectLibraryTab = (tab: LibraryTab | EntertainmentTab) => { if (tab === "album" || tab === "videos" || tab === "documents") openWorkspace(tab); };
+  const selectEntertainmentTab = (tab: LibraryTab | EntertainmentTab) => {
+    if (tab !== "music" && tab !== "films") return;
+    if (voice.recording) void voice.stop();
+    onSelectAgent(ROOM_AGENT_ID); setEntertainmentTab(tab); setWorkspace("entertainment"); setPanelOpen(true); setRosterOpen(false); setPopover(null); setNotice("");
+  };
+  const openLibrary = () => openWorkspace(libraryActive ? workspace : "album");
+  const libraryTabs = <WorkspaceTabs kind="library" active={libraryTab} onSelect={selectLibraryTab} />;
+  const entertainmentTabs = <WorkspaceTabs kind="entertainment" active={entertainmentTab} onSelect={selectEntertainmentTab} />;
+  const selectResident = (id: string) => { if (voice.recording) void voice.stop(); onSelectAgent(id); setWorkspace("chat"); setPanelOpen(false); setRosterOpen(typeof window === "undefined" || window.innerWidth > 700); setPopover(null); setNotice(""); };
 
   const momentPlayer = selected.id === ROOM_AGENT_ID ? <WukongMomentPlayer enabled={momentsEnabled} paused={isRunning || voice.recording || voice.transcribing || !!draft || saving || settingsOpen || pending.length > 0 || !!popover} contextKey={`${root}:${selected.id}:${collection ? "collection" : "chat"}`} timeline={scroll} welcome={!hasDialogue ? <Avatar id={selected.id} mark={selected.mark} active listening={voice.recording} /> : undefined} /> : null;
 
-  return <main ref={room} className={`ai-room ai-room--modern ${!hasDialogue ? "is-welcome" : ""} ${panelOpen ? "" : "is-panel-collapsed"} ${collection ? "has-treasure" : ""} ${documents ? "has-documents" : ""} ${videos ? "has-videos" : ""}`} data-theme={theme} data-appearance={appearance} style={{ "--room-panel": documents ? "min(50vw, 740px)" : videos ? "min(50vw, 760px)" : treasure ? "min(50vw, 760px)" : `${panelWidth}px` } as CSSProperties}>
+  return <main ref={room} className={`ai-room ai-room--modern ${!hasDialogue ? "is-welcome" : ""} ${panelOpen ? "" : "is-panel-collapsed"} ${collection ? "has-treasure" : ""} ${documents ? "has-documents" : ""} ${videos ? "has-videos" : ""} ${rosterVisible ? "is-roster-open" : ""}`} data-workspace={workspace} data-theme={theme} data-appearance={appearance} style={{ "--room-panel": documents ? "min(50vw, 740px)" : videos || treasure ? "min(50vw, 760px)" : family || applications || music ? "min(42vw, 520px)" : `${panelWidth}px` } as CSSProperties}>
     <header className="ai-room__topbar">
-      <button className="ai-room__brand" aria-label="家合首页" onClick={() => { onSelectAgent(ROOM_AGENT_ID); setTreasureOpen(false); setDocumentsOpen(false); setVideosOpen(false); setPanelOpen(false); }}><img src={jiahoLogo} alt="家合 Jiaho" /><b>家合</b></button>
-      {(hasDialogue || collection) ? <div className="ai-room__context"><Avatar id={selected.id} mark={selected.mark} active busy={isRunning} listening={voice.recording} /><h1>{selected.name}</h1>{collection && <span>{documents ? "资料" : videos ? "视频" : "相册"}</span>}{isRunning && <CircleNotch size={14} className="room-spin" aria-label="正在处理" />}</div> : <h1 className="ai-room__sr-only">家合 AI-OS</h1>}
+      <button className="ai-room__brand" aria-label="家合首页" onClick={() => { onSelectAgent(ROOM_AGENT_ID); setWorkspace("chat"); setRosterOpen(false); setPanelOpen(false); }}><img src={jiahoLogo} alt="家合 Jiaho" /><b>家合</b></button>
+      {(hasDialogue || collection) ? <div className="ai-room__context"><Avatar id={selected.id} mark={selected.mark} active busy={isRunning} listening={voice.recording} /><h1>{selected.name}</h1>{collection && <span>{workspaceTitle}</span>}{isRunning && <CircleNotch size={14} className="room-spin" aria-label="正在处理" />}</div> : <h1 className="ai-room__sr-only">家合 AI-OS</h1>}
       <div className="ai-room__head-actions">
         {preview && <span className="ai-room__preview-badge" title="隔离界面预览，不连接模型或家庭资料">预览</span>}
         <RoomControlPopover label="外观" open={popover === "appearance"} onToggle={() => setPopover((value) => value === "appearance" ? null : "appearance")} onClose={() => setPopover(null)} trigger={<Palette size={20} />}>
           <div className="ai-room__theme-options" role="group" aria-label="明暗模式"><button aria-pressed={theme === "light"} onClick={() => setTheme("light")}><Sun size={16} />浅色</button><button aria-pressed={theme === "dark"} onClick={() => setTheme("dark")}><Moon size={16} />深色</button></div>
           <div className="ai-room__appearance-options" role="group" aria-label="界面材质">{([{ id: "glass", label: "轻透" }, { id: "pure", label: "纯净" }, { id: "focus", label: "专注" }] as const).map((item) => <button key={item.id} aria-pressed={appearance === item.id} onClick={() => setAppearance(item.id)}><span className={`ai-room__swatch is-${item.id}`} />{item.label}{appearance === item.id && <Check size={15} />}</button>)}</div>
           <button className="ai-room__motion-toggle" aria-label={momentsEnabled ? "关闭悟空动效" : "开启悟空动效"} aria-pressed={momentsEnabled} onClick={() => setMomentsEnabled((value) => !value)}><Sparkle size={17} weight={momentsEnabled ? "fill" : "regular"} /><span>悟空动效</span><span>{momentsEnabled ? "开" : "关"}</span></button>
-          <div className="ai-room__mobile-actions"><button aria-label="执行器与模型" disabled={saving || isRunning} onClick={() => { setPopover(null); setSettingsOpen(true); }}><Gear size={19} /></button><button aria-label="打开工作台" onClick={onOpenHome}><SquaresFour size={19} /></button><button aria-label="锁定空间" onClick={() => void api.aiOsLogout().then(() => window.location.reload()).catch(() => setNotice("未能锁定空间，请重试。"))}><LockKey size={19} /></button></div>
+          <div className="ai-room__mobile-actions"><button aria-label="执行器与模型" disabled={saving || isRunning} onClick={() => { setPopover(null); setSettingsOpen(true); }}><Gear size={19} /></button></div>
         </RoomControlPopover>
+        <button className="ai-room__quick-action" aria-label="打开工作台" title="工作台" onClick={onOpenHome}><SquaresFour size={20} /></button>
+        <button className="ai-room__quick-action" aria-label="锁定空间" title="锁定空间" onClick={() => void api.aiOsLogout().then(() => window.location.reload()).catch(() => setNotice("未能锁定空间，请重试。"))}><LockKey size={20} /></button>
         <button className="ai-room__panel-toggle" aria-label={`${panelOpen ? "收起操作面板" : "展开操作面板"}${pending.length ? `，${pending.length} 项待确认` : ""}`} aria-expanded={panelOpen} title="操作面板" onClick={() => setPanelOpen((value) => !value)}><SidebarSimple size={20} />{pending.length > 0 && <span>{pending.length}</span>}</button>
       </div>
     </header>
     <aside className="ai-room__sidebar" aria-label="Agent 列表">
-      <nav className="ai-room__members" aria-label="伙伴与资料">{members.map((person) => {
-        const config = settings.agents?.find((item) => item.id === person.id), busy = Boolean(running[person.id]);
-        return <button key={person.id} className={`ai-room__member ${selected.id === person.id && !collection ? "is-selected" : ""}`} aria-current={selected.id === person.id && !collection ? "page" : undefined} aria-label={`${person.name} · ${person.role}`} title={`${person.name} · ${busy ? "正在处理" : config && settings.providers[config.provider_name] ? "家庭资料管家" : "待配置"}`} data-tip={person.name} onClick={() => { if (voice.recording) void voice.stop(); onSelectAgent(person.id); setTreasureOpen(false); setDocumentsOpen(false); setVideosOpen(false); setNotice(""); }}><Avatar id={person.id} mark={person.mark} active={selected.id === person.id} busy={busy} /><span className="ai-room__member-copy"><b>{person.name}</b></span></button>;
-      })}<button className={`ai-room__treasure-link ${treasure ? "is-selected" : ""}`} aria-label="相册" aria-current={treasure ? "page" : undefined} title="相册 · 照片与我们的故事" data-tip="相册" onClick={() => { onSelectAgent(ROOM_AGENT_ID); setVideosOpen(false); setDocumentsOpen(false); setTreasureOpen(true); setPanelOpen(true); }}><Images size={25} /><span>相册</span></button><button className={`ai-room__treasure-link ${videos ? "is-selected" : ""}`} aria-label="视频" aria-current={videos ? "page" : undefined} title="视频 · 有声有色的回忆" data-tip="视频" onClick={() => { onSelectAgent(ROOM_AGENT_ID); setDocumentsOpen(false); setTreasureOpen(false); setVideosOpen(true); setPanelOpen(true); }}><FilmStrip size={25} /><span>视频</span></button><button className={`ai-room__treasure-link ${documents ? "is-selected" : ""}`} aria-label="资料" aria-current={documents ? "page" : undefined} title="资料 · 找得到，收得好，用得上" data-tip="资料" onClick={() => { onSelectAgent(ROOM_AGENT_ID); setVideosOpen(false); setTreasureOpen(false); setDocumentsOpen(true); setPanelOpen(true); }}><FileText size={25} /><span>资料</span></button></nav>
-      <div className="ai-room__sidebar-actions"><button onClick={onOpenHome} aria-label="打开工作台" title="打开工作台" data-tip="工作台"><SquaresFour size={19} /></button><button onClick={() => setSettingsOpen(true)} disabled={saving || isRunning} aria-label="执行器与模型" title="执行器与模型" data-tip="设置"><Gear size={19} /></button><button aria-label="锁定空间" title="锁定空间" data-tip="锁定" onClick={() => void api.aiOsLogout().then(() => window.location.reload()).catch(() => setNotice("未能锁定空间，请重试。"))}><LockKey size={19} /></button></div>
+      <nav className="ai-room__members" aria-label="主菜单">
+        <button className={`ai-room__member ai-room__wukong-link ${workspace === "chat" ? "is-selected" : ""}`} aria-label={`悟空，盒内共有 ${residentCount} 位 Agent`} aria-expanded={rosterVisible} aria-controls="ai-room-resident-rail" aria-current={workspace === "chat" ? "page" : undefined} title="悟空 · 聊天与盒内伙伴" data-tip="悟空" onClick={() => { if (rosterVisible && selected.id === ROOM_AGENT_ID) setRosterOpen(false); else openWorkspace("chat"); }}><Avatar id={ROOM_AGENT_ID} mark="悟" active /><span className="ai-room__member-copy"><b>悟空</b></span><em className="ai-room__resident-count">{residentCount}</em></button>
+        <button className={`ai-room__treasure-link ${applications ? "is-selected" : ""}`} aria-label="智能体" aria-current={applications ? "page" : undefined} title="智能体 · Agent Store" data-tip="智能体" onClick={() => openWorkspace("applications")}><Storefront size={25} /><span>智能体</span></button>
+        <button className={`ai-room__treasure-link ${libraryActive ? "is-selected" : ""}`} aria-label="资料" aria-current={libraryActive ? "page" : undefined} title="资料 · 相册、视频与文档" data-tip="资料" onClick={openLibrary}><FolderSimple size={25} /><span>资料</span></button>
+        <button className={`ai-room__treasure-link ${family ? "is-selected" : ""}`} aria-label="数据" aria-current={family ? "page" : undefined} title="数据 · 家庭安保、健康与家居" data-tip="数据" onClick={() => openWorkspace("family")}><HouseSimple size={25} /><span>数据</span></button>
+        <button className={`ai-room__treasure-link ${music ? "is-selected" : ""}`} aria-label="娱乐" aria-current={music ? "page" : undefined} title="娱乐 · 音乐与影视" data-tip="娱乐" onClick={() => openWorkspace("entertainment")}><Headphones size={25} /><span>娱乐</span></button>
+      </nav>
+      {rosterVisible && <section id="ai-room-resident-rail" className="ai-room__resident-rail" aria-label="盒子里的 Agent"><header><span>我的 Agent</span><b>{residentCount} 位</b></header><div>{members.map((person) => <button key={person.id} className={`ai-room__resident ${selected.id === person.id ? "is-selected" : ""}`} aria-pressed={selected.id === person.id} aria-label={`${person.name} · ${person.role}`} onClick={() => selectResident(person.id)}><RoomAgentAvatar id={person.id} name={person.name} busy={running[person.id]} /><span><b>{person.name}</b><small>{running[person.id] ? "正在处理" : person.role}</small></span></button>)}</div></section>}
+      <div className="ai-room__sidebar-actions"><button onClick={() => setSettingsOpen(true)} disabled={saving || isRunning} aria-label="执行器与模型" title="执行器与模型" data-tip="设置"><Gear size={19} /></button></div>
     </aside>
     <section className="ai-room__conversation" aria-label="聊天区域">
       <div className="ai-room__messages" ref={scroll} aria-label={`${selected.name}的对话`}>
-        {!hasDialogue && <div className="ai-room__empty">{momentPlayer}<h2>{documents ? "找得到，也收得好。" : videos ? "让时光，再放一遍。" : treasure ? "想重温，哪一刻？" : "今天，想做点什么？"}</h2></div>}
+        {!hasDialogue && <div className="ai-room__empty">{momentPlayer || <Avatar id={selected.id} mark={selected.mark} active />}<h2>{documents ? "找得到，也收得好。" : music ? "给此刻，配点音乐。" : videos ? "让时光，再放一遍。" : family ? "家的大小事，一起照看。" : treasure ? "想重温，哪一刻？" : selected.id !== ROOM_AGENT_ID ? `${selected.name}在，慢慢说。` : "今天，想做点什么？"}</h2></div>}
         {messages}{hasDialogue && momentPlayer}{isRunning && <div className="ai-room__thinking" role="status"><CircleNotch className="room-spin" size={16} />{selected.name}正在想…</div>}
         {treasure && <section className="treasure-scenes" aria-label="选择照片场景"><div>{TREASURE_SCENES.map((scene) => <button key={scene.id} aria-pressed={treasureScene === scene.id} className={treasureScene === scene.id ? "is-selected" : ""} title={scene.hint} onClick={() => chooseScene(scene.id)}><b>{scene.title}{suggestion === scene.id && <em>建议</em>}</b></button>)}</div></section>}
         {videos && <section className="treasure-scenes video-scenes" aria-label="选择视频场景"><div>{VIDEO_SCENES.map((scene) => <button key={scene.id} aria-pressed={videoScene === scene.id} className={videoScene === scene.id ? "is-selected" : ""} title={scene.hint} onClick={() => chooseVideoScene(scene.id)}><b>{scene.title}{videoSuggestion === scene.id && <em>建议</em>}</b></button>)}</div></section>}
         {documents && <section className="treasure-scenes document-scenes" aria-label="选择资料场景"><div>{DOCUMENT_SCENES.map((scene) => <button key={scene.id} aria-pressed={documentScene === scene.id} className={documentScene === scene.id ? "is-selected" : ""} title={scene.hint} onClick={() => chooseDocumentScene(scene.id)}><b>{scene.title}{documentSuggestion === scene.id && <em>建议</em>}</b></button>)}</div></section>}
-        {collection && pending.length > 0 && <button className="ai-room__approval-reminder" onClick={() => { setTreasureOpen(false); setDocumentsOpen(false); setVideosOpen(false); setPanelOpen(true); }}>{pending.length} 项操作待你确认 · 打开操作面板</button>}
+        {family && <section className="treasure-scenes family-scenes" aria-label="选择家庭场景"><div>{FAMILY_SCENES.map((scene) => <button key={scene.id} aria-pressed={familyScene === scene.id} className={familyScene === scene.id ? "is-selected" : ""} onClick={() => { setFamilyScene(scene.id); setPanelOpen(true); }}><b>{scene.title}</b></button>)}</div></section>}
+        {collection && pending.length > 0 && <button className="ai-room__approval-reminder" onClick={() => { setWorkspace("chat"); setPanelOpen(true); }}>{pending.length} 项操作待你确认 · 打开操作面板</button>}
       </div>
       <div className="ai-room__composer-area">
-        {collection ? <RoomProgressSummary blocks={blocks} local={documents ? documentProgress : videos ? videoProgress : photoProgress} running={isRunning} /> : activity.length > 0 && <div className="ai-room__activity" aria-label="处理进度" aria-live="polite">{activity.map((item) => <div key={item.id}><i />{item.text}</div>)}</div>}
+        {collection ? <RoomProgressSummary blocks={blocks} local={documents ? documentProgress : videos ? videoProgress : music ? musicProgress : family ? familyProgress : treasure ? photoProgress : []} running={isRunning} /> : activity.length > 0 && <div className="ai-room__activity" aria-label="处理进度" aria-live="polite">{activity.map((item) => <div key={item.id}><i />{item.text}</div>)}</div>}
         {notice && <p className="ai-room__notice" role="status">{notice}</p>}
         <div className="ai-room__input">
           <textarea ref={input} rows={2} aria-label={`和${selected.name}聊天`} title="Enter 发送 · Shift + Enter 换行" placeholder={voice.recording ? "正在聆听，停止后文字会填入草稿…" : `把想做的事，交给${selected.name}…`} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (submitsChat(event.key, event.shiftKey, event.nativeEvent.isComposing)) { event.preventDefault(); void send(); } }} />
@@ -283,7 +353,12 @@ export default function DepDekAiOsShell({ root, settings, sessions, activeAgentI
         {!hasDialogue && !collection && <div className="ai-room__starters" aria-label="快速开始"><button onClick={() => useDraft("找照片：海边")}><Images size={16} />找照片</button><button onClick={() => useDraft("帮我整理一份资料清单")}><FileText size={16} />理资料</button><button onClick={() => useDraft("帮我理清今天最重要的事")}><ListChecks size={16} />做计划</button></div>}
       </div>
     </section>
-    {videos ? <VideoPanel key={`videos:${root}:${selected.id}`} hidden={!panelOpen} scene={videoScene} query={videoQuery} services={preview ? videoServices : undefined} onScene={chooseVideoScene} onQuery={setVideoQuery} onProgress={setVideoProgress} onOpenHome={onOpenHome} onClose={() => setPanelOpen(false)} chatMessage={recentUser} /> : documents ? preview && documentExamples ? <DocumentsPanel key={`documents:${root}:${selected.id}`} hidden={!panelOpen} scene={documentScene} examples={documentExamples} initialState={documentPreviewState} onAsk={useDraft} onProgress={setDocumentProgress} onOpenHome={onOpenHome} onClose={() => setPanelOpen(false)} /> : <NativeDocumentsPanel key={`native-documents:${root}:${selected.id}`} hidden={!panelOpen} scene={documentScene} service={preview ? documentServices : undefined} chatMessage={recentUser} onAsk={useDraft} onProgress={setDocumentProgress} onOpenHome={onOpenHome} onClose={() => setPanelOpen(false)} /> : treasure ? <TreasurePanel key={`${root}:${selected.id}`} hidden={!panelOpen} scene={treasureScene} query={photoQuery} services={photoServices} onScene={chooseScene} onProgress={setPhotoProgress} onOpenHome={onOpenHome} onQuery={setPhotoQuery} chatMessage={recentUser} /> : panelOpen && <aside className="ai-room__inspector" aria-label="操作面板">
+    {applications ? <ApplicationsPanel key={`applications:${root}`} settings={settings} selectedId={selected.id} running={running} hidden={!panelOpen} tab={applicationsTab} onTab={setApplicationsTab} onSelect={selectResident} onSave={onSaveSettings} onClose={() => setPanelOpen(false)} />
+      : family ? <FamilyPanel key={`family:${root}`} scene={familyScene} onScene={setFamilyScene} services={preview ? familyServices : undefined} hidden={!panelOpen} onAsk={useDraft} onProgress={setFamilyProgress} onClose={() => setPanelOpen(false)} />
+      : music ? <MusicPanel key={`music:${root}`} tab={entertainmentTab} navigation={entertainmentTabs} onOpenVideos={() => openWorkspace("videos")} services={preview ? musicServices : undefined} hidden={!panelOpen} onAsk={useDraft} onProgress={setMusicProgress} onClose={() => setPanelOpen(false)} />
+      : videos ? <VideoPanel key={`videos:${root}:${selected.id}`} navigation={libraryTabs} hidden={!panelOpen} scene={videoScene} query={videoQuery} services={preview ? videoServices : undefined} onScene={chooseVideoScene} onQuery={setVideoQuery} onProgress={setVideoProgress} onOpenHome={onOpenHome} onClose={() => setPanelOpen(false)} chatMessage={recentUser} />
+      : documents ? preview && documentExamples ? <DocumentsPanel key={`documents:${root}:${selected.id}`} navigation={libraryTabs} hidden={!panelOpen} scene={documentScene} examples={documentExamples} initialState={documentPreviewState} onAsk={useDraft} onProgress={setDocumentProgress} onOpenHome={onOpenHome} onClose={() => setPanelOpen(false)} /> : <NativeDocumentsPanel key={`native-documents:${root}:${selected.id}`} navigation={libraryTabs} hidden={!panelOpen} scene={documentScene} service={preview ? documentServices : undefined} chatMessage={recentUser} onAsk={useDraft} onProgress={setDocumentProgress} onOpenHome={onOpenHome} onClose={() => setPanelOpen(false)} />
+      : treasure ? <TreasurePanel key={`${root}:${selected.id}`} navigation={libraryTabs} hidden={!panelOpen} scene={treasureScene} query={photoQuery} services={photoServices} onScene={chooseScene} onProgress={setPhotoProgress} onOpenHome={onOpenHome} onQuery={setPhotoQuery} chatMessage={recentUser} /> : panelOpen && <aside className="ai-room__inspector" aria-label="操作面板">
       <div className="ai-room__resize" role="separator" aria-label="调整操作面板宽度" aria-orientation="vertical" tabIndex={0} onKeyDown={(event) => { if (event.key === "ArrowLeft") { event.preventDefault(); setPanelWidth((value) => Math.min(440, value + 20)); } if (event.key === "ArrowRight") { event.preventDefault(); setPanelWidth((value) => Math.max(280, value - 20)); } }} onPointerDown={(event) => {
         const element = event.currentTarget, start = event.clientX, width = panelWidth; let next = width;
         element.setPointerCapture(event.pointerId);

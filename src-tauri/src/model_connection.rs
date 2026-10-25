@@ -35,7 +35,7 @@ impl ModelConnection {
     }
 }
 
-fn endpoint(provider: &ProviderConfig) -> Option<(Url, &str, bool)> {
+fn endpoint(provider: &ProviderConfig) -> Option<(Url, &str, bool, bool)> {
     let (base, model, anthropic) = match provider {
         ProviderConfig::OpenAi {
             base_url, model, ..
@@ -63,21 +63,29 @@ fn endpoint(provider: &ProviderConfig) -> Option<(Url, &str, bool)> {
     {
         return None;
     }
+    let official_deepseek = url.scheme() == "https"
+        && url.host_str() == Some("api.deepseek.com")
+        && url.port_or_known_default() == Some(443);
     url.set_path(&format!("{}/models", url.path().trim_end_matches('/')));
-    Some((url, model, anthropic))
+    Some((url, model, anthropic, official_deepseek))
 }
 
-fn listed(body: &[u8], model: &str) -> ModelConnection {
+fn listed(body: &[u8], model: &str, official_deepseek: bool) -> ModelConnection {
     let Ok(value) = serde_json::from_slice::<Value>(body) else {
         return ModelConnection::unknown("unsupported_response");
     };
     let Some(models) = value.get("data").and_then(Value::as_array) else {
         return ModelConnection::unknown("unsupported_response");
     };
-    if models
-        .iter()
-        .any(|item| item.get("id").and_then(Value::as_str) == Some(model))
-    {
+    let model_listed = |id: &str| {
+        models
+            .iter()
+            .any(|item| item.get("id").and_then(Value::as_str) == Some(id))
+    };
+    let legacy_deepseek_alias = official_deepseek
+        && matches!(model, "deepseek-v4-flash" | "deepseek-v4-flash-vision-exp")
+        && model_listed("deepseek-flash");
+    if model_listed(model) || legacy_deepseek_alias {
         ModelConnection::available()
     } else if value.get("has_more").and_then(Value::as_bool) == Some(true) {
         ModelConnection::unknown("partial_listing")
@@ -87,7 +95,7 @@ fn listed(body: &[u8], model: &str) -> ModelConnection {
 }
 
 pub fn probe(provider: &ProviderConfig) -> ModelConnection {
-    let Some((url, model, anthropic)) = endpoint(provider) else {
+    let Some((url, model, anthropic, official_deepseek)) = endpoint(provider) else {
         return ModelConnection::unavailable("invalid_config");
     };
     let mut builder = Client::builder()
@@ -133,7 +141,7 @@ pub fn probe(provider: &ProviderConfig) -> ModelConnection {
     if body.len() as u64 > BODY_LIMIT {
         return ModelConnection::unknown("response_too_large");
     }
-    listed(&body, model)
+    listed(&body, model, official_deepseek)
 }
 
 #[cfg(test)]
@@ -169,18 +177,18 @@ mod tests {
     #[test]
     fn requires_selected_model_and_handles_partial_or_unknown_listings() {
         assert_eq!(
-            listed(br#"{"data":[{"id":"test-model"}]}"#, "test-model").state,
+            listed(br#"{"data":[{"id":"test-model"}]}"#, "test-model", false).state,
             "available"
         );
         assert_eq!(
-            listed(br#"{"data":[]}"#, "test-model").reason,
+            listed(br#"{"data":[]}"#, "test-model", false).reason,
             "model_missing"
         );
         assert_eq!(
-            listed(br#"{"data":[],"has_more":true}"#, "test-model").state,
+            listed(br#"{"data":[],"has_more":true}"#, "test-model", false).state,
             "unknown"
         );
-        assert_eq!(listed(b"<html>ok</html>", "test-model").state, "unknown");
+        assert_eq!(listed(b"<html>ok</html>", "test-model", false).state, "unknown");
     }
     #[test]
     fn sends_only_metadata_get_and_never_follows_redirects() {

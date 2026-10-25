@@ -83,6 +83,42 @@ pub struct Settings {
     pub agents: Vec<SavedAgent>,
 }
 
+impl Settings {
+    /// DeepSeek's API now exposes V4.1-Flash as `deepseek-flash`. The retired
+    /// `deepseek-v4-flash` IDs are still routed by DeepSeek, but are omitted
+    /// from `/models`, which made the connection indicator report false
+    /// negatives. Normalize only those known aliases on the official HTTPS
+    /// endpoint; never rewrite third-party compatible providers.
+    pub fn canonicalize_official_deepseek_models(&mut self) {
+        for provider in self.providers.values_mut() {
+            let (base, model) = match provider {
+                ProviderConfig::OpenAi { base_url, model, .. } => (
+                    base_url.as_deref().unwrap_or("https://api.openai.com/v1"),
+                    model,
+                ),
+                ProviderConfig::OpenAiCompatible {
+                    base_url, model, ..
+                } => (base_url.as_str(), model),
+                ProviderConfig::Anthropic { .. } => continue,
+            };
+            let official_deepseek = url::Url::parse(base).ok().is_some_and(|url| {
+                url.scheme() == "https"
+                    && url.host_str() == Some("api.deepseek.com")
+                    && url.port_or_known_default() == Some(443)
+                    && url.username().is_empty()
+                    && url.password().is_none()
+                    && url.query().is_none()
+                    && url.fragment().is_none()
+            });
+            if official_deepseek
+                && matches!(model.as_str(), "deepseek-v4-flash" | "deepseek-v4-flash-vision-exp")
+            {
+                *model = "deepseek-flash".to_owned();
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Settings;

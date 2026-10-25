@@ -24,6 +24,8 @@ use crate::vault::{
     DocumentCollection, DocumentLibraryState, DocumentSearchInput, DocumentSearchResult, DocumentBundleInput,
     VideoReadInput, VideoTagRecord, VideoTagsInput, VideoStory, VideoStoryInput, VideoLibraryResult,
     ContentReadInput, ContentAnalyzeInput, ContentUpdateInput, ContentAnnotation, ContentResult,
+    PhotoClassificationInput, PhotoClassificationResult,
+    FamilyInfoInput, FamilyInfoState, FamilySceneNote,
 };
 
 pub struct AppState {
@@ -44,11 +46,19 @@ fn persist_settings(app: &AppHandle, settings: &Settings) -> Result<(), String> 
 }
 
 fn load_settings(app: &AppHandle) -> Settings {
-    app.store("settings.json")
+    let mut settings: Settings = app.store("settings.json")
         .ok()
         .and_then(|store| store.get("settings"))
         .and_then(|value| serde_json::from_value(value).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let original = settings.clone();
+    settings.canonicalize_official_deepseek_models();
+    if settings != original {
+        // This migration changes only the model ID; encrypted-key references
+        // and every other setting remain untouched.
+        let _ = persist_settings(app, &settings);
+    }
+    settings
 }
 
 /// Replace plaintext API keys in an incoming `Settings` with encrypted
@@ -418,6 +428,27 @@ async fn video_story_put(state: State<'_, AppState>, input: VideoStoryInput) -> 
     let vault = state.vault.clone();
     tokio::task::spawn_blocking(move || vault.video_story_put("user", input).map_err(|e| e.to_command_string()))
         .await.map_err(|_| "E32603 video worker failed".to_string())?
+}
+
+#[tauri::command]
+async fn family_info_state(state: State<'_, AppState>) -> Result<FamilyInfoState, String> {
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || vault.family_info_state("user").map_err(|e| e.to_command_string()))
+        .await.map_err(|_| "E32603 family worker failed".to_string())?
+}
+
+#[tauri::command]
+async fn family_info_put(state: State<'_, AppState>, input: FamilyInfoInput) -> Result<FamilySceneNote, String> {
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || vault.family_info_put("user", input).map_err(|e| e.to_command_string()))
+        .await.map_err(|_| "E32603 family worker failed".to_string())?
+}
+
+#[tauri::command]
+async fn photo_classification_query(state: State<'_, AppState>, input: Option<PhotoClassificationInput>) -> Result<PhotoClassificationResult, String> {
+    let vault = state.vault.clone();
+    tokio::task::spawn_blocking(move || vault.photo_classification_query("user", input.unwrap_or_default()).map_err(|e| e.to_command_string()))
+        .await.map_err(|_| "E32603 photo classification worker failed".to_string())?
 }
 
 #[tauri::command]
@@ -1103,7 +1134,8 @@ fn settings_set(state: State<AppState>, app: AppHandle, settings: Settings) -> R
     // Real API keys are encrypted before they reach the settings store; see
     // migrate_provider_secrets_to_store.
     let current = state.settings.lock().unwrap().clone();
-    let settings = migrate_provider_secrets_to_store(&state, current, settings)?;
+    let mut settings = migrate_provider_secrets_to_store(&state, current, settings)?;
+    settings.canonicalize_official_deepseek_models();
     persist_settings(&app, &settings)?;
     *state.settings.lock().unwrap() = settings;
     Ok(())
@@ -1273,6 +1305,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            family_info_state,
+            family_info_put,
+            photo_classification_query,
             ai_os_status,
             ai_os_model_status,
             ai_os_set_connection_mode,

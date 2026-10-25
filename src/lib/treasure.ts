@@ -1,10 +1,11 @@
 import type { PhotoLibraryItem, PhotoTag } from "../api";
 
-export type TreasureScene = "memory" | "review" | "story";
+export type TreasureScene = "memory" | "review" | "story" | "classify";
 export const TREASURE_SCENES = [
   { id: "memory", title: "找回回忆", hint: "找到那个人、那一天" },
   { id: "review", title: "留下最好", hint: "比较照片，记下你的选择" },
   { id: "story", title: "成长影片", hint: "把照片串成故事草稿" },
+  { id: "classify", title: "照片分类", hint: "人物、事件、景点，像翻开一副照片牌" },
 ] as const;
 
 /** A local suggestion only: never an authorization to change files or contact a model. */
@@ -12,6 +13,7 @@ export function suggestTreasureScene(text: string): TreasureScene | null {
   const source = text.slice(0, 4096).toLowerCase();
   const positive = source.replace(/(?:不要|别|不用|不想|不需要)[^，。！？!?\n]{0,24}/g, "");
   if (/(成长|0\s*[到至—\-~～]\s*18|串成|做成|制作|生成).{0,18}(影片|视频|短片|故事)|成长影片|成长记录|memory film|slideshow/.test(positive)) return "story";
+  if (/照片|相片|图片|相册|photo|picture|album/.test(positive) && /分类|归类|标注|标签|按人物|按事件|按景点/.test(positive)) return "classify";
   if (/照片|相片|图片|相册|连拍|宝箱|photo|picture|album/.test(positive)
     && /重复|去重|连拍|模糊|垃圾|无用|清理|最好|挑选|挑一|保留|duplicate|clean/.test(positive)) return "review";
   if (/照片|相片|图片|相册|宝箱|看海|photo|picture|album/.test(positive)) return "memory";

@@ -308,8 +308,11 @@ sidecar 内置 MCP 客户端，只使用 HTTP JSON-RPC（`initialize`、`notific
 | `file_index_query` | `{filter?: {category?, query?, sha256?, path_prefix?, offset?, limit?}}` | `{items: FileIndexRecord[], total, summary: FileIndexSummary}`（类型、分类规则与限制见 [文件索引契约](file-index.md)） |
 | `content_annotation_get` | `{input:{libraryId,reference:{path,sha256}}}` | `ContentAnnotation\|null`；当前文件引用的 AI 标注，详见 [内容分析契约](ai-content-agent.md) |
 | `content_analyze` | `{input:{libraryId,reference,providerName,evidence,expectedRevision}}` | `ContentAnnotation`；Vault 复核原件、解析保存的 Provider、调用 content/analyze、复核并落本机 KV；不覆盖人工标签 |
-| `content_annotation_update` | `{input:{libraryId,reference,expectedRevision,title,description,tags}}` | `ContentAnnotation`；用户修正描述/标签，保留模型和证据来源 |
+| `content_annotation_update` | `{input:{libraryId,reference,expectedRevision,title,description,tags,photoLabels?}}` | `ContentAnnotation`；用户修正描述/标签，保留模型和证据来源；照片可确认/修正结构化分类，空集合撤回 AI 分类，重新分析不覆盖人工确认，见 [内容分析契约](ai-content-agent.md) |
 | `photo_library_query` | `{filter?: {query?, sha256?, offset?, limit?}}` | `{items: [{file: FileIndexRecord, tags: PhotoTag[]}], total, summary}`；仅照片，文件名/路径及用户标签搜索，分页最多 100 |
+| `photo_classification_query` | `{input?:{libraryId?,dimension?,label?,status?,offset?,limit?,groupOffset?}}` | 本机索引分类投影 `{items,total,groups,group_total,counts,summary}`；dimension 为 `people|event|place|subject`，status 为 `all|review|unclassified`；精确分类过滤，照片默认 12/最多 100、分类每页 24、封面最多 3 个引用，无图片字节；详见 [照片分类](photo-classification.md) |
+| `family_info_state` | — | `{library_id,notes:[{scene,note,revision,updated_at_ms}]}`；用户手工家庭信息，scene 为 `security|health|home`，当前 Home 私有 KV `family_scene_notes_v1`，每幕最多一条，空状态无虚构设备数据 |
+| `family_info_put` | `{input:{libraryId,scene,note,expectedRevision}}` | `FamilySceneNote`；note 最多4000字符，允许换行，空字符串清空；同一 redb 写事务复验 revision。Vault 串行根切换、登录及 user-only 校验和成功/失败审计，错误不回显正文。无 Agent RPC / 自动模型上下文 / 设备控制 / 健康监测；原有 sidecar、R1 与 Webdesk 不新增接口 |
 | `photo_preview` | `{path, expectedSha256}` | `ReadBinaryResult`；Vault no-follow 打开已索引照片，12 MiB 上限，复验内容 SHA 与图片魔数，仅原生用户预览 |
 | `photo_tags_set` | `{path, expectedSha256, tags: [{kind, value}]}` | `{path, sha256, tags, updated_at_ms}`；确认的用户标签，最多 16 条，每值 120 字；kind 为 `person|place|event|captured_date|note|selection`，selection 仅 `keep` |
 | `video_library_query` | `{filter?: {query?, sha256?, offset?, limit?}}` | `{items: [{file, tags, revision}], total, summary, stories}`；仅视频名称/路径/SHA/人工标签检索，分页最多 100，故事最多 100；不做内容理解，见 [视频契约](video-library.md) |
@@ -629,7 +632,7 @@ Provider HTTP 请求统一发送静态公开产品 User-Agent，版本来自受 
 
 ## 16. Jiaho AI-OS 本机首启入口
 
-悟空“宝箱”复用此原生工作台，三种场景为回忆、挑选、成长选片。上述 `photo_*` 命令只作为 Tauri 用户入口，不注册 sidecar 工具或 R1/Webdesk API；sidecar 与其他运行时权限不变。标签存入文件索引私有 redb 的独立 `photo_tags_v1` 表，绑定路径与内容 SHA，重扫不覆盖确认，源内容变化不继续返回旧标签。没有人脸识别、自动垃圾判定或真实视频渲染回执；场景建议由最近的用户话语在本机匹配，不能据此更改原件或发送照片。完整边界与界面状态见 [宝箱设计](jiaho-wukong-treasure.md)。
+悟空“相册”复用此原生工作台，场景为回忆、挑选、成长选片和照片分类。上述 `photo_*` 命令只作为 Tauri 用户入口，不注册 sidecar 工具或 R1/Webdesk API；sidecar 与其他运行时权限不变。标签存入文件索引私有 redb 的独立 `photo_tags_v1` 表，绑定路径与内容 SHA，重扫不覆盖确认，源内容变化不继续返回旧标签。没有人脸识别、自动垃圾判定或真实视频渲染回执；场景建议由最近的用户话语在本机匹配，不能据此更改原件或发送照片。分类与 AI 内容标注另存 `content_annotations_v1`，人工确认优先、低置信待核对，见 [照片分类](photo-classification.md)。完整边界与界面状态见 [相册设计](jiaho-wukong-treasure.md)。
 
 2026-10-18 首启交互更新：网络 → 账户 → 大模型 → 工作模式，完成后直接进入悟空；新增 `ai_os_set_connection_mode`、`ai_os_network_status`、`ai_os_open_network_settings` Tauri-only 命令。2026-10-19 网络检测与固定 Wi-Fi 设置入口允许在首启登录前使用，仍由 WelcomeVault 审计，不解锁其他命令；网络结果新增 `connectivity: online|offline|limited`。按用户要求，检测、验证码、注册和登录统一使用 BitBay 已部署的公共 `/v2` 接口：`https://api.bitbay.site/v2/email/send-code`、`/v2/user/register`、`/v2/user/login`；固定枚举 URL，不允许内部路由、任意 URL 或旧 `/api` 自动回退。连通检测只向公共登录接口发送固定空 JSON，要求其缺少必填字段的 HTTP 400/code 400 校验响应；不携带账号、密码或 Token，不产生真实登录，非在线时只自动打开一次 Wi-Fi 设置，返回后复查。不接入尚未部署的 PaaS `/v1/tenants/...` 草案。`ai_os_bitbay_send_code/register/login` 在真实回执验证成功后才关联/首次建立本机账户，不保存/返回平台 Token，不替换旧空间或扩大权限。`ai_os_status.bitbay` 仅已登录时返回 `{email,user_id}` 或 null。`ai_os_status.connection_mode` 为 `online|local`，缺省为 `online`；输入、冷却、失败/不确定结果、数值回环模型校验、会话启动后锁定及网络设置的边界以 [首启契约](agentos-v2/runtime-welcome.md#四步首启向导与-ai-连接模式2026-10-18) 为准。不是断网/防火墙开关，不改变 R1、Webdesk、邮件或 MCP 的接口/权限；不新增 sidecar 工具。
 

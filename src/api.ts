@@ -538,6 +538,17 @@ export const photoLibraryQuery = (filter: PhotoLibraryFilter = {}) => invoke<Pho
 export const photoPreview = (path: string, expectedSha256: string) => invoke<ReadBinaryResult>("photo_preview", { path, expectedSha256 });
 export const photoTagsSet = (path: string, expectedSha256: string, tags: PhotoTag[]) => invoke<PhotoTagRecord>("photo_tags_set", { path, expectedSha256, tags });
 
+export type PhotoDimension = "people" | "event" | "place" | "subject";
+export interface PhotoLabel { dimension: PhotoDimension; label: string; confidence: number; evidence: string }
+export interface ClassifiedPhoto extends PhotoLibraryItem { labels: (PhotoLabel & { source: "ai" | "user" })[]; analyzed: boolean; needs_review: boolean }
+export interface PhotoClassificationGroup { dimension: PhotoDimension; label: string; total: number; confirmed: number; ai_suggested: number; covers: PhotoLibraryItem[] }
+export interface PhotoClassificationInput { libraryId?: string; dimension?: PhotoDimension; label?: string; status?: "all" | "review" | "unclassified"; offset?: number; limit?: number; groupOffset?: number }
+export interface PhotoClassificationResult {
+  items: ClassifiedPhoto[]; total: number; groups: PhotoClassificationGroup[]; group_total: number;
+  counts: { photos: number; annotated: number; unclassified: number; review: number }; summary: FileIndexSummary;
+}
+export const photoClassificationQuery = (input: PhotoClassificationInput = {}) => invoke<PhotoClassificationResult>("photo_classification_query", { input });
+
 export interface VideoReference { path: string; sha256: string }
 export interface VideoLibraryItem { file: FileIndexRecord; tags: PhotoTag[]; revision: number }
 export interface VideoTagRecord extends PhotoTagRecord { revision: number }
@@ -573,9 +584,10 @@ export interface ContentAnnotation {
   observations: { label: string; value: string }[]; uncertainties: string[]; coverage: string;
   provider_name: string; model: string; source: "ai" | "user_corrected"; total_tokens: number;
   revision: number; created_at_ms: number; updated_at_ms: number;
+  photo_labels?: PhotoLabel[]; confirmed_photo_labels?: PhotoLabel[];
 }
 export interface ContentAnalyzeInput { libraryId: string; reference: ContentReference; providerName: string; evidence: ContentEvidence; expectedRevision: number }
-export interface ContentUpdateInput { libraryId: string; reference: ContentReference; expectedRevision: number; title: string; description: string; tags: string[] }
+export interface ContentUpdateInput { libraryId: string; reference: ContentReference; expectedRevision: number; title: string; description: string; tags: string[]; photoLabels?: PhotoLabel[] }
 export const contentAnnotationGet = (input: { libraryId: string; reference: ContentReference }) => invoke<ContentAnnotation | null>("content_annotation_get", { input });
 export const contentAnalyze = (input: ContentAnalyzeInput) => invoke<ContentAnnotation>("content_analyze", { input });
 export const contentAnnotationUpdate = (input: ContentUpdateInput) => invoke<ContentAnnotation>("content_annotation_update", { input });
@@ -659,6 +671,11 @@ export const settingsGet = async (): Promise<Settings> => {
 };
 
 export const SETTINGS_CHANGED = "jiaho-settings-saved";
+
+export interface FamilySceneNote { scene: "security" | "health" | "home"; note: string; revision: number; updated_at_ms: number }
+export interface FamilyInfoState { library_id: string; notes: FamilySceneNote[] }
+export const familyInfoState = () => invoke<FamilyInfoState>("family_info_state");
+export const familyInfoPut = (input: { libraryId: string; scene: FamilySceneNote["scene"]; note: string; expectedRevision: number }) => invoke<FamilySceneNote>("family_info_put", { input });
 export const settingsSet = async (settings: Settings): Promise<void> => {
   if (isBrowserPreview()) {
     await agentService<void>("/settings", {

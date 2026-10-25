@@ -1,7 +1,7 @@
 import { ArrowLeft, ArrowRight, BookmarkSimple, Check, CircleNotch, FileText, FolderSimple, MagnifyingGlass, Package, WarningCircle, X } from "@phosphor-icons/react";
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import * as api from "../api";
-import { DOCUMENT_SCENES, type DocumentScene } from "../lib/documentScenes";
+import type { DocumentScene } from "../lib/documentScenes";
 import { collectionInput, documentDuplicates, documentKey, documentLibraryError, documentLineChanges, documentName, documentQuestionQuery, documentReference, loadDocumentPage, missingDocumentItems, suggestedDocumentGroup, toggleDocumentReference, verifyDocumentDownload, type DocumentServices } from "../lib/documentLibrary";
 import { FILE_LIBRARY_CHANGED } from "../lib/fileLibrary";
 import FileImportButton from "./FileImportButton";
@@ -10,7 +10,7 @@ import "./documents-panel.css";
 import "./native-documents.css";
 
 const PdfPreview = lazy(() => import("./PdfDocumentPreview"));
-type Props = { scene: DocumentScene; hidden?: boolean; service?: DocumentServices; chatMessage?: { id: number; text: string }; onAsk: (text: string) => void; onProgress: (lines: string[]) => void; onOpenHome: () => void; onClose: () => void };
+type Props = { scene: DocumentScene; hidden?: boolean; service?: DocumentServices; chatMessage?: { id: number; text: string }; navigation?: ReactNode; onAsk: (text: string) => void; onProgress: (lines: string[]) => void; onOpenHome: () => void; onClose: () => void };
 type OpenDocument = { file: api.DocumentReference; result: api.DocumentPreview };
 
 function DocumentContent({ item }: { item: OpenDocument }) {
@@ -23,7 +23,7 @@ function DocumentContent({ item }: { item: OpenDocument }) {
   </article>;
 }
 
-export default function NativeDocumentsPanel({ scene, hidden, service: injected, chatMessage, onAsk, onProgress, onOpenHome, onClose }: Props) {
+export default function NativeDocumentsPanel({ scene, hidden, service: injected, chatMessage, navigation, onAsk, onProgress, onOpenHome, onClose }: Props) {
   const service = injected ?? api, available = Boolean(injected) || typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
   const [data, setData] = useState<Awaited<ReturnType<typeof loadDocumentPage>> | null>(null), [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(available), [acting, setActing] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState("");
@@ -32,7 +32,7 @@ export default function NativeDocumentsPanel({ scene, hidden, service: injected,
   const [organization, setOrganization] = useState<api.DocumentCollection | null>(null), [packet, setPacket] = useState<api.DocumentCollection | null>(null);
   const [title, setTitle] = useState(""), [missingText, setMissingText] = useState(""), [chosen, setChosen] = useState<Record<string, api.DocumentReference>>({}), [packetDirty, setPacketDirty] = useState(true), [onlyChosen, setOnlyChosen] = useState(false);
   const alive = useRef(false), generation = useRef(0), library = useRef(""), operation = useRef(false), downloads = useRef(new Set<string>());
-  const busy = loading || acting, current = DOCUMENT_SCENES.find((item) => item.id === scene)!;
+  const busy = loading || acting;
   const files = data?.catalog.items ?? [], references = Object.values(chosen), duplicateGroups = documentDuplicates(files);
   const contentAgent = useAiContentAgent(open ? { ...open.file, category: "documents" } : undefined, data?.state.library_id ?? "", service, onProgress);
   const reload = useCallback(async () => {
@@ -129,14 +129,15 @@ export default function NativeDocumentsPanel({ scene, hidden, service: injected,
     setNotice("已打开本机保存的记录；原件状态将在预览、保存或导出时复核。");
   };
   const displayed = scene === "find" ? search?.items.map((item) => item.file) ?? [...files].sort((a, b) => b.indexed_at_ms - a.indexed_at_ms).slice(0, 3) : scene === "prepare" && onlyChosen ? files.filter((file) => chosen[documentKey(documentReference(file))]) : files;
+  const headline = scene === "find" ? "想找什么，直接说。" : scene === "organize" ? "收好，不必搬来搬去。" : "为一件事，备一份资料。";
   const changes = compared.length === 2 && compared.every((item) => item.result.kind === "text") ? documentLineChanges(compared[0].result.content ?? "", compared[1].result.content ?? "") : null;
 
   return <aside className="treasure-panel documents-panel documents-native" hidden={hidden} aria-label="资料交互区" data-scene={scene}>
-    <header className="documents-panel__header"><span>资料 <span>/ {current.title}</span></span><div><small>{injected ? "示例 · 本机流程" : "本机资料 · 按需 AI"}</small><button className="documents-panel__close" aria-label="返回聊天" onClick={onClose}><X size={19} /></button></div></header>
+    <header className="documents-panel__header"><h2 className="documents-panel__headline">{headline}</h2><button className="documents-panel__close" aria-label="返回聊天" onClick={onClose}><X size={19} /></button></header>
+    {navigation}
     <div className="documents-panel__scroll">
-      {!available ? <div className="documents-panel__empty"><FolderSimple size={38} /><h2>资料，在本机等你。</h2><p>浏览器原型没有连接本机 Vault。请在原生家合中添加资料、查找原文、保存分组和导出资料包。</p><button onClick={onOpenHome}>打开工作台<ArrowRight size={16} /></button></div> : <>
+      {!available ? <div className="documents-panel__empty"><FolderSimple size={38} /><p>本机资料仅在原生应用中可用。</p><button onClick={onOpenHome}>打开工作台<ArrowRight size={16} /></button></div> : <>
         <div className="documents-native__toolbar"><FileImportButton service={service.fileLibraryImport} resolveLibrary={async () => library.current || (await service.documentLibraryState()).library_id} onProgress={onProgress} /><button disabled={busy} onClick={() => void reload()} aria-label="更新资料列表">更新列表</button></div>
-        <div className="documents-panel__intro"><h2>{scene === "find" ? "想找什么，直接说。" : scene === "organize" ? "收好，不必搬来搬去。" : "为一件事，备一份资料。"}</h2><p>{scene === "find" ? "查文件名、路径和有界文本原文。没有自动扫描，也没有把原文发给模型。" : scene === "organize" ? "本页按文件名提示分组，点击名称可修改；相同副本按内容指纹判断，不自动删除。" : "自己选择需要的原件，记下缺项，保存后再导出。"}</p></div>
         {error && <p className="documents-native__error" role="alert"><WarningCircle size={17} />{error}</p>}{notice && <p className="documents-panel__feedback" role="status"><Check size={16} />{injected ? `示例：${notice.replaceAll("本机 KV", "当前页内存").replaceAll("本机保存", "示例保存").replaceAll("重新打开仍会保留", "刷新后清空")}` : notice}</p>}
         {loading ? <div className="documents-panel__empty" role="status"><CircleNotch className="room-spin" size={26} /><p>正在打开本机资料…</p></div> : !data ? <div className="documents-panel__empty"><p>资料服务尚未就绪，不显示示例替代真实结果。</p><button onClick={() => void reload()}>重新连接</button></div> : <>
           <details className="documents-native__saved"><summary>已保存的{scene === "find" ? "常用资料" : scene === "organize" ? "分组" : "事项清单"}</summary>{scene === "find" ? data.state.favorites.filter((item) => item.favorite).map((item) => <div className="documents-native__favorite" key={item.path}><button disabled={busy} onClick={() => preview(item)}><BookmarkSimple size={15} />{documentName(item)}</button><button disabled={busy} aria-label={`移除常用引用：${documentName(item)}`} onClick={() => removeSavedFavorite(item)}><X size={15} /></button></div>) : data.state.collections.filter((item) => item.kind === (scene === "organize" ? "organization" : "packet") && item.status === "active").sort((a, b) => b.updated_at_ms - a.updated_at_ms).map((item) => <button key={item.id} disabled={busy} onClick={() => restore(item)}>{item.title}<small>{item.references.length} 份 · {new Date(item.updated_at_ms).toLocaleString("zh-CN", { hour12: false })}</small></button>)}</details>

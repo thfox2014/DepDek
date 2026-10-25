@@ -56,12 +56,15 @@ test("the component service supports search, verified media, keep correction and
   assert.equal((await videoExamples("", "empty").videoLibraryQuery()).total, 0);
   await assert.rejects(videoExamples("", "error").videoLibraryQuery());
 });
-test("production room renders video below album, three scenes, voice, inspector and version without retired agents", async () => {
+test("production room gives video its own menu with three scenes, voice, inspector and version", async () => {
   const result = await build({ stdin: { contents: `import React from 'react'; import {renderToStaticMarkup} from 'react-dom/server'; import Room from './src/components/DepDekAiOsShell'; import {ensureAiOsRoom} from './src/lib/aiOsRoom'; import {BUILTIN_PROVIDER} from './src/lib/aiOsSetup'; export const html=renderToStaticMarkup(React.createElement(Room,{preview:true,initialVideoScene:'story',root:'/family',settings:ensureAiOsRoom({providers:{local:BUILTIN_PROVIDER}}),sessions:[],activeAgentId:null,chats:{},running:{},onSelectAgent:()=>{},onSend:async()=>{},onAbort:async()=>{},onCreateAgent:async()=>{},onSaveSettings:async()=>{},onOpenHome:()=>{},videoServices:{videoLibraryQuery:async()=>{},videoPreview:async()=>{},videoTagsSet:async()=>{},videoStoryPut:async()=>{},fileIndexRefresh:async()=>{}}}));`, resolveDir: new URL("..", import.meta.url).pathname, loader: "jsx" }, bundle: true, platform: "node", format: "cjs", write: false, loader: { ".png": "dataurl", ".css": "empty" }, define: { __APP_VERSION__: '"0.2.1"' }, logLevel: "silent" });
   const module = { exports: {} }; new Function("require", "module", "exports", result.outputFiles[0].text)(createRequire(import.meta.url), module, module.exports);
   const html = module.exports.html;
   for (const text of ["has-videos", "选择视频场景", "找回一段", "留下精彩", "串成故事", "保存故事清单", "语音输入", "收起视频，返回聊天", "v0.2.1"]) assert.ok(html.includes(text), text);
-  assert.ok(html.indexOf('title="相册') < html.indexOf('title="视频'));
-  assert.ok(html.indexOf('title="视频') < html.indexOf('title="资料'));
+  assert.ok(html.includes('data-workspace="videos"'));
+  const libraryTabs = html.match(/<nav[^>]*aria-label="资料分类"[\s\S]*?<\/nav>/)?.[0] ?? '';
+  assert.ok(libraryTabs.indexOf('相册') < libraryTabs.indexOf('视频'));
+  assert.ok(libraryTabs.indexOf('视频') < libraryTabs.indexOf('资料'));
+  assert.ok(!html.includes('aria-label="娱乐面板"'));
   assert.ok(!html.includes("八戒")); assert.ok(!html.includes("dangerouslySetInnerHTML")); assert.ok(!html.includes("autoplay"));
 });

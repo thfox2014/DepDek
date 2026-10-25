@@ -1,23 +1,22 @@
 import { ArrowCounterClockwise, ArrowRight, BookmarkSimple, Check, CheckCircle, FileText, FolderSimple, LockKey, Package, WarningCircle, X } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
-import { DOCUMENT_SCENES, documentGroups, documentPacketDraft, type DocumentExamples, type DocumentScene } from "../lib/documentScenes";
+import { useEffect, useState, type ReactNode } from "react";
+import { documentGroups, documentPacketDraft, type DocumentExamples, type DocumentScene } from "../lib/documentScenes";
 import FileImportButton from "./FileImportButton";
 import "./documents-panel.css";
 
 type Props = {
-  scene: DocumentScene; hidden?: boolean; examples?: DocumentExamples;
+  scene: DocumentScene; hidden?: boolean; examples?: DocumentExamples; navigation?: ReactNode;
   initialState?: "ready" | "empty" | "error";
   onAsk: (text: string) => void; onProgress: (lines: string[]) => void;
   onOpenHome: () => void; onClose: () => void;
 };
 
 /** Outcome-first document canvas. Demo content must be explicitly injected. */
-export default function DocumentsPanel({ scene, hidden, examples, initialState = "ready", onAsk, onProgress, onOpenHome, onClose }: Props) {
+export default function DocumentsPanel({ scene, hidden, examples, navigation, initialState = "ready", onAsk, onProgress, onOpenHome, onClose }: Props) {
   const [state, setState] = useState(initialState), [original, setOriginal] = useState(false), [bookmarked, setBookmarked] = useState(false);
   const [organized, setOrganized] = useState(false), [compare, setCompare] = useState(false), [inbox, setInbox] = useState(false);
   const [packet, setPacket] = useState(false), [editing, setEditing] = useState(false), [missing, setMissing] = useState(false), [saved, setSaved] = useState(false);
   const [selected, setSelected] = useState(() => examples?.prepare.items.filter((item) => item.source).map((item) => item.id) ?? []);
-  const current = DOCUMENT_SCENES.find((item) => item.id === scene)!;
   const groups = examples ? documentGroups(examples.organize) : [];
   const draft = examples ? documentPacketDraft(examples.prepare, selected) : null;
   const missingItems = examples?.prepare.items.filter((item) => !item.source) ?? [];
@@ -33,18 +32,17 @@ export default function DocumentsPanel({ scene, hidden, examples, initialState =
     onProgress(lines);
   }, [scene, examples, state, original, bookmarked, organized, saved, selected, onProgress]);
 
-  const title = scene === "find" ? "答案，就在这一页。" : scene === "organize" ? (organized ? "收好了，也找得到了。" : "一摞资料，有了头绪。") : examples?.prepare.title ?? "围绕一件事，把资料备齐。";
+  const title = !examples ? "让资料，在需要时出现。" : scene === "find" ? "答案，就在这一页。" : scene === "organize" ? (organized ? "收好了，也找得到了。" : "一摞资料，有了头绪。") : "围绕一件事，把资料备齐。";
   const toggleSelected = (id: string) => { setSaved(false); setSelected((ids) => ids.includes(id) ? ids.filter((value) => value !== id) : [...ids, id]); };
   const ready = Boolean(examples && state === "ready");
 
   return <aside className="treasure-panel documents-panel" aria-label="资料交互区" hidden={hidden} data-scene={scene}>
-    <header className="documents-panel__header"><span>资料 <span>/ {current.title}</span></span><div><small>{examples ? "示例 · 交互原型" : "本机资料"}</small><button className="documents-panel__close" aria-label="返回聊天" onClick={onClose}><X size={19} /></button></div></header>
+    <header className="documents-panel__header"><h2 className="documents-panel__headline">{title}</h2><button className="documents-panel__close" aria-label="返回聊天" onClick={onClose}><X size={19} /></button></header>
+    {navigation}
     <div className="documents-panel__scroll">
-      {!examples ? <div className="documents-panel__empty"><FileText size={40} weight="light" /><h2>让资料，在需要时出现。</h2><p>添加资料，在本机保存并分类。现有文件仍可在工作台查看。</p><FileImportButton onProgress={onProgress} accept=".pdf,.doc,.docx,.txt,.md,.rtf,.xls,.xlsx,.ppt,.pptx,.csv" /><button onClick={onOpenHome}>到工作台管理资料<ArrowRight size={16} /></button><small>对话找答案、整理建议和资料包为本次场景原型，尚未接入真实文档理解。</small></div>
+      {!examples ? <div className="documents-panel__empty"><FileText size={40} weight="light" /><FileImportButton onProgress={onProgress} accept=".pdf,.doc,.docx,.txt,.md,.rtf,.xls,.xlsx,.ppt,.pptx,.csv" /><button onClick={onOpenHome}>到工作台管理资料<ArrowRight size={16} /></button><small>文档理解原型尚未接入。</small></div>
         : state !== "ready" ? <div className="documents-panel__empty" role={state === "error" ? "alert" : "status"}>{state === "error" ? <WarningCircle size={36} /> : <FolderSimple size={36} />}<h2>{state === "error" ? "这次没有打开资料。" : "资料放进来，事情就好找了。"}</h2><p>{state === "error" ? "这是连接失败的示例状态，没有改动任何文件。" : "这是空资料的示例状态。正式版可以添加资料后开始。"}</p><button onClick={() => setState("ready")}>{state === "error" ? "重试示例" : "载入示例资料"}<ArrowRight size={16} /></button></div>
           : <>
-            <div className="documents-panel__intro"><span>{scene === "find" ? "01 / 找到，不止是文件" : scene === "organize" ? "02 / 你放进来，悟空理清楚" : "03 / 资料，是为了生活"}</span><h2>{title}</h2><p>{scene === "find" ? "不用记文件名。问你想知道的，答案带着出处回来。" : scene === "organize" ? "先看清归类、版本和重复，再决定怎样收好。" : examples.prepare.subtitle}</p></div>
-
             {scene === "find" && <section className="documents-find" aria-label="答案与原文">
               {!original && <div className="documents-find__answer"><small>从示例原文找到</small><p>{examples.find.answer}</p><span><CheckCircle size={14} />可核对 · {examples.find.source.section}</span></div>}
               <article className={`documents-source ${original ? "is-expanded" : ""}`}><header><FileText size={19} /><div><b>{examples.find.source.name}</b><span>{examples.find.source.path} · {examples.find.source.section}</span></div><small>示例文档</small></header><div className="documents-source__page"><div className="documents-source__eyebrow">使用与照料 <span>节选</span></div><h3>{examples.find.source.heading}</h3>{examples.find.source.paragraphs.map((paragraph, index) => <p key={index} className={paragraph.relevant ? "is-relevant" : ""}>{paragraph.text}</p>)}<footer>示例内容，仅用于展示答案与出处的关系。</footer></div></article>
