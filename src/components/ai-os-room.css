@@ -152,8 +152,11 @@
 .ai-room__model-dialog .jiaho-entry { --jiaho-ink: var(--room-ink); --jiaho-green: var(--room-accent); color: var(--room-ink); }
 .ai-room__model-dialog .jiaho-model-setup.is-room { display: block; min-height: 0; padding: 0 10px 20px; max-width: 600px; }
 .ai-room__model-dialog .jiaho-model-setup__options > label,
+.ai-room__model-dialog .jiaho-model-setup__saved-choice > label,
+.ai-room__model-dialog .jiaho-model-setup__edit,
 .ai-room__model-dialog .jiaho-entry input:not([type=radio]) { background: var(--room-card); color: var(--room-ink); border-color: var(--room-line); }
-.ai-room__model-dialog .jiaho-model-setup__options > label.is-selected { background: var(--room-tint); border-color: var(--room-accent); }
+.ai-room__model-dialog .jiaho-model-setup__options > label.is-selected,
+.ai-room__model-dialog .jiaho-model-setup__saved-choice > label.is-selected { background: var(--room-tint); border-color: var(--room-accent); }
 .ai-room__model-dialog .jiaho-model-setup__form > p,
 .ai-room__model-dialog .jiaho-model-setup__options :is(small,em),
 .ai-room__model-dialog .jiaho-model-setup__consent { color: var(--room-muted); }

@@ -8,6 +8,7 @@ export const BUILTIN_PROVIDER = {
 export type SetupChoice =
   | { kind: "builtin" }
   | { kind: "existing"; name: string }
+  | { kind: "update"; name: string; endpoint: string; model: string; apiKey: string }
   | { kind: "custom"; name: string; endpoint: string; model: string; apiKey: string };
 export type SetupSelection = { name: string; provider: ProviderConfig };
 export type SetupPort = {
@@ -62,7 +63,7 @@ export function customSetupProvider(choice: Extract<SetupChoice, { kind: "custom
 
 /** UI orchestration only. Authorization and credential encryption remain in Rust. */
 export async function saveSetupProvider(choice: SetupChoice, port: SetupPort, language = "zh-CN", agentId = SETUP_AGENT_ID, mode: AiOsConnectionMode = "online"): Promise<SetupSelection> {
-  const custom = choice.kind === "custom" ? customSetupProvider(choice) : null;
+  const custom = choice.kind === "custom" || choice.kind === "update" ? customSetupProvider({ ...choice, kind: "custom" }) : null;
   if (custom && !providerAllowedForMode(custom.provider, mode)) throw new Error("本地模式仅支持数值回环地址，例如 http://127.0.0.1:11434/v1。");
   let settings = await port.settingsGet();
   if (settings.last_root) await port.vaultSetRoot(settings.last_root);
@@ -73,6 +74,18 @@ export async function saveSetupProvider(choice: SetupChoice, port: SetupPort, la
   if (choice.kind === "existing") {
     if (!owns(settings.providers, choice.name)) throw new Error("该模型已被删除，请重新选择。");
     selection = { name: choice.name, provider: settings.providers[choice.name] };
+  } else if (choice.kind === "update") {
+    if (!owns(settings.providers, choice.name)) throw new Error("该模型已被删除，请重新选择。");
+    const original = settings.providers[choice.name];
+    const api_key = custom!.provider.api_key ?? original.api_key;
+    // Keep the provider's established protocol. Editing an Anthropic or OpenAI
+    // connection must not silently convert it to OpenAI-compatible.
+    const provider: ProviderConfig = original.kind === "anthropic"
+      ? { ...original, model: custom!.provider.model, ...(api_key ? { api_key } : {}) }
+      : original.kind === "openai"
+        ? { ...original, model: custom!.provider.model, base_url: providerEndpoint(custom!.provider), ...(api_key ? { api_key } : {}) }
+        : { ...custom!.provider, ...(api_key ? { api_key } : {}) };
+    selection = { name: choice.name, provider };
   } else if (custom) {
     if (owns(settings.providers, custom.name)) throw new Error("显示名称已存在，请选择已有模型或换一个名称。");
     selection = custom;

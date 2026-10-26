@@ -89,7 +89,7 @@ test('native entry renders the compact shell with collapsed inspector, version, 
   });
   const module = { exports: {} }; new Function('require', 'module', 'exports', result.outputFiles[0].text)(createRequire(import.meta.url), module, module.exports);
   const html = module.exports.html;
-  for (const text of ['ai-room--modern', 'is-panel-collapsed', 'data-theme="light"', 'data-appearance="glass"', '今天，想做点什么？', '找照片', '理资料', '做计划', '悟空，盒内共有 1 位 Agent', 'aria-label="数据"', 'aria-label="娱乐"', 'Agent 列表', '聊天区域', '操作面板', '语音输入', '当前 Agent 执行器', '当前 Agent 模型', '使用公域大模型', '家庭文件不会自动上传', '本地大模型', 'v0.2.1']) assert.ok(html.includes(text), text);
+  for (const text of ['ai-room--modern', 'is-panel-collapsed', 'data-theme="light"', 'data-appearance="glass"', '今天，想做点什么？', '找照片', '理资料', '做计划', '悟空，盒内共有 1 位 Agent', 'aria-label="数据"', 'aria-label="娱乐"', 'aria-label="切换到紫色工作台"', '紫色工作台', 'Agent 列表', '聊天区域', '操作面板', '语音输入', '当前 Agent 执行器', '当前 Agent 模型', '使用公域大模型', '家庭文件不会自动上传', '本地大模型', 'v0.2.1']) assert.ok(html.includes(text), text);
   const nav = html.match(/<nav[^>]*aria-label="主菜单"[\s\S]*?<\/nav>/)[0];
   assert.deepEqual([...nav.matchAll(/<button[^>]*aria-label="([^"]+)"/g)].map((match) => match[1]), ['悟空，盒内共有 1 位 Agent', '智能体', '资料', '数据', '娱乐']);
   assert.ok(!html.includes('aria-label="应用与 Agent Store"'));

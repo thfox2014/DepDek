@@ -149,7 +149,7 @@ export default function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [view, setView] = useState<"home" | "office" | "workbench">("home");
-  // AI-OS opens the Wukong room; the full desktop workbench stays one click away.
+  // AI-OS always starts in Jiaho; the purple full workbench is a reversible view switch.
   const [osView, setOsView] = useState<"shell" | "home">("shell");
   const [showDock, setShowDock] = useState(true);
   const [chats, setChats] = useState<Record<string, ChatBlock[]>>({});
@@ -726,6 +726,7 @@ export default function App() {
             <span className="topbar__path" title={root}>{root}</span>
             {rootError && <span className="error-text">{rootError}</span>}
             <div className="topbar__actions">
+              {agentOsMode && <button onClick={() => { setView("home"); setOsView("shell"); }}>家合模式</button>}
               {view === "workbench" && (
                 <button
                   className={`topbar__dock-toggle${showDock ? " topbar__dock-toggle--on" : ""}`}

@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Check, CircleNotch, Images, Sparkle, Stack, WarningCircle } from "@phosphor-icons/react";
+import { ArrowLeft, ArrowRight, Check, CircleNotch, Images, Sparkle, Stack, WarningCircle, X } from "@phosphor-icons/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type * as api from "../api";
 import type { PhotoServices } from "./TreasurePanel";
@@ -10,11 +10,11 @@ import { classifyPhotoBatch, dimensionTitle, PHOTO_BATCH_LIMIT, PHOTO_DIMENSIONS
 import { FILE_LIBRARY_CHANGED } from "../lib/fileLibrary";
 import "./photo-classification.css";
 
-type Props = { services: PhotoServices; navigation?: ReactNode; hidden?: boolean; onReturn: () => void; onProgress: (lines: string[]) => void; renderPhoto: (photo: api.PhotoLibraryItem, small?: boolean) => ReactNode };
+type Props = { services: PhotoServices; navigation?: ReactNode; hidden?: boolean; onReturn: () => void; onClose: () => void; onProgress: (lines: string[]) => void; renderPhoto: (photo: api.PhotoLibraryItem, small?: boolean) => ReactNode };
 const initialFields = { people: "", event: "", place: "", subject: "" };
 const queryError = (failure: unknown) => /E32006|Home changed|changed|not indexed/.test(String(failure)) ? contentAgentError(failure) : "暂时无法读取本机分类。请重试，或确认已使用新版原生应用。";
 
-export default function PhotoClassificationPanel({ services, navigation, hidden = false, onReturn, onProgress, renderPhoto }: Props) {
+export default function PhotoClassificationPanel({ services, navigation, hidden = false, onReturn, onClose, onProgress, renderPhoto }: Props) {
   const mode = useAiOsConnectionMode();
   const [dimension, setDimension] = useState<api.PhotoDimension | undefined>();
   const [label, setLabel] = useState<string>(), [status, setStatus] = useState<"all" | "review" | "unclassified">("all");
@@ -95,7 +95,7 @@ export default function PhotoClassificationPanel({ services, navigation, hidden 
   const back = () => { if (selected) { setSelected(null); setEditing(false); } else if (hasPhotoView) browse(dimension); else onReturn(); };
 
   return <aside className="treasure-panel photo-classification" aria-label="照片分类" hidden={hidden}>
-    <header className="treasure-panel__header photo-classification__header"><button className="photo-classification__back" aria-label={selected ? "返回分类照片" : hasPhotoView ? "返回分类牌堆" : "返回相册"} disabled={disabled} onClick={back}><ArrowLeft size={17} /></button><h2 className="treasure-panel__headline">{headline}</h2><span className="treasure-panel__meta">{result ? `${result.counts.photos} 张` : "本机 KV"}</span></header>
+    <header className="treasure-panel__header photo-classification__header"><button className="photo-classification__back" aria-label={selected ? "返回分类照片" : hasPhotoView ? "返回分类牌堆" : "返回相册"} disabled={disabled} onClick={back}><ArrowLeft size={17} /></button><h2 className="treasure-panel__headline">{headline}</h2><span className="treasure-panel__meta">{result ? `${result.counts.photos} 张` : "本机 KV"}</span><button type="button" className="treasure-panel__close" aria-label="收起相册，返回聊天" onClick={onClose}><X size={19} /></button></header>
     {navigation}
     <div className="treasure-panel__scroll">
       {!selected && <><nav className="photo-classification__dimensions" aria-label="照片分类维度"><button aria-pressed={!dimension && status === "all"} disabled={disabled} onClick={() => browse()}>全部</button>{PHOTO_DIMENSIONS.map((item) => <button key={item.id} title={item.hint} aria-pressed={dimension === item.id && status === "all"} disabled={disabled} onClick={() => browse(item.id)}>{item.title}</button>)}</nav><div className="photo-classification__status-nav"><button aria-pressed={status === "unclassified"} disabled={disabled} onClick={() => browse(undefined, "unclassified")}>待分析 {result?.counts.unclassified ?? "—"}</button><button aria-pressed={status === "review"} disabled={disabled} onClick={() => browse(undefined, "review")}>待确认 {result?.counts.review ?? "—"}</button></div></>}

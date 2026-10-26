@@ -76,11 +76,16 @@
 .jiaho-model-setup__form h2 { margin-top:22px; }
 .jiaho-model-setup__form>p { color:#6c8073; font-size:12px; margin:5px 0 20px; }
 .jiaho-entry .jiaho-model-setup__options { display:grid; gap:10px; margin:24px 0 18px; max-height:320px; overflow:auto; padding:3px; scrollbar-width:thin; }
-.jiaho-model-setup__options>label { display:flex; gap:12px; align-items:center; border:1px solid #dee5d9; border-radius:14px; background:#fffdf7; padding:16px 14px; cursor:pointer; min-width:0; }
-.jiaho-model-setup__options>label.is-selected { background:#edf6eb; border-color:#8fb9a2; }
+.jiaho-model-setup__saved-choice { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:stretch; min-width:0; }
+.jiaho-model-setup__options>label,.jiaho-model-setup__saved-choice>label { display:flex; gap:12px; align-items:center; border:1px solid #dee5d9; border-radius:14px; background:#fffdf7; padding:16px 14px; cursor:pointer; min-width:0; }
+.jiaho-model-setup__options>label.is-selected,.jiaho-model-setup__saved-choice>label.is-selected { background:#edf6eb; border-color:#8fb9a2; }
 .jiaho-model-setup__options input[type=radio] { flex:none; accent-color:var(--jiaho-ink); }
 .jiaho-model-setup__options svg { color:#678674; flex:none; }
 .jiaho-model-setup__options label>span { flex:1; min-width:0; }
+.jiaho-model-setup__edit { display:flex; align-items:center; justify-content:center; gap:5px; padding:0 12px; border:1px solid #d1ddce; border-radius:11px; background:transparent; color:#587462; font:inherit; font-size:11px; cursor:pointer; }
+.jiaho-model-setup__edit:hover:not(:disabled) { background:#edf6eb; }
+.jiaho-model-setup__edit:focus-visible { outline:2px solid #8fb9a2; outline-offset:2px; }
+.jiaho-model-setup__fields input[readonly] { background:#f2f3ec!important; color:#758075!important; cursor:default; }
 .jiaho-model-setup__options b { display:block; font-size:13px; overflow-wrap:anywhere; }
 .jiaho-model-setup__options small { display:block; font-size:10px; color:#7d8e7d; margin-top:2px; overflow-wrap:anywhere; }
 .jiaho-model-setup__options em { flex:none; color:#6e8c78; font-size:10px; font-style:normal; }
@@ -108,5 +113,5 @@
 @keyframes jiaho-spin { to { transform:rotate(360deg); } }
 @media(max-width:850px) { .jiaho-entry__welcome { gap:25px; grid-template-columns:1fr; max-width:500px; padding-top:10px; }.jiaho-entry__brand img { width:150px; }.jiaho-entry__brand p { font-size:16px; margin:5px 0; }.jiaho-entry__brand>span { display:none; }.jiaho-entry__configuration { grid-template-columns:1fr; gap:35px; }.jiaho-entry__preferences { border-left:0; border-top:1px solid #e2e8d9; padding:25px 0 0; }.jiaho-entry__conversation { height:300px; }.jiaho-entry__header { height:60px; }.jiaho-entry__header small { margin-left:6px; } }
 @media(max-width:850px) { .jiaho-model-setup { grid-template-columns:1fr; max-width:550px; gap:28px; padding-top:10px; }.jiaho-model-setup__story { position:static; padding-top:0; }.jiaho-model-setup__story h1 { font-size:30px; }.jiaho-model-setup__story h1 br { display:none; }.jiaho-model-setup__story>img,.jiaho-model-setup__story>p,.jiaho-model-setup__promise { display:none; } }
-@media(max-width:420px) { .jiaho-entry .jiaho-model-setup__fields { grid-template-columns:1fr; }.jiaho-model-setup__options em { display:none; }.jiaho-model-setup__options>label { gap:8px; padding:14px 10px; } }
+@media(max-width:420px) { .jiaho-entry .jiaho-model-setup__fields { grid-template-columns:1fr; }.jiaho-model-setup__options em { display:none; }.jiaho-model-setup__options>label,.jiaho-model-setup__saved-choice>label { gap:8px; padding:14px 10px; }.jiaho-model-setup__edit { padding:0 8px; } }
 @media(prefers-reduced-motion:reduce) { .jiaho-spin { animation:none; } }

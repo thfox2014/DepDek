@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Check, CircleNotch, FilmStrip, ImageSquare, Images, Sparkle, Pause, Play, Stack, Tag, Tray, WarningCircle } from "@phosphor-icons/react";
+import { ArrowLeft, ArrowRight, Check, CircleNotch, FilmStrip, ImageSquare, Images, Sparkle, Pause, Play, Stack, Tag, Tray, WarningCircle, X } from "@phosphor-icons/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import * as api from "../api";
 import { missingStoryAges, photoKey, photoTagsFromText, storyDraft, storyFrames, tagValue, type TreasureScene } from "../lib/treasure";
@@ -14,7 +14,7 @@ type Props = {
   scene: TreasureScene; query: string; services?: PhotoServices;
   navigation?: ReactNode;
   onScene: (scene: TreasureScene) => void; onProgress: (lines: string[]) => void;
-  onOpenHome: () => void; onQuery: (query: string) => void;
+  onOpenHome: () => void; onQuery: (query: string) => void; onClose: () => void;
   chatMessage?: { id: number; text: string };
   hidden?: boolean;
 };
@@ -66,7 +66,7 @@ function PhotoImage({ item, services, small = false }: { item: api.PhotoLibraryI
   </span>;
 }
 
-export default function TreasurePanel({ scene, query, services: injected, navigation, onScene, onProgress, onOpenHome, onQuery, chatMessage, hidden = false }: Props) {
+export default function TreasurePanel({ scene, query, services: injected, navigation, onScene, onProgress, onOpenHome, onQuery, onClose, chatMessage, hidden = false }: Props) {
   const services = injected ?? api, available = Boolean(injected) || native();
   const importer = services.fileLibraryImport;
   const [result, setResult] = useState<api.PhotoLibraryResult | null>(null), [offset, setOffset] = useState(0), [sha, setSha] = useState("");
@@ -168,11 +168,14 @@ export default function TreasurePanel({ scene, query, services: injected, naviga
   else if (scene === "story") actions = [{ label: "预览故事", icon: Play, run: () => { setFrame(0); setPreviewing(true); setPlaying(true); }, disabled: !frames.length }, { label: "调整选片", icon: Images, run: () => setEditor("selection") }, { label: "保存草稿", run: () => void saveStory(), disabled: !frames.length || acting }];
   else actions = [{ label: "做成一段回忆", icon: FilmStrip, run: () => onScene("story"), disabled: !photos.length }, { label: contentAgent.busy ? "AI 正在标注…" : "AI 自动标注", icon: contentAgent.busy ? CircleNotch : Sparkle, run: () => void contentAgent.run(), disabled: !selected || contentAgent.busy || contentAgent.loading }, { label: "换一刻", icon: ArrowRight, run: nextPhoto, disabled: photos.length < 2 && (result?.total ?? 0) <= PAGE }];
 
-  if (available && scene === "classify") return <PhotoClassificationPanel services={services} navigation={navigation} hidden={hidden} onProgress={onProgress} onReturn={() => onScene("memory")} renderPhoto={(photo, small = true) => <PhotoImage item={photo} services={services} small={small} />} />;
+  if (available && scene === "classify") return <PhotoClassificationPanel services={services} navigation={navigation} hidden={hidden} onProgress={onProgress} onReturn={() => onScene("memory")} onClose={onClose} renderPhoto={(photo, small = true) => <PhotoImage item={photo} services={services} small={small} />} />;
 
-  if (!available) return <aside className="treasure-panel" hidden={hidden} aria-label="相册">{navigation}<div className="treasure-panel__empty"><Tray size={35} /><h2>照片，留在你的空间里。</h2><p>请在家合原生应用中打开相册，查看授权空间里的照片。</p><button onClick={onOpenHome}>打开工作台<ArrowRight size={16} /></button></div></aside>;
+  if (!available) return <aside className="treasure-panel" hidden={hidden} aria-label="相册">
+    <header className="treasure-panel__header"><h2 className="treasure-panel__headline">{heading}</h2><span className="treasure-panel__meta">本机照片</span><button type="button" className="treasure-panel__close" aria-label="收起相册，返回聊天" onClick={onClose}><X size={19} /></button></header>
+    {navigation}<div className="treasure-panel__empty"><Tray size={35} /><h2>照片，留在你的空间里。</h2><p>请在家合原生应用中打开相册，查看授权空间里的照片。</p><button onClick={onOpenHome}>打开工作台<ArrowRight size={16} /></button></div>
+  </aside>;
   return <aside className="treasure-panel" hidden={hidden} aria-label="相册" data-scene={scene}>
-    <header className="treasure-panel__header"><h2 className="treasure-panel__headline">{heading}</h2><span className="treasure-panel__meta">{busy ? "正在找照片…" : result ? `${result.total} 张${sha ? "相同内容照片" : "相关照片"}` : "本机照片"}</span></header>
+    <header className="treasure-panel__header"><h2 className="treasure-panel__headline">{heading}</h2><span className="treasure-panel__meta">{busy ? "正在找照片…" : result ? `${result.total} 张${sha ? "相同内容照片" : "相关照片"}` : "本机照片"}</span><button type="button" className="treasure-panel__close" aria-label="收起相册，返回聊天" onClick={onClose}><X size={19} /></button></header>
     {navigation}
     <div className="treasure-panel__scroll">
       <FileImportButton service={available ? importer : undefined} resolveLibrary={available ? async () => (await services.photoLibraryQuery({ limit: 1 })).summary.library_id ?? "" : undefined} onProgress={onProgress} label="添加照片" accept="image/*,.heic,.heif,.dng,.cr2,.nef,.arw" />

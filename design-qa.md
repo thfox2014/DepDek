@@ -148,3 +148,19 @@ final result: passed
   并显示 `DepDek v0.2.0`。
 - 验证方式：`VITE_DEPDEK_OS=1 npm run build` 产物 + 无头 Firefox 浏览器预览；点击通过
   `.os-home-button` 触发，`found=true`。
+
+## 增量验证 · 相册面板页头（2026-10-26）
+
+- 视觉真值：`/var/folders/zd/5ykxbmjn4818tf0wdm9b2vs80000gn/T/codex-clipboard-5197d00d-7b9f-4f3e-ba24-772c9e63d300.png`（1478 × 1518 px）与 `/var/folders/zd/5ykxbmjn4818tf0wdm9b2vs80000gn/T/codex-clipboard-a4e7a97b-31ac-4e05-96d2-e4f8ad6cbafc.png`（1064 × 1548 px）。
+- 实现截图：当前线程 CUA in-app browser 的 Tab 2，`http://127.0.0.1:1433/?workspace=album&scene=memory`；截图以 inline artifact 捕获（502 × 778 px JPEG），未导出为本地图片。浏览器没有暴露 CSS viewport / DPR，因此以页头与 Tab 的相对间距、对齐和关闭按钮位置作归一化比较，不作逐像素测量。
+- 状态：浅色家合界面、资料 / 相册 Tab、找回回忆场景、合成示例照片。示例使用项目现有隔离 fixture，不读取用户相册。
+- 全屏与局部对照：相册标题行右侧新增关闭入口，Tab 与标题之间有明确但克制的留白；与图2的标题、Tab、右上角关闭布局保持同一层级。现有相册照片区、底部三个动作和暖白/墨绿令牌未改动。
+- 字体与文案：沿用家合现有中文系统字体、标题字重与标题文案；未引入新字体或额外说明文案。
+- 间距与布局：标题区底部增加 13px 间距；关闭按钮 36 × 36，键盘焦点有可见描边。窄屏预览中标题、Tab 和按钮未重叠。
+- 颜色与图标：延续现有暖白、墨绿和浅绿选择态；关闭图标来自既有 Phosphor 图标库，无自绘或占位图形。
+- 图片质量：照片内容来自显式合成 fixture，与用户截图中的实时照片不同是预期；本次未改动图片裁切或图片加载行为。
+- 交互：已在回忆页和照片分类子页分别点击右上角关闭按钮并确认面板收起；重新打开、分类页返回相册也通过。
+- 构建与回归：`npm run build` 通过；`npm run test:treasure`（4 项）、`npm run test:photo-classification`（10 项）、`npm run test:wukong-moments`（8 项）全部通过；`git diff --check` 通过。
+- 发现：没有可操作的 P0 / P1 / P2 差异。验证限制：inline CUA 截图没有写入本地文件，且浏览器未提供 DPR 数值。
+
+final result: passed

@@ -123,6 +123,10 @@
 .dd-sidebar-foot > small.dd-sidebar-version { letter-spacing: .05em; opacity: .9; }
 
 .dd-main { display: flex; min-width: 0; min-height: 0; flex: 1; flex-direction: column; gap: 14px; }
+.dd-mode-bar { display: flex; min-height: 38px; flex: 0 0 38px; align-items: center; justify-content: flex-end; padding: 0 3px; }
+.dd-mode-switch { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; padding: 0 13px; border: 1px solid var(--dd-line-strong); border-radius: 999px; background: rgba(255,255,255,.82); color: var(--dd-accent-deep); font-size: 11px; white-space: nowrap; cursor: pointer; transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease; }
+.dd-mode-switch:hover { border-color: rgba(115,92,232,.45); background: #fff; box-shadow: 0 4px 14px rgba(78,66,140,.1); }
+.dd-mode-switch:focus-visible { outline: 3px solid rgba(115,92,232,.25); outline-offset: 3px; }
 .dd-topbar {
   display: flex;
   min-height: 116px;
@@ -148,6 +152,9 @@
 .dd-top-actions { display: flex; flex: 0 0 auto; gap: 5px; }
 .dd-top-actions button { position: relative; display: flex; min-width: 49px; flex-direction: column; align-items: center; gap: 4px; padding: 8px 8px; border: 0; border-radius: 10px; background: transparent; color: var(--dd-ink-2); font-size: 10px; cursor: pointer; }
 .dd-top-actions button:hover { background: var(--dd-accent-soft); color: var(--dd-accent-deep); }
+.dd-top-actions > button.dd-mode-switch { min-width: 0; flex-direction: row; gap: 7px; padding: 0 12px; border: 1px solid var(--dd-line-strong); border-radius: 999px; background: rgba(255,255,255,.82); color: var(--dd-accent-deep); font-size: 11px; }
+.dd-top-actions > button.dd-mode-switch:hover { background: #fff; }
+.dd-top-actions > button.dd-mode-switch span { display: inline; }
 .dd-top-actions i { position: absolute; top: 5px; right: 10px; width: 7px; height: 7px; border: 2px solid #fff; border-radius: 50%; background: var(--dd-warn); }
 .dd-system-sheet { width: min(620px, calc(100vw - 32px)); overflow: hidden; border: 1px solid var(--dd-line); border-radius: 24px; background: rgba(252, 252, 255, 0.98); box-shadow: 0 24px 70px rgba(38, 30, 86, 0.24); }
 .dd-system-sheet > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 24px 26px 18px; border-bottom: 1px solid var(--dd-line); }
@@ -564,6 +571,7 @@
   .dd-sidebar-toggle { top: 50%; right: -14px; }
   .dd-topbar { min-height: 82px; flex-basis: 82px; padding: 10px 12px; }
   .dd-clock > span, .dd-top-actions button span { display: none; }
+  .dd-top-actions > button.dd-mode-switch span { display: inline; }
   .dd-command small { display: none; }
   .dd-col-3, .dd-col-4, .dd-col-5, .dd-col-7, .dd-col-12 { grid-column: span 12; }
   .dd-domain-grid, .dd-suggestions { grid-template-columns: 1fr; }
@@ -572,6 +580,12 @@
   .dd-today-layout { flex-direction: column; }
   .dd-today-chat { min-height: 520px; }
   .dd-today-drawer { width: 100%; min-width: 0; min-height: 560px; flex-basis: 560px; }
+}
+
+@media (max-width: 500px) {
+  .dd-top-actions > button.dd-mode-switch { min-width: 40px; padding: 0 9px; }
+  .dd-top-actions > button.dd-mode-switch span { display: none; }
+  .dd-mode-switch:not(.dd-mode-switch--inline) { min-height: 34px; padding: 0 10px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

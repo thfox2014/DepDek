@@ -17,6 +17,7 @@ import {
   Folder,
   GearSix,
   HardDrives,
+  HouseSimple,
   ListChecks,
   MagnifyingGlass,
   Minus,
@@ -92,7 +93,7 @@ interface Props {
   onEnterAgent: (id: string) => void;
   /** 关闭某个会话。 */
   onCloseAgent: (id: string) => void;
-  /** AI-OS 模式下返回语音 Shell 入口；桌面端不传。 */
+  /** AI-OS 模式下切回家合界面；桌面端不传。 */
   onOpenShell?: () => void;
   teamTasks: api.TeamTask[];
   onCancelTeamTask: (taskId: string) => Promise<void>;
@@ -789,6 +790,7 @@ export default function DepDekHome({ root, providerCount, sessionCount, agentMet
   const now = useMemo(() => new Date(), []);
   const [time, setTime] = useState(`${pad(now.getHours())}:${pad(now.getMinutes())}`);
   const openAgentTeam = useCallback(() => setActiveView("agentteam"), []);
+  const renderModeSwitch = (inline = false) => onOpenShell && <button type="button" className={`dd-mode-switch${inline ? " dd-mode-switch--inline" : ""}`} aria-label="切换到家合模式" title="家合模式" onClick={onOpenShell}><HouseSimple size={17} /><span>家合模式</span></button>;
 
   const refreshTodoCount = useCallback(async () => {
     try {
@@ -933,7 +935,6 @@ export default function DepDekHome({ root, providerCount, sessionCount, agentMet
             <button className={activeView === "sessions" ? "dd-sidebar-foot__active" : ""} onClick={() => setActiveView("sessions")}><ChatCircleText size={16} />会话记录 <span>{sessionCount}</span></button>
             <button onClick={onOpenSettings}><GearSix size={16} />模型与 Provider <span>{providerCount}</span></button>
             <button onClick={onPickRoot}><HardDrives size={16} />更换 Home</button>
-            {onOpenShell && <button onClick={onOpenShell}><SquaresFour size={16} />AI Shell 语音入口</button>}
             <p><span />Home 已连接 · Rust Vault</p><small title={root}>{root}</small><small className="dd-sidebar-version">DepDek v{APP_VERSION}</small>
           </div>
         </aside>
@@ -941,15 +942,16 @@ export default function DepDekHome({ root, providerCount, sessionCount, agentMet
       </div>
 
       <div className="dd-main">
-        {activeView === "today" && <header className="dd-topbar">
+        {activeView === "today" ? <header className="dd-topbar">
           <div className="dd-clock"><strong>{time}</strong><span>{now.getMonth() + 1}月{now.getDate()}日 · 本地优先<em>本地优先 · 今日安好</em></span></div>
           <div className="dd-greeting"><b>晚上好，阿哲。</b><span>今天也从容一点。尚有 <strong>1 项承诺</strong> 待闭环</span></div>
           <div className="dd-top-actions">
             <button onClick={() => setSystemOpen(true)}><GearSix size={18} /><span>系统</span></button>
             <button onClick={() => setActionOpen(true)}><ListChecks size={18} /><span>审批</span><i /></button>
             <button onClick={() => setTaskCenterOpen((current) => !current)} aria-label="打开任务中心"><ClipboardText size={18} /><span>任务</span>{runningTaskCount > 0 && <i />}</button>
+            {renderModeSwitch(true)}
           </div>
-        </header>}
+        </header> : onOpenShell && <div className="dd-mode-bar">{renderModeSwitch()}</div>}
 
         <main className={`dd-workbench ${activeView === "inbox" ? "dd-workbench--inbox" : ""} ${activeView === "today" ? "dd-workbench--today" : ""}`}>
           {activeView === "today" ? <TodayView notify={notify} refreshKey={refreshKey} sessions={sessions} activeAgentId={activeAgentId} chats={chats} running={running} onSelectAgent={onSelectAgent} onSendAgent={onSendAgent} onAbortAgent={onAbortAgent} onOpenAgentTeam={openAgentTeam} /> : <DomainView name={activeView} root={root} providerCount={providerCount} sessionCount={sessionCount} agentMetrics={agentMetrics} openAgentTeam={openAgentTeam} onConfigureAgent={() => setActiveView("agent-config")} notify={notify} onStartTask={startTask} onUpdateTask={updateTask} onInboxCountChange={refreshInboxCount} onOpenAppConfig={() => setActiveView("connections")} sessions={sessions} activeAgentId={activeAgentId} running={running} chats={chats} providers={providers} settings={settings} conversationHistory={conversationHistory} onSendAgent={onSendAgent} onAbortAgent={onAbortAgent} onEnterAgent={onEnterAgent} onCloseAgent={onCloseAgent} onCreateAgent={onCreateAgent} onSaveAgentSettings={onSaveAgentSettings} onOpenSettings={onOpenSettings} onNewConversation={onNewConversation} onConversationHistoryChange={onConversationHistoryChange} teamTasks={teamTasks} onCancelTeamTask={onCancelTeamTask} />}

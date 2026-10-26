@@ -73,6 +73,34 @@ test('duplicate custom name does not overwrite saved configuration', async () =>
   assert.deepEqual(f.read().providers['My model'], BUILTIN_PROVIDER); assert.ok(!f.calls.includes('save'));
 });
 
+test('editing a saved provider keeps its name and encrypted key unless a replacement key is entered', async () => {
+  const original = { kind: 'openai-compatible', base_url: 'https://old.example.test/v1', model: 'old-model', api_key: '$secret:providers.saved' };
+  const f = fixture({ providers: { 'My model': original } });
+  const saved = await saveSetupProvider({ kind: 'update', name: 'My model', endpoint: 'https://new.example.test/v1/', model: 'new-model', apiKey: '' }, f.port);
+  assert.equal(saved.name, 'My model');
+  assert.deepEqual(saved.provider, { ...original, base_url: 'https://new.example.test/v1', model: 'new-model' });
+  assert.equal(f.read().providers['My model'].api_key, '$secret:providers.saved');
+
+  const replacement = fixture({ providers: { 'My model': original } });
+  const updated = await saveSetupProvider({ kind: 'update', name: 'My model', endpoint: 'https://new.example.test/v1', model: 'new-model', apiKey: 'replacement-test-key' }, replacement.port);
+  assert.equal(updated.provider.api_key, '$secret:providers.test-ref');
+  assert.ok(!JSON.stringify(replacement.read()).includes('replacement-test-key'));
+  assert.equal(replacement.read().providers['My model'].kind, 'openai-compatible');
+});
+
+test('editing preserves provider protocol, and a missing or mode-incompatible provider cannot be overwritten', async () => {
+  const anthropic = { kind: 'anthropic', model: 'old-model', api_key: '$secret:providers.anthropic' };
+  const f = fixture({ providers: { claude: anthropic } });
+  const saved = await saveSetupProvider({ kind: 'update', name: 'claude', endpoint: 'https://api.anthropic.com', model: 'new-model', apiKey: '' }, f.port);
+  assert.deepEqual(saved.provider, { ...anthropic, model: 'new-model' });
+  await assert.rejects(saveSetupProvider({ kind: 'update', name: 'missing', endpoint: 'https://api.example.test/v1', model: 'new-model', apiKey: '' }, f.port), /已被删除/);
+
+  const cloud = fixture({ providers: { cloud: { kind: 'openai-compatible', base_url: 'https://api.example.test/v1', model: 'model' } } });
+  await assert.rejects(saveSetupProvider({ kind: 'update', name: 'cloud', endpoint: 'https://api.example.test/v1', model: 'model-2', apiKey: '' }, cloud.port, 'zh-CN', 'depdek-os-assistant', 'local'), /本地模式/);
+  assert.equal(cloud.read().providers.cloud.model, 'model');
+  assert.ok(!cloud.calls.includes('save'));
+});
+
 test('URL and metadata constraints reject credentials, plaintext remote HTTP, query secrets, fragments, and completion URLs', () => {
   for (const endpoint of ['http://models.example.test/v1', 'https://user:pass@example.test/v1', 'https://example.test/v1?key=test', 'https://example.test/v1#key', 'file:///etc/passwd', 'not-a-url', 'https://example.test/v1/chat/completions']) {
     assert.throws(() => customSetupProvider({ ...custom, endpoint }));
